@@ -91,6 +91,12 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 @app.route("/")
 def home():
+    if session.get("logged_in"):
+        return redirect(url_for("dashboard"))
+    return redirect(url_for("login"))
+
+@app.route("/assistant")
+def assistant():
     return render_template("index.html")
 
 @app.route("/register", methods=["GET", "POST"])
