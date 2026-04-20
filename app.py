@@ -65,20 +65,16 @@ def chat():
     session["known_time"] = known_time
     session["known_name"] = known_name
 
-    context_parts = []
-    if known_service:
-        context_parts.append(f"service={known_service}")
-    if known_time:
-        context_parts.append(f"time={known_time}")
-    if known_name:
-        context_parts.append(f"name={known_name}")
-
-    context_str = ""
-    if context_parts:
-        context_str = (
-            f"\n\nCurrent known info: {', '.join(context_parts)}. "
-            "Do NOT ask for this information again. Use it directly to move the conversation forward."
-        )
+    context_str = (
+        "\n\nKNOWN DATA (DO NOT ASK AGAIN):\n"
+        f"- Service: {known_service or 'UNKNOWN'}\n"
+        f"- Time: {known_time or 'UNKNOWN'}\n"
+        f"- Name: {known_name or 'UNKNOWN'}\n\n"
+        "RULES:\n"
+        "- If a field is not UNKNOWN, you must NOT ask for it again.\n"
+        "- If only one field is UNKNOWN, ask ONLY for that field.\n"
+        "- If all fields are known, immediately confirm the booking.\n"
+    )
 
     response = requests.post(
         "https://api.openai.com/v1/chat/completions",
