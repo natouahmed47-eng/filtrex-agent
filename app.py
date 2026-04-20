@@ -10,6 +10,10 @@ app.secret_key = os.getenv("SESSION_SECRET", "dev-secret")
 
 bookings = []
 
+users = {
+    "admin": {"password": "123456", "id": 1}
+}
+
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 SERVICE_KEYWORDS = [
@@ -35,8 +39,12 @@ def home():
 def login():
     error = None
     if request.method == "POST":
-        if request.form.get("username") == "admin" and request.form.get("password") == "123456":
+        username = request.form.get("username")
+        password = request.form.get("password")
+        user = users.get(username)
+        if user and user["password"] == password:
             session["logged_in"] = True
+            session["user_id"] = user["id"]
             return redirect(url_for("dashboard"))
         error = "Invalid username or password."
     return render_template("login.html", error=error)
@@ -52,10 +60,11 @@ def dashboard():
         return redirect(url_for("login"))
     rows = []
     csv_file = "bookings.csv"
+    user_id = str(session.get("user_id", ""))
     if os.path.isfile(csv_file):
         with open(csv_file, newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
-            rows = list(reader)
+            rows = [row for row in reader if row.get("user_id") == user_id]
     return render_template("dashboard.html", rows=rows)
 
 @app.route("/chat", methods=["POST"])
@@ -311,11 +320,12 @@ def chat():
         csv_file = "bookings.csv"
         file_exists = os.path.isfile(csv_file)
         with open(csv_file, "a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=["timestamp", "name", "service", "time"])
+            writer = csv.DictWriter(f, fieldnames=["timestamp", "user_id", "name", "service", "time"])
             if not file_exists:
                 writer.writeheader()
             writer.writerow({
                 "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "user_id": str(session.get("user_id", "")),
                 "name": booking.get("name", ""),
                 "service": booking.get("service", ""),
                 "time": booking.get("time", "")
