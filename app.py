@@ -138,6 +138,18 @@ def chat():
     if known_service and not known_time:
         return jsonify({"reply": f"متى تفضل موعد {known_service}؟"})
 
+    _biz = business_settings.get(session.get("user_id"), {})
+    _allowed_services = _biz.get("services", [])
+
+    def validate_service(service):
+        if not _allowed_services:
+            return True
+        return any(service.lower() == s.lower() or service.lower() in s.lower() or s.lower() in service.lower() for s in _allowed_services)
+
+    def unavailable_service_reply():
+        names = "، ".join(_allowed_services)
+        return jsonify({"reply": f"عذراً، هذه الخدمة غير متاحة. الخدمات المتاحة هي: {names}. أيها تفضل؟"})
+
     greetings = ["سلام", "مرحبا", "اهلا", "hello", "hi"]
     clean_msg = user_message.strip().lower()
     if clean_msg in greetings:
@@ -153,7 +165,11 @@ def chat():
     if not known_service:
         for kw in SERVICE_KEYWORDS:
             if kw.lower() in msg_lower:
-                known_service = user_message.strip()
+                candidate = user_message.strip()
+                if validate_service(candidate):
+                    known_service = candidate
+                else:
+                    return unavailable_service_reply()
                 break
 
     if not known_time:
@@ -220,6 +236,9 @@ def chat():
             detected_time = detected_period
         else:
             detected_time = None
+
+        if detected_service and not validate_service(detected_service):
+            return unavailable_service_reply()
 
         session.clear()
         session["known_service"] = detected_service
