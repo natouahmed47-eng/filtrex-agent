@@ -71,14 +71,19 @@ def dashboard():
 def chat():
     user_message = request.json.get("message")
 
-    if session.get("awaiting_name"):
-        known_name = user_message.strip()
-        session["known_name"] = known_name
+    # STATE GUARD — highest priority, runs before all other logic
+    known_service = session.get("known_service")
+    known_time = session.get("known_time")
+    known_name = session.get("known_name")
+    awaiting_name = session.get("awaiting_name", False)
+
+    # Case 1: waiting for name → confirm immediately
+    if awaiting_name:
+        name = user_message.strip()
+        session["known_name"] = name
         session["awaiting_name"] = False
-        known_service = session.get("known_service")
-        known_time = session.get("known_time")
         if known_service and known_time:
-            booking = {"service": known_service, "time": known_time, "name": known_name}
+            booking = {"service": known_service, "time": known_time, "name": name}
             bookings.append(booking)
             print(f"[BOOKING CONFIRMED] {booking}")
             csv_file = "bookings.csv"
@@ -90,7 +95,7 @@ def chat():
                 writer.writerow({
                     "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "user_id": str(session.get("user_id", "")),
-                    "name": known_name,
+                    "name": name,
                     "service": known_service,
                     "time": known_time
                 })
@@ -98,8 +103,20 @@ def chat():
             session.pop("known_time", None)
             session.pop("known_name", None)
             session.pop("awaiting_name", None)
-            reply = f"Perfect 👌 Your booking for {known_service} at {known_time} under the name {known_name} is now confirmed."
-            return jsonify({"reply": reply, "booking_confirmed": True, "booking": booking})
+            return jsonify({
+                "reply": f"تم تأكيد حجزك لـ {known_service} في {known_time} باسم {name} ✅",
+                "booking_confirmed": True,
+                "booking": booking
+            })
+
+    # Case 2: service and time known but no name → ask for name
+    if known_service and known_time and not known_name:
+        session["awaiting_name"] = True
+        return jsonify({"reply": "ما الاسم الذي تريد تأكيد الحجز باسمه؟"})
+
+    # Case 3: only service known → ask for time
+    if known_service and not known_time:
+        return jsonify({"reply": f"متى تفضل موعد {known_service}؟"})
 
     greetings = ["سلام", "مرحبا", "اهلا", "hello", "hi"]
     clean_msg = user_message.strip().lower()
