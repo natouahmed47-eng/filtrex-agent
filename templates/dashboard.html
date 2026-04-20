@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Bookings Dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 30px; }
+    h1 { margin-bottom: 20px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ccc; padding: 10px 14px; text-align: left; }
+    th { background: #f4f4f4; }
+    tr:nth-child(even) { background: #fafafa; }
+    p { color: #888; }
+  </style>
+</head>
+<body>
+  <h1>Bookings Dashboard</h1>
+  {% if rows %}
+  <table>
+    <thead>
+      <tr>
+        <th>Timestamp</th>
+        <th>Name</th>
+        <th>Service</th>
+        <th>Time</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>{{ row.timestamp }}</td>
+        <td>{{ row.name }}</td>
+        <td>{{ row.service }}</td>
+        <td>{{ row.time }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No bookings yet</p>
+  {% endif %}
+</body>
+</html>

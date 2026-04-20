@@ -31,6 +31,16 @@ NAME_TRIGGERS = [
 def home():
     return render_template("index.html")
 
+@app.route("/dashboard")
+def dashboard():
+    rows = []
+    csv_file = "bookings.csv"
+    if os.path.isfile(csv_file):
+        with open(csv_file, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+    return render_template("dashboard.html", rows=rows)
+
 @app.route("/chat", methods=["POST"])
 def chat():
     user_message = request.json.get("message")
