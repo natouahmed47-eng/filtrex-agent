@@ -2,11 +2,30 @@ from flask import Flask, request, jsonify, render_template, session, redirect, u
 import requests
 import os
 import json
-import csv
+import sqlite3
 import datetime
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SESSION_SECRET", "dev-secret")
+
+DB_FILE = "bookings.db"
+
+def init_db():
+    con = sqlite3.connect(DB_FILE)
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS bookings (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id   TEXT,
+            name      TEXT,
+            service   TEXT,
+            time      TEXT,
+            timestamp TEXT
+        )
+    """)
+    con.commit()
+    con.close()
+
+init_db()
 
 bookings = []
 
@@ -72,32 +91,34 @@ def logout():
 def dashboard():
     if not session.get("logged_in"):
         return redirect(url_for("login"))
-    rows = []
-    csv_file = "bookings.csv"
     user_id = str(session.get("user_id", ""))
-    if os.path.isfile(csv_file):
-        with open(csv_file, newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            rows = [row for row in reader if row.get("user_id") == user_id]
+    con = sqlite3.connect(DB_FILE)
+    con.row_factory = sqlite3.Row
+    cur = con.execute(
+        "SELECT user_id, name, service, time, timestamp FROM bookings WHERE user_id = ? ORDER BY id DESC",
+        (user_id,)
+    )
+    rows = [dict(row) for row in cur.fetchall()]
+    con.close()
     return render_template("dashboard.html", rows=rows)
 
 def confirm_booking(name, service, time, reply):
     booking = {"service": service, "time": time, "name": name}
     bookings.append(booking)
     print(f"[BOOKING CONFIRMED] {booking}")
-    csv_file = "bookings.csv"
-    file_exists = os.path.isfile(csv_file)
-    with open(csv_file, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["timestamp", "user_id", "name", "service", "time"])
-        if not file_exists:
-            writer.writeheader()
-        writer.writerow({
-            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "user_id": str(session.get("user_id", "")),
-            "name": name,
-            "service": service,
-            "time": time
-        })
+    con = sqlite3.connect(DB_FILE)
+    con.execute(
+        "INSERT INTO bookings (user_id, name, service, time, timestamp) VALUES (?, ?, ?, ?, ?)",
+        (
+            str(session.get("user_id", "")),
+            name,
+            service,
+            time,
+            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        )
+    )
+    con.commit()
+    con.close()
     session.pop("known_service", None)
     session.pop("known_time", None)
     session.pop("known_name", None)
