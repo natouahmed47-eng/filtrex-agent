@@ -33,7 +33,8 @@ def home():
 def chat():
     user_message = request.json.get("message")
 
-    if user_message.strip().lower() in ["سلام", "مرحبا", "اهلا", "hello", "hi"]:
+    greetings = ["سلام", "مرحبا", "اهلا", "hello", "hi"]
+    if any(word in user_message.lower() for word in greetings):
         session.clear()
 
     known_service = session.get("known_service")
