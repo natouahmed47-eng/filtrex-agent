@@ -66,6 +66,18 @@ def chat():
     session["known_time"] = known_time
     session["known_name"] = known_name
 
+    user_lower = user_message.strip().lower()
+
+    if user_lower in ["اهلا", "مرحبا", "سلام", "hello", "hi"]:
+        return jsonify({"reply": "أهلاً 👋 كيف أقدر أساعدك اليوم؟"})
+
+    booking_intent = any(word in user_lower for word in ["حجز", "موعد", "book", "appointment"])
+    if booking_intent:
+        session["known_service"] = None
+        session["known_time"] = None
+        session["known_name"] = None
+        return jsonify({"reply": "ما نوع الخدمة التي تريد حجزها؟"})
+
     context_str = (
         "\n\nKNOWN DATA (DO NOT ASK AGAIN):\n"
         f"- Service: {known_service or 'UNKNOWN'}\n"
