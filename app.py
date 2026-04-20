@@ -81,6 +81,30 @@ def dashboard():
             rows = [row for row in reader if row.get("user_id") == user_id]
     return render_template("dashboard.html", rows=rows)
 
+def confirm_booking(name, service, time, reply):
+    booking = {"service": service, "time": time, "name": name}
+    bookings.append(booking)
+    print(f"[BOOKING CONFIRMED] {booking}")
+    csv_file = "bookings.csv"
+    file_exists = os.path.isfile(csv_file)
+    with open(csv_file, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["timestamp", "user_id", "name", "service", "time"])
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow({
+            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "user_id": str(session.get("user_id", "")),
+            "name": name,
+            "service": service,
+            "time": time
+        })
+    session.pop("known_service", None)
+    session.pop("known_time", None)
+    session.pop("known_name", None)
+    session.pop("awaiting_name", None)
+    return jsonify({"reply": reply, "booking_confirmed": True, "booking": booking})
+
+
 @app.route("/chat", methods=["POST"])
 def chat():
     user_message = request.json.get("message")
@@ -96,31 +120,10 @@ def chat():
         known_time = session.get("known_time")
 
         if known_service and known_time:
-            booking = {"service": known_service, "time": known_time, "name": name}
-            bookings.append(booking)
-            print(f"[BOOKING CONFIRMED] {booking}")
-            csv_file = "bookings.csv"
-            file_exists = os.path.isfile(csv_file)
-            with open(csv_file, "a", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=["timestamp", "user_id", "name", "service", "time"])
-                if not file_exists:
-                    writer.writeheader()
-                writer.writerow({
-                    "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "user_id": str(session.get("user_id", "")),
-                    "name": name,
-                    "service": known_service,
-                    "time": known_time
-                })
-            session.pop("known_service", None)
-            session.pop("known_time", None)
-            session.pop("known_name", None)
-            session.pop("awaiting_name", None)
-            return jsonify({
-                "reply": f"تم تأكيد حجزك بنجاح ✅\nالخدمة: {known_service}\nالموعد: {known_time}\nالاسم: {name}",
-                "booking_confirmed": True,
-                "booking": booking
-            })
+            return confirm_booking(
+                name, known_service, known_time,
+                f"تم تأكيد حجزك بنجاح ✅\nالخدمة: {known_service}\nالموعد: {known_time}\nالاسم: {name}"
+            )
 
         return jsonify({"reply": "حدث خطأ، حاول مرة أخرى."})
 
@@ -418,28 +421,10 @@ def chat():
         session["awaiting_name"] = awaiting_name
 
     if booking:
-        bookings.append(booking)
-        print(f"[BOOKING CONFIRMED] {booking}")
-
-        csv_file = "bookings.csv"
-        file_exists = os.path.isfile(csv_file)
-        with open(csv_file, "a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=["timestamp", "user_id", "name", "service", "time"])
-            if not file_exists:
-                writer.writeheader()
-            writer.writerow({
-                "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "user_id": str(session.get("user_id", "")),
-                "name": booking.get("name", ""),
-                "service": booking.get("service", ""),
-                "time": booking.get("time", "")
-            })
-
-        session.pop("known_service", None)
-        session.pop("known_time", None)
-        session.pop("known_name", None)
-        session.pop("awaiting_name", None)
-        return jsonify({"reply": clean_reply, "booking_confirmed": True, "booking": booking})
+        return confirm_booking(
+            booking.get("name", ""), booking.get("service", ""), booking.get("time", ""),
+            clean_reply
+        )
 
     return jsonify({"reply": clean_reply})
 
