@@ -100,6 +100,8 @@ def home():
 def assistant():
     return render_template("index.html")
 
+wa_sessions = {}
+
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
     incoming_msg = request.form.get("Body", "")
@@ -109,49 +111,109 @@ def whatsapp():
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    incoming_msg = request.form.get("Body", "").strip()
-    sender = request.form.get("From", "")
-    print(f"[WEBHOOK] From: {sender} | Message: {incoming_msg}")
-
-    fallback = "Something went wrong, please try again."
-
     try:
-        ai_response = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENAI_API_KEY}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": "gpt-4o-mini",
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a startup idea evaluator. "
-                            "Always reply with exactly this structure:\n\n"
-                            "Verdict: BUILD / DON'T BUILD / BUILD WITH CONDITIONS\n"
-                            "Reasoning: ...\n"
-                            "Risks: ...\n"
-                            "Next steps:\n1. ...\n2. ...\n3. ..."
-                        )
-                    },
-                    {
-                        "role": "user",
-                        "content": incoming_msg
-                    }
-                ]
-            }
-        )
-        reply_text = ai_response.json()["choices"][0]["message"]["content"]
-        print(f"[WEBHOOK] AI response: {reply_text}")
+        incoming_msg = request.form.get("Body", "").strip()
+        sender = request.form.get("From", "")
+        print(f"[WEBHOOK] From: {sender} | Message: {incoming_msg}")
+
+        msg_lower = incoming_msg.lower()
+        state = wa_sessions.get(sender, {})
+
+        # Step 1: Greeting — reset state
+        if msg_lower in ["سلام", "مرحبا", "اهلا", "hello", "hi"]:
+            wa_sessions[sender] = {}
+            reply = "أهلاً 👋 كيف أقدر أساعدك اليوم؟"
+
+        else:
+            known_service = state.get("known_service")
+            known_time = state.get("known_time")
+            awaiting_name = state.get("awaiting_name", False)
+
+            # Step 2: Awaiting name → confirm booking
+            if awaiting_name:
+                name = incoming_msg.strip()
+                if known_service and known_time:
+                    con = sqlite3.connect(DB_FILE)
+                    con.execute(
+                        "INSERT INTO bookings (user_id, name, service, time, timestamp) VALUES (?, ?, ?, ?, ?)",
+                        ("webhook", name, known_service, known_time,
+                         datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                    )
+                    con.commit()
+                    con.close()
+                    wa_sessions[sender] = {}
+                    reply = (
+                        f"تم تأكيد حجزك بنجاح ✅\n"
+                        f"الخدمة: {known_service}\n"
+                        f"الموعد: {known_time}\n"
+                        f"الاسم: {name}"
+                    )
+                    print(f"[WEBHOOK] Booking saved — {name} | {known_service} | {known_time}")
+                else:
+                    reply = "حدث خطأ، حاول مرة أخرى."
+
+            else:
+                # Step 3: Detect service
+                SERVICE_MAP = {
+                    "تنظيف": "تنظيف أسنان",
+                    "تبييض": "تبييض أسنان",
+                    "فحص": "فحص أسنان",
+                    "cleaning": "teeth cleaning",
+                    "whitening": "teeth whitening",
+                    "checkup": "dental checkup",
+                    "check-up": "dental checkup",
+                }
+                if not known_service:
+                    for key, val in SERVICE_MAP.items():
+                        if key in msg_lower:
+                            known_service = val
+                            break
+
+                # Step 4: Detect time
+                DAY_MAP = {
+                    "غد": "غدًا", "غدا": "غدًا", "غدًا": "غدًا", "بكرة": "غدًا",
+                    "today": "اليوم", "اليوم": "اليوم", "tomorrow": "غدًا",
+                }
+                PERIOD_MAP = {
+                    "مساء": "مساءً", "evening": "مساءً", "afternoon": "مساءً",
+                    "صباح": "صباحًا", "morning": "صباحًا",
+                }
+                if not known_time:
+                    detected_day = next((DAY_MAP[k] for k in DAY_MAP if k in msg_lower), None)
+                    detected_period = next((PERIOD_MAP[k] for k in PERIOD_MAP if k in msg_lower), None)
+                    if detected_day and detected_period:
+                        known_time = f"{detected_day} {detected_period}"
+                    elif detected_day:
+                        known_time = detected_day
+                    elif detected_period:
+                        known_time = detected_period
+
+                # Step 5: Save state
+                state["known_service"] = known_service
+                state["known_time"] = known_time
+                wa_sessions[sender] = state
+
+                # Step 6: Ask for next missing field
+                if known_service and known_time:
+                    state["awaiting_name"] = True
+                    reply = "رائع! ما الاسم الذي تريد تأكيد الحجز باسمه؟"
+                elif known_service and not known_time:
+                    reply = f"ممتاز! متى تفضل موعدك؟ (مثال: غدًا صباحًا)"
+                elif known_time and not known_service:
+                    reply = "ما الخدمة التي تريد حجزها؟"
+                else:
+                    reply = "أهلاً! كيف أقدر أساعدك؟ يمكنك ذكر الخدمة والوقت المناسب لك."
+
+        print(f"[WEBHOOK] Reply: {reply}")
+        resp = MessagingResponse()
+        resp.message(reply)
+        return str(resp), 200, {"Content-Type": "text/xml"}
+
     except Exception as e:
         print(f"[WEBHOOK] Error: {e}")
-        reply_text = fallback
-
-    resp = MessagingResponse()
-    resp.message(reply_text)
-    return str(resp), 200, {"Content-Type": "text/xml"}
+        resp = MessagingResponse()
+        resp.message("Something went wrong, please try again.")
+        return str(resp), 200, {"Content-Type": "text/xml"}
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
