@@ -14,6 +14,14 @@ users = {
     "admin": {"password": "123456", "id": 1}
 }
 
+business_settings = {
+    1: {
+        "business_name": "Veltrix Dental Clinic",
+        "services": ["تنظيف أسنان", "تبييض أسنان"],
+        "default_language": "ar"
+    }
+}
+
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 SERVICE_KEYWORDS = [
@@ -226,6 +234,23 @@ def chat():
         else:
             return jsonify({"reply": f"رائع! ما الاسم الذي تريد تأكيد الحجز باسمه؟"})
 
+    user_id = session.get("user_id")
+    biz = business_settings.get(user_id, {})
+    biz_name = biz.get("business_name", "")
+    biz_services = biz.get("services", [])
+    biz_language = biz.get("default_language", "ar")
+
+    biz_str = ""
+    if biz_name:
+        biz_str += f"\n\nBUSINESS CONTEXT:\n"
+        biz_str += f"- Business name: {biz_name}\n"
+        biz_str += f"- Use this name naturally in greetings and confirmations.\n"
+    if biz_services:
+        biz_str += f"- Only suggest or accept these services: {', '.join(biz_services)}\n"
+        biz_str += f"- If the user requests a service not in this list, politely redirect to the available ones.\n"
+    if biz_language:
+        biz_str += f"- Default language: {'Arabic' if biz_language == 'ar' else biz_language}. Use it unless the user clearly writes in another language.\n"
+
     context_str = (
         "\n\nKNOWN DATA (DO NOT ASK AGAIN):\n"
         f"- Service: {known_service or 'UNKNOWN'}\n"
@@ -235,7 +260,7 @@ def chat():
         "- If a field is not UNKNOWN, you must NOT ask for it again.\n"
         "- If only one field is UNKNOWN, ask ONLY for that field.\n"
         "- If all fields are known, immediately confirm the booking.\n"
-    )
+    ) + biz_str
 
     response = requests.post(
         "https://api.openai.com/v1/chat/completions",
