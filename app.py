@@ -94,7 +94,10 @@ def chat():
                     "service": known_service,
                     "time": known_time
                 })
-            session.clear()
+            session.pop("known_service", None)
+            session.pop("known_time", None)
+            session.pop("known_name", None)
+            session.pop("awaiting_name", None)
             reply = f"Perfect 👌 Your booking for {known_service} at {known_time} under the name {known_name} is now confirmed."
             return jsonify({"reply": reply, "booking_confirmed": True, "booking": booking})
 
@@ -358,7 +361,10 @@ def chat():
                 "time": booking.get("time", "")
             })
 
-        session.clear()
+        session.pop("known_service", None)
+        session.pop("known_time", None)
+        session.pop("known_name", None)
+        session.pop("awaiting_name", None)
         return jsonify({"reply": clean_reply, "booking_confirmed": True, "booking": booking})
 
     return jsonify({"reply": clean_reply})
