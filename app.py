@@ -33,6 +33,9 @@ def home():
 def chat():
     user_message = request.json.get("message")
 
+    if user_message.strip().lower() in ["سلام", "مرحبا", "اهلا", "hello", "hi"]:
+        session.clear()
+
     known_service = session.get("known_service")
     known_time = session.get("known_time")
     known_name = session.get("known_name")
