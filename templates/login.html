@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Login</title>
+  <style>
+    body { font-family: Arial, sans-serif; display: flex; justify-content: center; padding-top: 80px; background: #f4f4f4; }
+    .box { background: white; padding: 30px 40px; border: 1px solid #ddd; width: 300px; }
+    h2 { margin-bottom: 20px; }
+    input { width: 100%; padding: 8px; margin-bottom: 14px; box-sizing: border-box; border: 1px solid #ccc; }
+    button { width: 100%; padding: 9px; background: #333; color: white; border: none; cursor: pointer; }
+    button:hover { background: #555; }
+    .error { color: red; margin-bottom: 12px; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h2>Admin Login</h2>
+    {% if error %}
+    <p class="error">{{ error }}</p>
+    {% endif %}
+    <form method="POST">
+      <input type="text" name="username" placeholder="Username" required />
+      <input type="password" name="password" placeholder="Password" required />
+      <button type="submit">Login</button>
+    </form>
+  </div>
+</body>
+</html>

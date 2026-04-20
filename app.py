@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template, session
+from flask import Flask, request, jsonify, render_template, session, redirect, url_for
 import requests
 import os
 import json
@@ -31,8 +31,25 @@ NAME_TRIGGERS = [
 def home():
     return render_template("index.html")
 
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    error = None
+    if request.method == "POST":
+        if request.form.get("username") == "admin" and request.form.get("password") == "123456":
+            session["logged_in"] = True
+            return redirect(url_for("dashboard"))
+        error = "Invalid username or password."
+    return render_template("login.html", error=error)
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
 @app.route("/dashboard")
 def dashboard():
+    if not session.get("logged_in"):
+        return redirect(url_for("login"))
     rows = []
     csv_file = "bookings.csv"
     if os.path.isfile(csv_file):
