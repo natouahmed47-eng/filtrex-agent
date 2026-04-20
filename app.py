@@ -80,12 +80,13 @@ def chat():
             "cleaning": "teeth cleaning",
             "whitening": "teeth whitening"
         }
-        time_keywords = {
-            "غد": "غدًا",
-            "بكرة": "غدًا",
-            "tomorrow": "tomorrow",
-            "مساء": "مساء",
-            "evening": "evening"
+        day_keywords = {
+            "غد": "غدًا", "غدا": "غدًا", "غدًا": "غدًا", "بكرة": "غدًا",
+            "today": "اليوم", "اليوم": "اليوم"
+        }
+        period_keywords = {
+            "مساء": "مساءً", "evening": "مساءً",
+            "صباح": "صباحًا", "morning": "صباحًا"
         }
 
         detected_service = None
@@ -94,11 +95,26 @@ def chat():
                 detected_service = service_keywords[key]
                 break
 
-        detected_time = None
-        for key in time_keywords:
+        detected_day = None
+        for key in day_keywords:
             if key in user_lower:
-                detected_time = time_keywords[key]
+                detected_day = day_keywords[key]
                 break
+
+        detected_period = None
+        for key in period_keywords:
+            if key in user_lower:
+                detected_period = period_keywords[key]
+                break
+
+        if detected_day and detected_period:
+            detected_time = f"{detected_day} {detected_period}"
+        elif detected_day:
+            detected_time = detected_day
+        elif detected_period:
+            detected_time = detected_period
+        else:
+            detected_time = None
 
         session.clear()
         session["known_service"] = detected_service
