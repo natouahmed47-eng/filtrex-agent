@@ -169,7 +169,14 @@ def chat():
                         "  'أهلاً 👋 كيف أقدر أساعدك اليوم؟'\n"
                         "  'Hi 👋 What service are you looking to book?'\n"
                         "- Do not mention any service, time, or name unless the user provides it.\n"
-                        "- Do not skip directly to booking steps on greetings."
+                        "- Do not skip directly to booking steps on greetings.\n\n"
+                        "Intent override rule:\n"
+                        "- If the user message contains a clear intent (e.g. booking, service request, time, or name), you MUST ignore greeting behavior.\n"
+                        "- NEVER greet again after the first greeting.\n"
+                        "- If the user says something like 'I want to book', immediately proceed to step 1 (identify service).\n"
+                        "- Do NOT restart the conversation.\n"
+                        "- Do NOT say 'How can I help you?' more than once at the very beginning.\n"
+                        "- This rule overrides the greeting rule completely."
                         + context_str
                     )
                 },
