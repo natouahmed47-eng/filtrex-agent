@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify, render_template, session, redirect, url_for
+from werkzeug.security import generate_password_hash, check_password_hash
 import requests
 import os
 import json
@@ -41,6 +42,12 @@ def init_db():
     con.execute("INSERT OR IGNORE INTO users (id, username, password) VALUES (2, 'clinic2', '123456')")
     con.execute("INSERT OR IGNORE INTO business_settings (user_id, business_name, services, default_language) VALUES (1, 'Veltrix Dental Clinic', 'تنظيف أسنان,تبييض أسنان', 'ar')")
     con.execute("INSERT OR IGNORE INTO business_settings (user_id, business_name, services, default_language) VALUES (2, 'Bright Smile Studio', 'فحص أسنان,تبييض أسنان', 'ar')")
+    rows = con.execute("SELECT id, password FROM users").fetchall()
+    for row in rows:
+        pwd = row[1]
+        if not pwd.startswith("pbkdf2:") and not pwd.startswith("scrypt:"):
+            con.execute("UPDATE users SET password = ? WHERE id = ?",
+                        (generate_password_hash(pwd), row[0]))
     con.commit()
     con.close()
 
@@ -94,7 +101,7 @@ def register():
             else:
                 cur = con.execute(
                     "INSERT INTO users (username, password) VALUES (?, ?)",
-                    (username, password)
+                    (username, generate_password_hash(password))
                 )
                 new_id = cur.lastrowid
                 con.execute(
@@ -118,7 +125,7 @@ def login():
             "SELECT id, password FROM users WHERE username = ?", (username,)
         ).fetchone()
         con.close()
-        if row and row["password"] == password:
+        if row and check_password_hash(row["password"], password):
             session["logged_in"] = True
             session["user_id"] = row["id"]
             return redirect(url_for("dashboard"))
