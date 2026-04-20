@@ -27,67 +27,82 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 DB_FILE = "bookings.db"
 
+def get_db_connection():
+    con = sqlite3.connect(DB_FILE, timeout=10)
+    con.row_factory = sqlite3.Row
+    return con
+
 def init_db():
-    con = sqlite3.connect(DB_FILE)
-    con.execute("""
-        CREATE TABLE IF NOT EXISTS bookings (
-            id        INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id   TEXT,
-            name      TEXT,
-            service   TEXT,
-            time      TEXT,
-            timestamp TEXT
-        )
-    """)
-    con.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id       INTEGER PRIMARY KEY,
-            username TEXT UNIQUE,
-            password TEXT
-        )
-    """)
-    con.execute("""
-        CREATE TABLE IF NOT EXISTS business_settings (
-            user_id          INTEGER PRIMARY KEY,
-            business_name    TEXT,
-            services         TEXT,
-            default_language TEXT
-        )
-    """)
-    con.execute("""
-        CREATE TABLE IF NOT EXISTS whatsapp_state (
-            phone         TEXT PRIMARY KEY,
-            known_service TEXT,
-            known_time    TEXT,
-            known_name    TEXT,
-            awaiting_name INTEGER DEFAULT 0
-        )
-    """)
-    con.execute("INSERT OR IGNORE INTO users (id, username, password) VALUES (1, 'admin', '123456')")
-    con.execute("INSERT OR IGNORE INTO users (id, username, password) VALUES (2, 'clinic2', '123456')")
-    con.execute("INSERT OR IGNORE INTO business_settings (user_id, business_name, services, default_language) VALUES (1, 'Veltrix Dental Clinic', 'تنظيف أسنان,تبييض أسنان', 'ar')")
-    con.execute("INSERT OR IGNORE INTO business_settings (user_id, business_name, services, default_language) VALUES (2, 'Bright Smile Studio', 'فحص أسنان,تبييض أسنان', 'ar')")
-    rows = con.execute("SELECT id, password FROM users").fetchall()
-    for row in rows:
-        pwd = row[1]
-        if not pwd.startswith("pbkdf2:") and not pwd.startswith("scrypt:"):
-            con.execute("UPDATE users SET password = ? WHERE id = ?",
-                        (generate_password_hash(pwd), row[0]))
-    con.commit()
-    con.close()
+    print("[DB] init_db opening connection")
+    con = get_db_connection()
+    try:
+        con.execute("PRAGMA journal_mode=WAL")
+        con.execute("PRAGMA synchronous=NORMAL")
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS bookings (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id   TEXT,
+                name      TEXT,
+                service   TEXT,
+                time      TEXT,
+                timestamp TEXT
+            )
+        """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id       INTEGER PRIMARY KEY,
+                username TEXT UNIQUE,
+                password TEXT
+            )
+        """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS business_settings (
+                user_id          INTEGER PRIMARY KEY,
+                business_name    TEXT,
+                services         TEXT,
+                default_language TEXT
+            )
+        """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS whatsapp_state (
+                phone         TEXT PRIMARY KEY,
+                known_service TEXT,
+                known_time    TEXT,
+                known_name    TEXT,
+                awaiting_name INTEGER DEFAULT 0
+            )
+        """)
+        con.execute("INSERT OR IGNORE INTO users (id, username, password) VALUES (1, 'admin', '123456')")
+        con.execute("INSERT OR IGNORE INTO users (id, username, password) VALUES (2, 'clinic2', '123456')")
+        con.execute("INSERT OR IGNORE INTO business_settings (user_id, business_name, services, default_language) VALUES (1, 'Veltrix Dental Clinic', 'تنظيف أسنان,تبييض أسنان', 'ar')")
+        con.execute("INSERT OR IGNORE INTO business_settings (user_id, business_name, services, default_language) VALUES (2, 'Bright Smile Studio', 'فحص أسنان,تبييض أسنان', 'ar')")
+        rows = con.execute("SELECT id, password FROM users").fetchall()
+        for row in rows:
+            pwd = row["password"]
+            if not pwd.startswith("pbkdf2:") and not pwd.startswith("scrypt:"):
+                con.execute("UPDATE users SET password = ? WHERE id = ?",
+                            (generate_password_hash(pwd), row["id"]))
+        con.commit()
+        print("[DB] init_db committed")
+    finally:
+        con.close()
+        print("[DB] init_db connection closed")
 
 init_db()
 
 bookings = []
 
 def get_biz(user_id):
-    con = sqlite3.connect(DB_FILE)
-    con.row_factory = sqlite3.Row
-    row = con.execute(
-        "SELECT business_name, services, default_language FROM business_settings WHERE user_id = ?",
-        (user_id,)
-    ).fetchone()
-    con.close()
+    print(f"[DB] get_biz opening connection user_id={user_id}")
+    con = get_db_connection()
+    try:
+        row = con.execute(
+            "SELECT business_name, services, default_language FROM business_settings WHERE user_id = ?",
+            (user_id,)
+        ).fetchone()
+    finally:
+        con.close()
+        print(f"[DB] get_biz connection closed")
     if row:
         return {
             "business_name": row["business_name"] or "",
@@ -112,13 +127,16 @@ def assistant():
 WHATSAPP_USER_ID = 1
 
 def wa_load(phone):
-    con = sqlite3.connect(DB_FILE)
-    con.row_factory = sqlite3.Row
-    row = con.execute(
-        "SELECT known_service, known_time, known_name, awaiting_name FROM whatsapp_state WHERE phone = ?",
-        (phone,)
-    ).fetchone()
-    con.close()
+    print(f"[DB] wa_load opening connection phone={phone}")
+    con = get_db_connection()
+    try:
+        row = con.execute(
+            "SELECT known_service, known_time, known_name, awaiting_name FROM whatsapp_state WHERE phone = ?",
+            (phone,)
+        ).fetchone()
+    finally:
+        con.close()
+        print(f"[DB] wa_load connection closed")
     if row:
         return {
             "known_service": row["known_service"],
@@ -129,26 +147,42 @@ def wa_load(phone):
     return {"known_service": None, "known_time": None, "known_name": None, "awaiting_name": False}
 
 def wa_save(phone, known_service, known_time, known_name, awaiting_name):
-    con = sqlite3.connect(DB_FILE)
-    con.execute(
-        """INSERT INTO whatsapp_state (phone, known_service, known_time, known_name, awaiting_name)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(phone) DO UPDATE SET
-               known_service = excluded.known_service,
-               known_time    = excluded.known_time,
-               known_name    = excluded.known_name,
-               awaiting_name = excluded.awaiting_name""",
-        (phone, known_service, known_time, known_name, 1 if awaiting_name else 0)
-    )
-    con.commit()
-    con.close()
+    print(f"[DB] wa_save opening connection phone={phone} service={known_service} time={known_time} name={known_name} awaiting_name={awaiting_name}")
+    con = get_db_connection()
+    try:
+        con.execute(
+            """INSERT INTO whatsapp_state (phone, known_service, known_time, known_name, awaiting_name)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(phone) DO UPDATE SET
+                   known_service = excluded.known_service,
+                   known_time    = excluded.known_time,
+                   known_name    = excluded.known_name,
+                   awaiting_name = excluded.awaiting_name""",
+            (phone, known_service, known_time, known_name, 1 if awaiting_name else 0)
+        )
+        con.commit()
+        print(f"[DB] wa_save committed")
+    except Exception as db_err:
+        print(f"[DB] wa_save ERROR: {repr(db_err)}")
+        raise
+    finally:
+        con.close()
+        print(f"[DB] wa_save connection closed")
     print(f"[WHATSAPP] state_saved service={known_service} time={known_time} name={known_name} awaiting_name={awaiting_name}")
 
 def wa_clear(phone):
-    con = sqlite3.connect(DB_FILE)
-    con.execute("DELETE FROM whatsapp_state WHERE phone = ?", (phone,))
-    con.commit()
-    con.close()
+    print(f"[DB] wa_clear opening connection phone={phone}")
+    con = get_db_connection()
+    try:
+        con.execute("DELETE FROM whatsapp_state WHERE phone = ?", (phone,))
+        con.commit()
+        print(f"[DB] wa_clear committed")
+    except Exception as db_err:
+        print(f"[DB] wa_clear ERROR: {repr(db_err)}")
+        raise
+    finally:
+        con.close()
+        print(f"[DB] wa_clear connection closed")
     print(f"[WHATSAPP] state_cleared phone={phone}")
 
 def twilio_reply(text):
@@ -314,14 +348,22 @@ def whatsapp():
         # Step 7: All three fields known — confirm booking immediately
         if known_service and known_time and known_name:
             print("[WHATSAPP] branch=confirm_booking")
-            con = sqlite3.connect(DB_FILE)
-            con.execute(
-                "INSERT INTO bookings (user_id, name, service, time, timestamp) VALUES (?, ?, ?, ?, ?)",
-                (str(WHATSAPP_USER_ID), known_name, known_service, known_time,
-                 datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-            )
-            con.commit()
-            con.close()
+            print(f"[DB] booking_save opening connection")
+            con = get_db_connection()
+            try:
+                con.execute(
+                    "INSERT INTO bookings (user_id, name, service, time, timestamp) VALUES (?, ?, ?, ?, ?)",
+                    (str(WHATSAPP_USER_ID), known_name, known_service, known_time,
+                     datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                )
+                con.commit()
+                print(f"[DB] booking_save committed")
+            except Exception as db_err:
+                print(f"[DB] booking_save ERROR: {repr(db_err)}")
+                raise
+            finally:
+                con.close()
+                print(f"[DB] booking_save connection closed")
             wa_clear(sender)
             reply = (
                 f"تم تأكيد حجزك بنجاح ✅\n"
@@ -378,25 +420,27 @@ def register():
         if not username or not password:
             error = "Username and password are required."
         else:
-            con = sqlite3.connect(DB_FILE)
-            existing = con.execute(
-                "SELECT id FROM users WHERE username = ?", (username,)
-            ).fetchone()
-            if existing:
+            con = get_db_connection()
+            try:
+                existing = con.execute(
+                    "SELECT id FROM users WHERE username = ?", (username,)
+                ).fetchone()
+                if existing:
+                    error = "Username already exists."
+                else:
+                    cur = con.execute(
+                        "INSERT INTO users (username, password) VALUES (?, ?)",
+                        (username, generate_password_hash(password))
+                    )
+                    new_id = cur.lastrowid
+                    con.execute(
+                        "INSERT INTO business_settings (user_id, business_name, services, default_language) VALUES (?, ?, ?, ?)",
+                        (new_id, business_name, services_str, default_language)
+                    )
+                    con.commit()
+            finally:
                 con.close()
-                error = "Username already exists."
-            else:
-                cur = con.execute(
-                    "INSERT INTO users (username, password) VALUES (?, ?)",
-                    (username, generate_password_hash(password))
-                )
-                new_id = cur.lastrowid
-                con.execute(
-                    "INSERT INTO business_settings (user_id, business_name, services, default_language) VALUES (?, ?, ?, ?)",
-                    (new_id, business_name, services_str, default_language)
-                )
-                con.commit()
-                con.close()
+            if not error:
                 return redirect(url_for("login"))
     return render_template("register.html", error=error)
 
@@ -406,12 +450,13 @@ def login():
     if request.method == "POST":
         username = request.form.get("username")
         password = request.form.get("password")
-        con = sqlite3.connect(DB_FILE)
-        con.row_factory = sqlite3.Row
-        row = con.execute(
-            "SELECT id, password FROM users WHERE username = ?", (username,)
-        ).fetchone()
-        con.close()
+        con = get_db_connection()
+        try:
+            row = con.execute(
+                "SELECT id, password FROM users WHERE username = ?", (username,)
+            ).fetchone()
+        finally:
+            con.close()
         if row and check_password_hash(row["password"], password):
             session["logged_in"] = True
             session["user_id"] = row["id"]
@@ -435,13 +480,15 @@ def settings():
         raw_services = request.form.get("services", "")
         services_str = ",".join(s.strip() for s in raw_services.split(",") if s.strip())
         default_language = request.form.get("default_language", "ar").strip()
-        con = sqlite3.connect(DB_FILE)
-        con.execute(
-            "INSERT OR REPLACE INTO business_settings (user_id, business_name, services, default_language) VALUES (?, ?, ?, ?)",
-            (user_id, business_name, services_str, default_language)
-        )
-        con.commit()
-        con.close()
+        con = get_db_connection()
+        try:
+            con.execute(
+                "INSERT OR REPLACE INTO business_settings (user_id, business_name, services, default_language) VALUES (?, ?, ?, ?)",
+                (user_id, business_name, services_str, default_language)
+            )
+            con.commit()
+        finally:
+            con.close()
         message = "Settings saved."
     biz = get_biz(user_id)
     return render_template("settings.html", biz=biz, message=message)
@@ -451,33 +498,35 @@ def dashboard():
     if not session.get("logged_in"):
         return redirect(url_for("login"))
     user_id = str(session.get("user_id", ""))
-    con = sqlite3.connect(DB_FILE)
-    con.row_factory = sqlite3.Row
-    cur = con.execute(
-        "SELECT user_id, name, service, time, timestamp FROM bookings WHERE user_id = ? ORDER BY id DESC",
-        (user_id,)
-    )
-    rows = [dict(row) for row in cur.fetchall()]
-    con.close()
+    con = get_db_connection()
+    try:
+        rows = [dict(row) for row in con.execute(
+            "SELECT user_id, name, service, time, timestamp FROM bookings WHERE user_id = ? ORDER BY id DESC",
+            (user_id,)
+        ).fetchall()]
+    finally:
+        con.close()
     return render_template("dashboard.html", rows=rows)
 
 def confirm_booking(name, service, time, reply):
     booking = {"service": service, "time": time, "name": name}
     bookings.append(booking)
     print(f"[BOOKING CONFIRMED] {booking}")
-    con = sqlite3.connect(DB_FILE)
-    con.execute(
-        "INSERT INTO bookings (user_id, name, service, time, timestamp) VALUES (?, ?, ?, ?, ?)",
-        (
-            str(session.get("user_id", "")),
-            name,
-            service,
-            time,
-            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    con = get_db_connection()
+    try:
+        con.execute(
+            "INSERT INTO bookings (user_id, name, service, time, timestamp) VALUES (?, ?, ?, ?, ?)",
+            (
+                str(session.get("user_id", "")),
+                name,
+                service,
+                time,
+                datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            )
         )
-    )
-    con.commit()
-    con.close()
+        con.commit()
+    finally:
+        con.close()
     session.pop("known_service", None)
     session.pop("known_time", None)
     session.pop("known_name", None)
