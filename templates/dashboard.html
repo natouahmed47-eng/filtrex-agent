@@ -1,48 +1,187 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Bookings Dashboard</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard — Filtrex AI</title>
   <style>
-    body { font-family: Arial, sans-serif; padding: 30px; }
-    h1 { margin-bottom: 20px; }
-    table { border-collapse: collapse; width: 100%; }
-    th, td { border: 1px solid #ccc; padding: 10px 14px; text-align: left; }
-    th { background: #f4f4f4; }
-    tr:nth-child(even) { background: #fafafa; }
-    p { color: #888; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f2f5;
+      min-height: 100vh;
+      color: #111;
+    }
+    /* Top nav */
+    .navbar {
+      background: #fff;
+      border-bottom: 1px solid #e5e7eb;
+      padding: 0 32px;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .navbar-brand {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      color: #111;
+    }
+    .navbar-brand span { color: #4f46e5; }
+    .navbar-actions { display: flex; gap: 12px; align-items: center; }
+    .btn {
+      display: inline-block;
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      border-radius: 8px;
+      text-decoration: none;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+      border: none;
+    }
+    .btn-ghost {
+      background: transparent;
+      color: #374151;
+      border: 1.5px solid #e5e7eb;
+    }
+    .btn-ghost:hover { background: #f3f4f6; }
+    .btn-danger {
+      background: transparent;
+      color: #b91c1c;
+      border: 1.5px solid #fecaca;
+    }
+    .btn-danger:hover { background: #fef2f2; }
+    /* Page content */
+    .page { max-width: 960px; margin: 0 auto; padding: 40px 24px; }
+    .page-header { margin-bottom: 28px; }
+    .page-title {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      color: #111;
+    }
+    .page-sub {
+      font-size: 14px;
+      color: #6b7280;
+      margin-top: 4px;
+    }
+    /* Card */
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+      overflow: hidden;
+    }
+    /* Table */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    thead {
+      background: #f9fafb;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    th {
+      padding: 13px 20px;
+      text-align: left;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #6b7280;
+    }
+    td {
+      padding: 14px 20px;
+      color: #374151;
+      border-bottom: 1px solid #f3f4f6;
+    }
+    tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: #fafafa; }
+    /* Empty state */
+    .empty {
+      padding: 60px 24px;
+      text-align: center;
+      color: #9ca3af;
+    }
+    .empty-icon {
+      font-size: 40px;
+      margin-bottom: 12px;
+    }
+    .empty-text {
+      font-size: 15px;
+      font-weight: 600;
+      color: #6b7280;
+    }
+    .empty-sub {
+      font-size: 13px;
+      color: #9ca3af;
+      margin-top: 4px;
+    }
+    /* Badge */
+    .badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 99px;
+      font-size: 12px;
+      font-weight: 600;
+      background: #ede9fe;
+      color: #4f46e5;
+    }
+    @media (max-width: 600px) {
+      .navbar { padding: 0 16px; }
+      .page { padding: 24px 16px; }
+      th, td { padding: 12px 12px; }
+    }
   </style>
 </head>
 <body>
-  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
-    <h1 style="margin:0;">Bookings Dashboard</h1>
-    <div style="display:flex; gap:10px;">
-      <a href="/settings" style="padding:7px 16px; background:#555; color:white; text-decoration:none;">Settings</a>
-      <a href="/logout" style="padding:7px 16px; background:#333; color:white; text-decoration:none;">Logout</a>
+  <nav class="navbar">
+    <div class="navbar-brand">Filtrex <span>AI</span></div>
+    <div class="navbar-actions">
+      <a href="/settings" class="btn btn-ghost">Settings</a>
+      <a href="/logout" class="btn btn-danger">Logout</a>
+    </div>
+  </nav>
+
+  <div class="page">
+    <div class="page-header">
+      <h1 class="page-title">Bookings</h1>
+      <p class="page-sub">All confirmed appointments for your account</p>
+    </div>
+
+    <div class="card">
+      {% if rows %}
+      <table>
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>Name</th>
+            <th>Service</th>
+            <th>Time</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr>
+            <td>{{ row.timestamp }}</td>
+            <td>{{ row.name }}</td>
+            <td><span class="badge">{{ row.service }}</span></td>
+            <td>{{ row.time }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty">
+        <div class="empty-icon">📅</div>
+        <div class="empty-text">No bookings yet</div>
+        <div class="empty-sub">Confirmed bookings will appear here</div>
+      </div>
+      {% endif %}
     </div>
   </div>
-  {% if rows %}
-  <table>
-    <thead>
-      <tr>
-        <th>Timestamp</th>
-        <th>Name</th>
-        <th>Service</th>
-        <th>Time</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for row in rows %}
-      <tr>
-        <td>{{ row.timestamp }}</td>
-        <td>{{ row.name }}</td>
-        <td>{{ row.service }}</td>
-        <td>{{ row.time }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p>No bookings yet</p>
-  {% endif %}
 </body>
 </html>

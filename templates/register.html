@@ -1,48 +1,147 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Create Account</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Create Account — Filtrex AI</title>
   <style>
-    body { font-family: Arial, sans-serif; display: flex; justify-content: center; padding-top: 60px; background: #f4f4f4; }
-    .box { background: white; padding: 30px 40px; border: 1px solid #ddd; width: 340px; }
-    h2 { margin-bottom: 20px; }
-    label { display: block; font-size: 13px; margin-bottom: 4px; }
-    input, select { width: 100%; padding: 8px; margin-bottom: 14px; box-sizing: border-box; border: 1px solid #ccc; }
-    button { width: 100%; padding: 9px; background: #333; color: white; border: none; cursor: pointer; }
-    button:hover { background: #555; }
-    .error { color: red; margin-bottom: 12px; font-size: 14px; }
-    .login-link { margin-top: 14px; font-size: 13px; text-align: center; }
-    .login-link a { color: #333; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f2f5;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .card {
+      background: #ffffff;
+      border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+      padding: 48px 40px;
+      width: 100%;
+      max-width: 440px;
+    }
+    .logo {
+      font-size: 22px;
+      font-weight: 700;
+      color: #111;
+      letter-spacing: -0.5px;
+      margin-bottom: 8px;
+    }
+    .logo span { color: #4f46e5; }
+    .subtitle {
+      font-size: 14px;
+      color: #6b7280;
+      margin-bottom: 32px;
+    }
+    .section-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #9ca3af;
+      margin-bottom: 14px;
+      margin-top: 24px;
+      border-top: 1px solid #f3f4f6;
+      padding-top: 20px;
+    }
+    .section-label:first-of-type { margin-top: 0; border-top: none; padding-top: 0; }
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: #374151;
+      margin-bottom: 6px;
+    }
+    input[type="text"], input[type="password"], select {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1.5px solid #e5e7eb;
+      border-radius: 8px;
+      font-size: 14px;
+      color: #111;
+      outline: none;
+      transition: border-color 0.15s;
+      margin-bottom: 16px;
+      background: #fff;
+    }
+    input:focus, select:focus { border-color: #4f46e5; }
+    .hint {
+      font-size: 12px;
+      color: #9ca3af;
+      margin-top: -12px;
+      margin-bottom: 16px;
+    }
+    button[type="submit"] {
+      width: 100%;
+      padding: 11px;
+      background: #4f46e5;
+      color: #fff;
+      font-size: 15px;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s;
+      margin-top: 8px;
+    }
+    button[type="submit"]:hover { background: #4338ca; }
+    .error {
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      color: #b91c1c;
+      font-size: 13px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+    .footer-link {
+      text-align: center;
+      margin-top: 22px;
+      font-size: 13px;
+      color: #6b7280;
+    }
+    .footer-link a {
+      color: #4f46e5;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .footer-link a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
-  <div class="box">
-    <h2>Create Account</h2>
+  <div class="card">
+    <div class="logo">Filtrex <span>AI</span></div>
+    <p class="subtitle">Create your account to get started</p>
     {% if error %}
-    <p class="error">{{ error }}</p>
+    <div class="error">{{ error }}</div>
     {% endif %}
     <form method="POST">
-      <label>Username</label>
-      <input type="text" name="username" required />
+      <div class="section-label">Account Details</div>
+      <label for="username">Username</label>
+      <input type="text" id="username" name="username" placeholder="Choose a username" required />
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" placeholder="Choose a password" required />
 
-      <label>Password</label>
-      <input type="password" name="password" required />
-
-      <label>Business Name</label>
-      <input type="text" name="business_name" />
-
-      <label>Services (comma-separated)</label>
-      <input type="text" name="services" />
-
-      <label>Default Language</label>
-      <select name="default_language">
+      <div class="section-label">Business Details</div>
+      <label for="business_name">Business Name</label>
+      <input type="text" id="business_name" name="business_name" placeholder="e.g. Bright Smile Studio" />
+      <label for="services">Services</label>
+      <input type="text" id="services" name="services" placeholder="e.g. تنظيف أسنان, تبييض أسنان" />
+      <p class="hint">Separate multiple services with commas</p>
+      <label for="default_language">Default Language</label>
+      <select id="default_language" name="default_language">
         <option value="ar">Arabic</option>
         <option value="en">English</option>
       </select>
 
       <button type="submit">Create Account</button>
     </form>
-    <div class="login-link"><a href="/login">Already have an account? Login</a></div>
+    <div class="footer-link">
+      Already have an account? <a href="/login">Sign in</a>
+    </div>
   </div>
 </body>
 </html>
