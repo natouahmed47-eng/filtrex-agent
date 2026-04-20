@@ -113,20 +113,41 @@ def webhook():
     sender = request.form.get("From", "")
     print(f"[WEBHOOK] From: {sender} | Message: {incoming_msg}")
 
-    ai_response = requests.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-            "Content-Type": "application/json"
-        },
-        json={
-            "model": "gpt-4o-mini",
-            "messages": [
-                {"role": "user", "content": incoming_msg}
-            ]
-        }
-    )
-    reply_text = ai_response.json()["choices"][0]["message"]["content"]
+    fallback = "Something went wrong, please try again."
+
+    try:
+        ai_response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a startup idea evaluator. "
+                            "Always reply with exactly this structure:\n\n"
+                            "Verdict: BUILD / DON'T BUILD / BUILD WITH CONDITIONS\n"
+                            "Reasoning: ...\n"
+                            "Risks: ...\n"
+                            "Next steps:\n1. ...\n2. ...\n3. ..."
+                        )
+                    },
+                    {
+                        "role": "user",
+                        "content": incoming_msg
+                    }
+                ]
+            }
+        )
+        reply_text = ai_response.json()["choices"][0]["message"]["content"]
+        print(f"[WEBHOOK] AI response: {reply_text}")
+    except Exception as e:
+        print(f"[WEBHOOK] Error: {e}")
+        reply_text = fallback
 
     resp = MessagingResponse()
     resp.message(reply_text)
