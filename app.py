@@ -104,17 +104,10 @@ wa_sessions = {}
 
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
-    incoming_msg = request.form.get("Body", "")
-    sender = request.form.get("From", "")
-    print(f"[WHATSAPP] From: {sender} | Message: {incoming_msg}")
-    return "WhatsApp webhook is working", 200
-
-@app.route("/webhook", methods=["POST"])
-def webhook():
     try:
         incoming_msg = request.form.get("Body", "").strip()
         sender = request.form.get("From", "")
-        print(f"[WEBHOOK] From: {sender} | Message: {incoming_msg}")
+        print(f"[WHATSAPP] From: {sender} | Message: {incoming_msg}")
 
         msg_lower = incoming_msg.lower()
         state = wa_sessions.get(sender, {})
@@ -136,7 +129,7 @@ def webhook():
                     con = sqlite3.connect(DB_FILE)
                     con.execute(
                         "INSERT INTO bookings (user_id, name, service, time, timestamp) VALUES (?, ?, ?, ?, ?)",
-                        ("webhook", name, known_service, known_time,
+                        ("whatsapp", name, known_service, known_time,
                          datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
                     )
                     con.commit()
@@ -148,7 +141,7 @@ def webhook():
                         f"الموعد: {known_time}\n"
                         f"الاسم: {name}"
                     )
-                    print(f"[WEBHOOK] Booking saved — {name} | {known_service} | {known_time}")
+                    print(f"[WHATSAPP] Booking saved — {name} | {known_service} | {known_time}")
                 else:
                     reply = "حدث خطأ، حاول مرة أخرى."
 
@@ -198,19 +191,19 @@ def webhook():
                     state["awaiting_name"] = True
                     reply = "رائع! ما الاسم الذي تريد تأكيد الحجز باسمه؟"
                 elif known_service and not known_time:
-                    reply = f"ممتاز! متى تفضل موعدك؟ (مثال: غدًا صباحًا)"
+                    reply = "ممتاز! متى تفضل موعدك؟ (مثال: غدًا صباحًا)"
                 elif known_time and not known_service:
                     reply = "ما الخدمة التي تريد حجزها؟"
                 else:
                     reply = "أهلاً! كيف أقدر أساعدك؟ يمكنك ذكر الخدمة والوقت المناسب لك."
 
-        print(f"[WEBHOOK] Reply: {reply}")
+        print(f"[WHATSAPP] Reply: {reply}")
         resp = MessagingResponse()
         resp.message(reply)
         return str(resp), 200, {"Content-Type": "text/xml"}
 
     except Exception as e:
-        print(f"[WEBHOOK] Error: {e}")
+        print(f"[WHATSAPP] Error: {e}")
         resp = MessagingResponse()
         resp.message("Something went wrong, please try again.")
         return str(resp), 200, {"Content-Type": "text/xml"}
