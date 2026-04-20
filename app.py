@@ -71,6 +71,33 @@ def dashboard():
 def chat():
     user_message = request.json.get("message")
 
+    if session.get("awaiting_name"):
+        known_name = user_message.strip()
+        session["known_name"] = known_name
+        session["awaiting_name"] = False
+        known_service = session.get("known_service")
+        known_time = session.get("known_time")
+        if known_service and known_time:
+            booking = {"service": known_service, "time": known_time, "name": known_name}
+            bookings.append(booking)
+            print(f"[BOOKING CONFIRMED] {booking}")
+            csv_file = "bookings.csv"
+            file_exists = os.path.isfile(csv_file)
+            with open(csv_file, "a", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=["timestamp", "user_id", "name", "service", "time"])
+                if not file_exists:
+                    writer.writeheader()
+                writer.writerow({
+                    "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "user_id": str(session.get("user_id", "")),
+                    "name": known_name,
+                    "service": known_service,
+                    "time": known_time
+                })
+            session.clear()
+            reply = f"Perfect 👌 Your booking for {known_service} at {known_time} under the name {known_name} is now confirmed."
+            return jsonify({"reply": reply, "booking_confirmed": True, "booking": booking})
+
     greetings = ["سلام", "مرحبا", "اهلا", "hello", "hi"]
     clean_msg = user_message.strip().lower()
     if clean_msg in greetings:
