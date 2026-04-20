@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Filtrex AI</title>
+</head>
+<body>
+  <div id="conversation"></div>
+  <input type="text" id="message" placeholder="Type a message..." />
+  <button onclick="sendMessage()">Send</button>
+
+  <script>
+    async function sendMessage() {
+      const input = document.getElementById('message');
+      const text = input.value.trim();
+      if (!text) return;
+
+      const conversation = document.getElementById('conversation');
+      conversation.innerHTML += '<p><strong>You:</strong> ' + text + '</p>';
+      input.value = '';
+
+      const response = await fetch('/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text })
+      });
+
+      const data = await response.json();
+      conversation.innerHTML += '<p><strong>AI:</strong> ' + data.reply + '</p>';
+    }
+  </script>
+</body>
+</html>

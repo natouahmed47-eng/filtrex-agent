@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 import requests
 import os
 
@@ -8,7 +8,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 @app.route("/")
 def home():
-    return "Filtrex AI is running"
+    return render_template("index.html")
 
 @app.route("/chat", methods=["POST"])
 def chat():
