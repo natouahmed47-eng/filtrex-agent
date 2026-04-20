@@ -262,6 +262,7 @@ def extract_booking_fields(message, allowed_services=None):
 
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
+    print("🔥 WHATSAPP ROUTE HIT")
     sender       = request.form.get("From", "").strip()
     incoming_msg = request.form.get("Body", "").strip()
     print(f"[WHATSAPP] sender={sender!r} message={incoming_msg!r}")
