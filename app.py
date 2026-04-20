@@ -153,24 +153,29 @@ def whatsapp():
     try:
         incoming_msg = request.form.get("Body", "").strip()
         sender = request.form.get("From", "")
-        print(f"[WHATSAPP] From: {sender} | Message: {incoming_msg}")
+        print(f"[WHATSAPP] sender={sender}")
+        print(f"[WHATSAPP] message={incoming_msg!r}")
 
         msg_lower = incoming_msg.lower()
         state = _wa_load(sender)
+        print(f"[WHATSAPP] loaded_state={state}")
 
         # Step 1: Greeting — reset state
         if msg_lower in ["سلام", "مرحبا", "اهلا", "hello", "hi"]:
             _wa_delete(sender)
+            print(f"[WHATSAPP] state_deleted (greeting)")
             reply = "أهلاً 👋 كيف أقدر أساعدك اليوم؟"
 
         else:
             known_service = state.get("known_service")
             known_time = state.get("known_time")
             awaiting_name = state.get("awaiting_name", False)
+            print(f"[WHATSAPP] awaiting_name={awaiting_name} | known_service={known_service} | known_time={known_time}")
 
             # Step 2: Awaiting name → confirm booking
             if awaiting_name:
                 name = incoming_msg.strip()
+                print(f"[WHATSAPP] capturing_name={name!r}")
                 if known_service and known_time:
                     con = sqlite3.connect(DB_FILE)
                     con.execute(
@@ -181,14 +186,17 @@ def whatsapp():
                     con.commit()
                     con.close()
                     _wa_delete(sender)
+                    print(f"[WHATSAPP] booking_saved name={name} service={known_service} time={known_time}")
+                    print(f"[WHATSAPP] state_deleted (booking confirmed)")
                     reply = (
                         f"تم تأكيد حجزك بنجاح ✅\n"
                         f"الخدمة: {known_service}\n"
                         f"الموعد: {known_time}\n"
                         f"الاسم: {name}"
                     )
-                    print(f"[WHATSAPP] Booking saved — {name} | {known_service} | {known_time}")
                 else:
+                    print(f"[WHATSAPP] awaiting_name=True but service/time missing — resetting")
+                    _wa_delete(sender)
                     reply = "حدث خطأ، حاول مرة أخرى."
 
             else:
@@ -207,6 +215,7 @@ def whatsapp():
                         if key in msg_lower:
                             known_service = val
                             break
+                print(f"[WHATSAPP] detected_service={known_service}")
 
                 # Step 4: Detect time
                 DAY_MAP = {
@@ -226,16 +235,19 @@ def whatsapp():
                         known_time = detected_day
                     elif detected_period:
                         known_time = detected_period
+                print(f"[WHATSAPP] detected_time={known_time}")
 
                 # Step 5: Save state
                 state["known_service"] = known_service
                 state["known_time"] = known_time
                 _wa_save(sender, state)
+                print(f"[WHATSAPP] state_saved={state}")
 
                 # Step 6: Ask for next missing field
                 if known_service and known_time:
                     state["awaiting_name"] = True
                     _wa_save(sender, state)
+                    print(f"[WHATSAPP] state_saved awaiting_name=True")
                     reply = "رائع! ما الاسم الذي تريد تأكيد الحجز باسمه؟"
                 elif known_service and not known_time:
                     reply = "ممتاز! متى تفضل موعدك؟ (مثال: غدًا صباحًا)"
@@ -244,15 +256,17 @@ def whatsapp():
                 else:
                     reply = "أهلاً! كيف أقدر أساعدك؟ يمكنك ذكر الخدمة والوقت المناسب لك."
 
-        print(f"[WHATSAPP] Reply: {reply}")
+        print(f"[WHATSAPP] reply={reply!r}")
         resp = MessagingResponse()
         resp.message(reply)
         return str(resp), 200, {"Content-Type": "text/xml"}
 
     except Exception as e:
-        print(f"[WHATSAPP] Error: {e}")
+        import traceback
+        print(f"[WHATSAPP] EXCEPTION: {e}")
+        print(traceback.format_exc())
         resp = MessagingResponse()
-        resp.message("Something went wrong, please try again.")
+        resp.message("حدث خطأ مؤقت، حاول مرة أخرى.")
         return str(resp), 200, {"Content-Type": "text/xml"}
 
 @app.route("/register", methods=["GET", "POST"])
