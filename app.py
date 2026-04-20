@@ -130,7 +130,22 @@ def chat():
                         "  BOOKING_DATA: {\"service\":\"...\",\"time\":\"...\",\"name\":\"...\"}\n"
                         "- Replace the ... values with the actual service, time, and name collected.\n"
                         "- This line must be valid JSON on a single line.\n"
-                        "- Only append this line when the booking is fully confirmed. Never include it in other replies."
+                        "- Only append this line when the booking is fully confirmed. Never include it in other replies.\n\n"
+                        "Conversation control rules:\n"
+                        "- You must strictly follow this order:\n"
+                        "  1. Identify service\n"
+                        "  2. Identify preferred time\n"
+                        "  3. Identify name\n"
+                        "  4. Confirm booking\n"
+                        "- Never jump backward in the flow.\n"
+                        "- Never ask about something already known.\n"
+                        "- If two pieces of information are already known, immediately ask for the missing one.\n"
+                        "- If all three are known, immediately confirm the booking (no extra questions).\n"
+                        "- Always keep the conversation moving forward step-by-step.\n"
+                        "- Do not restart or rephrase previous steps.\n"
+                        "- Do not ask open-ended questions if a specific question is possible.\n\n"
+                        "Goal:\n"
+                        "Fastest path to booking confirmation with zero repetition."
                         + context_str
                     )
                 },
