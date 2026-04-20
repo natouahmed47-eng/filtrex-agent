@@ -145,7 +145,16 @@ def chat():
                         "- Do not restart or rephrase previous steps.\n"
                         "- Do not ask open-ended questions if a specific question is possible.\n\n"
                         "Goal:\n"
-                        "Fastest path to booking confirmation with zero repetition."
+                        "Fastest path to booking confirmation with zero repetition.\n\n"
+                        "Confirmation tone:\n"
+                        "- When confirming a booking, always use a strong, final, action-oriented tone.\n"
+                        "- Examples of correct confirmations:\n"
+                        "  'Perfect 👌 Your booking for [service] at [time] under the name [name] is now confirmed.'\n"
+                        "  'Done ✅ I've secured your [service] appointment for [time] under the name [name].'\n"
+                        "  'All set. Your appointment is confirmed for [service] at [time].'\n"
+                        "- Do not sound hesitant.\n"
+                        "- Do not ask any more questions after confirmation.\n"
+                        "- Make it feel like the booking is already secured."
                         + context_str
                     )
                 },
