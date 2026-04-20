@@ -34,7 +34,8 @@ def chat():
     user_message = request.json.get("message")
 
     greetings = ["سلام", "مرحبا", "اهلا", "hello", "hi"]
-    if any(word in user_message.lower() for word in greetings):
+    clean_msg = user_message.strip().lower()
+    if clean_msg in greetings:
         session.clear()
 
     known_service = session.get("known_service")
