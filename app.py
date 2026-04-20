@@ -85,17 +85,16 @@ def dashboard():
 def chat():
     user_message = request.json.get("message")
 
-    # STATE GUARD — highest priority, runs before all other logic
-    known_service = session.get("known_service")
-    known_time = session.get("known_time")
-    known_name = session.get("known_name")
-    awaiting_name = session.get("awaiting_name", False)
-
-    # Case 1: waiting for name → confirm immediately
-    if awaiting_name:
+    # awaiting_name — absolute top priority, runs before everything
+    if session.get("awaiting_name"):
         name = user_message.strip()
+
         session["known_name"] = name
         session["awaiting_name"] = False
+
+        known_service = session.get("known_service")
+        known_time = session.get("known_time")
+
         if known_service and known_time:
             booking = {"service": known_service, "time": known_time, "name": name}
             bookings.append(booking)
@@ -117,23 +116,19 @@ def chat():
             session.pop("known_time", None)
             session.pop("known_name", None)
             session.pop("awaiting_name", None)
-            full_reply = (
-                f"تم تأكيد حجزك بنجاح ✅\n"
-                f"الخدمة: {known_service}\n"
-                f"الموعد: {known_time}\n"
-                f"الاسم: {name}\n\n"
-                f"يسعدنا خدمتك، وننتظرك في الموعد.\n"
-                f'BOOKING_DATA: {{"service":"{known_service}","time":"{known_time}","name":"{name}"}}'
-            )
-            clean_reply = "\n".join(
-                line for line in full_reply.splitlines()
-                if not line.strip().startswith("BOOKING_DATA:")
-            ).strip()
             return jsonify({
-                "reply": clean_reply,
+                "reply": f"تم تأكيد حجزك بنجاح ✅\nالخدمة: {known_service}\nالموعد: {known_time}\nالاسم: {name}",
                 "booking_confirmed": True,
                 "booking": booking
             })
+
+        return jsonify({"reply": "حدث خطأ، حاول مرة أخرى."})
+
+    # STATE GUARD — runs after awaiting_name check
+    known_service = session.get("known_service")
+    known_time = session.get("known_time")
+    known_name = session.get("known_name")
+    awaiting_name = session.get("awaiting_name", False)
 
     # Case 2: service and time known but no name → ask for name
     if known_service and known_time and not known_name:
