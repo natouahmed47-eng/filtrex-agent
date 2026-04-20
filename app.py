@@ -2,6 +2,8 @@ from flask import Flask, request, jsonify, render_template, session
 import requests
 import os
 import json
+import csv
+import datetime
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SESSION_SECRET", "dev-secret")
@@ -276,6 +278,20 @@ def chat():
     if booking:
         bookings.append(booking)
         print(f"[BOOKING CONFIRMED] {booking}")
+
+        csv_file = "bookings.csv"
+        file_exists = os.path.isfile(csv_file)
+        with open(csv_file, "a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=["timestamp", "name", "service", "time"])
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow({
+                "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "name": booking.get("name", ""),
+                "service": booking.get("service", ""),
+                "time": booking.get("time", "")
+            })
+
         session.clear()
         return jsonify({"reply": clean_reply, "booking_confirmed": True, "booking": booking})
 
