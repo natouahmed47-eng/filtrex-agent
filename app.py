@@ -156,11 +156,80 @@ def twilio_reply(text):
     resp.message(text)
     return str(resp), 200, {"Content-Type": "text/xml"}
 
+_SERVICE_MAP = {
+    "تنظيف": "تنظيف أسنان",
+    "تبييض": "تبييض أسنان",
+    "فحص":   "فحص أسنان",
+    "cleaning":  "teeth cleaning",
+    "whitening": "teeth whitening",
+    "checkup":   "dental checkup",
+    "check-up":  "dental checkup",
+}
+_DAY_MAP = {
+    "غد": "غدًا", "غدا": "غدًا", "غدًا": "غدًا", "بكرة": "غدًا",
+    "today": "اليوم", "اليوم": "اليوم", "tomorrow": "غدًا",
+}
+_PERIOD_MAP = {
+    "مساء": "مساءً", "evening": "مساءً", "afternoon": "مساءً",
+    "صباح": "صباحًا", "morning": "صباحًا",
+}
+
+def extract_booking_fields(message, allowed_services=None):
+    import re
+    msg_lower = message.lower()
+
+    # Service — detect keyword then validate against allowed list
+    raw_service = next((val for key, val in _SERVICE_MAP.items() if key in msg_lower), None)
+    service = None
+    if raw_service:
+        if allowed_services:
+            service = next(
+                (s for s in allowed_services if
+                 raw_service.lower() == s.lower() or
+                 raw_service.lower() in s.lower() or
+                 s.lower() in raw_service.lower()),
+                None
+            )
+        else:
+            service = raw_service
+
+    # Time — combine day + period
+    detected_day    = next((v for k, v in _DAY_MAP.items()    if k in msg_lower), None)
+    detected_period = next((v for k, v in _PERIOD_MAP.items() if k in msg_lower), None)
+    if detected_day and detected_period:
+        time = f"{detected_day} {detected_period}"
+    elif detected_day:
+        time = detected_day
+    elif detected_period:
+        time = detected_period
+    else:
+        time = None
+
+    # Name — extract from explicit prefix patterns (Arabic and English)
+    name = None
+    name_patterns = [
+        r'اسمي\s+(\S+)',
+        r'باسم\s+(\S+)',
+        r'أنا\s+(\S+)',
+        r'انا\s+(\S+)',
+        r'(?i)my name is\s+(\S+)',
+        r'(?i)i am\s+(\S+)',
+        r"(?i)i'm\s+(\S+)",
+        r'(?i)name[:\s]+(\S+)',
+    ]
+    for pat in name_patterns:
+        m = re.search(pat, message)
+        if m:
+            name = m.group(1).strip()
+            break
+
+    return {"service": service, "time": time, "name": name, "raw_service": raw_service}
+
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
     try:
         # Step 1: Read inputs
-        sender      = request.form.get("From", "").strip()
+        sender       = request.form.get("From", "").strip()
         incoming_msg = request.form.get("Body", "").strip()
         print(f"[WHATSAPP] sender={sender}")
         print(f"[WHATSAPP] message={incoming_msg!r}")
@@ -178,74 +247,51 @@ def whatsapp():
         # Step 3: Greeting — clear and return
         if msg_lower in {"سلام", "مرحبا", "اهلا", "hello", "hi"}:
             wa_clear(sender)
-            print(f"[WHATSAPP] greeting — state cleared")
+            print("[WHATSAPP] greeting — state cleared")
             return twilio_reply("أهلاً 👋 كيف أقدر أساعدك اليوم؟")
 
-        # Step 4: Detect service and time from message
-        SERVICE_MAP = {
-            "تنظيف": "تنظيف أسنان",
-            "تبييض": "تبييض أسنان",
-            "فحص":   "فحص أسنان",
-            "cleaning":  "teeth cleaning",
-            "whitening": "teeth whitening",
-            "checkup":   "dental checkup",
-            "check-up":  "dental checkup",
-        }
-        DAY_MAP = {
-            "غد": "غدًا", "غدا": "غدًا", "غدًا": "غدًا", "بكرة": "غدًا",
-            "today": "اليوم", "اليوم": "اليوم", "tomorrow": "غدًا",
-        }
-        PERIOD_MAP = {
-            "مساء": "مساءً", "evening": "مساءً", "afternoon": "مساءً",
-            "صباح": "صباحًا", "morning": "صباحًا",
-        }
-        detected_service = next((val for key, val in SERVICE_MAP.items() if key in msg_lower), None)
-        detected_day     = next((DAY_MAP[k]    for k in DAY_MAP    if k in msg_lower), None)
-        detected_period  = next((PERIOD_MAP[k] for k in PERIOD_MAP if k in msg_lower), None)
-        if detected_day and detected_period:
-            detected_time = f"{detected_day} {detected_period}"
-        elif detected_day:
-            detected_time = detected_day
-        elif detected_period:
-            detected_time = detected_period
-        else:
-            detected_time = None
-        print(f"[WHATSAPP] detected_service={detected_service} detected_time={detected_time}")
+        # Step 4: Extract all fields from message
+        biz     = get_biz(WHATSAPP_USER_ID)
+        allowed = biz.get("services", [])
+        extracted = extract_booking_fields(incoming_msg, allowed)
+        print(f"[WHATSAPP] extracted={extracted}")
 
-        # Step 5: Merge detected values into state (only if not already set)
+        # Step 5: Merge extracted values into state (only if not already set)
         state_changed = False
-        if detected_service and not known_service:
-            biz     = get_biz(WHATSAPP_USER_ID)
-            allowed = biz.get("services", [])
-            if allowed:
-                match = next(
-                    (s for s in allowed if
-                     detected_service.lower() == s.lower() or
-                     detected_service.lower() in s.lower() or
-                     s.lower() in detected_service.lower()),
-                    None
-                )
-                if not match:
-                    names = "، ".join(allowed)
-                    print(f"[WHATSAPP] service not allowed — available={names}")
-                    return twilio_reply(f"عذراً، هذه الخدمة غير متاحة. الخدمات المتاحة: {names}")
-                detected_service = match
-            known_service = detected_service
+
+        if extracted["service"] and not known_service:
+            known_service = extracted["service"]
             state_changed = True
-        if detected_time and not known_time:
-            known_time    = detected_time
+        elif extracted["raw_service"] and not known_service:
+            # A service keyword was detected but it's not in the allowed list
+            names = "، ".join(allowed)
+            print(f"[WHATSAPP] service not allowed — available={names}")
+            return twilio_reply(f"عذراً، هذه الخدمة غير متاحة. الخدمات المتاحة: {names}")
+
+        if extracted["time"] and not known_time:
+            known_time    = extracted["time"]
             state_changed = True
+
+        if extracted["name"] and not known_name:
+            known_name    = extracted["name"]
+            state_changed = True
+
+        # Step 6: If awaiting_name and no name extracted yet — treat full message as name
+        if awaiting_name and not known_name:
+            known_name    = incoming_msg.strip()
+            state_changed = True
+            print(f"[WHATSAPP] awaiting_name fallback — capturing_name={known_name!r}")
+
         if state_changed:
             wa_save(sender, known_service, known_time, known_name, awaiting_name)
+            print(f"[WHATSAPP] state_saved service={known_service} time={known_time} name={known_name}")
 
-        # Step 6: If awaiting name — treat message as name, save booking
-        if awaiting_name:
-            name = incoming_msg.strip()
-            print(f"[WHATSAPP] capturing_name={name!r}")
+        # Step 7: All three fields known — confirm booking immediately
+        if known_service and known_time and known_name:
             con = sqlite3.connect(DB_FILE)
             con.execute(
                 "INSERT INTO bookings (user_id, name, service, time, timestamp) VALUES (?, ?, ?, ?, ?)",
-                (str(WHATSAPP_USER_ID), name, known_service, known_time,
+                (str(WHATSAPP_USER_ID), known_name, known_service, known_time,
                  datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
             )
             con.commit()
@@ -255,25 +301,25 @@ def whatsapp():
                 f"تم تأكيد حجزك بنجاح ✅\n"
                 f"الخدمة: {known_service}\n"
                 f"الموعد: {known_time}\n"
-                f"الاسم: {name}"
+                f"الاسم: {known_name}"
             )
-            print(f"[WHATSAPP] booking_saved name={name} service={known_service} time={known_time}")
+            print(f"[WHATSAPP] booking_saved name={known_name} service={known_service} time={known_time}")
             return twilio_reply(reply)
 
-        # Step 7: No service yet
+        # Step 8: Ask for missing service
         if not known_service:
             if known_time:
                 return twilio_reply("ما الخدمة التي تريد حجزها؟")
-            biz   = get_biz(WHATSAPP_USER_ID)
-            names = "، ".join(biz.get("services", [])) or "الخدمات المتاحة"
+            names = "، ".join(allowed) or "الخدمات المتاحة"
             return twilio_reply(f"أهلاً! الخدمات المتاحة: {names}. أيها تفضل؟")
 
-        # Step 8: Have service, no time
+        # Step 9: Ask for missing time
         if not known_time:
             return twilio_reply("ممتاز! متى تفضل موعدك؟ (مثال: غدًا صباحًا)")
 
-        # Step 9: Have service + time — ask for name
+        # Step 10: Ask for missing name — set awaiting_name flag
         wa_save(sender, known_service, known_time, known_name, True)
+        print("[WHATSAPP] state_saved awaiting_name=True")
         return twilio_reply("رائع! ما الاسم الذي تريد تأكيد الحجز باسمه؟")
 
     except Exception as e:
