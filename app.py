@@ -8,6 +8,7 @@ import sqlite3
 import datetime
 
 app = Flask(__name__)
+print("🚀 WHATSAPP TEST VERSION LIVE")
 
 import secrets as _secrets
 _session_secret = os.getenv("SESSION_SECRET")
@@ -267,6 +268,10 @@ def whatsapp():
     incoming_msg = request.form.get("Body", "").strip()
     print(f"[WHATSAPP] sender={sender!r} message={incoming_msg!r}")
     return twilio_reply("TEST OK")
+
+@app.route("/whatsapp-test", methods=["GET"])
+def whatsapp_test():
+    return "WHATSAPP TEST ROUTE LIVE", 200, {"Content-Type": "text/plain"}
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
