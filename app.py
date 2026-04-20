@@ -158,7 +158,13 @@ def chat():
                         "  'All set. Your appointment is confirmed for [service] at [time].'\n"
                         "- Do not sound hesitant.\n"
                         "- Do not ask any more questions after confirmation.\n"
-                        "- Make it feel like the booking is already secured."
+                        "- Make it feel like the booking is already secured.\n\n"
+                        "Strict data rules:\n"
+                        "- Never assume or invent service, time, or name.\n"
+                        "- Only use information explicitly provided by the user in the current conversation.\n"
+                        "- If any required information is missing, ask for it.\n"
+                        "- If no information is known, start from step 1 (ask for service).\n"
+                        "- After a session reset, behave as if this is a completely new user with no prior data."
                         + context_str
                     )
                 },
