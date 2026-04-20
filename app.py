@@ -54,6 +54,15 @@ def init_db():
             default_language TEXT
         )
     """)
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS whatsapp_state (
+            phone         TEXT PRIMARY KEY,
+            known_service TEXT,
+            known_time    TEXT,
+            known_name    TEXT,
+            awaiting_name INTEGER DEFAULT 0
+        )
+    """)
     con.execute("INSERT OR IGNORE INTO users (id, username, password) VALUES (1, 'admin', '123456')")
     con.execute("INSERT OR IGNORE INTO users (id, username, password) VALUES (2, 'clinic2', '123456')")
     con.execute("INSERT OR IGNORE INTO business_settings (user_id, business_name, services, default_language) VALUES (1, 'Veltrix Dental Clinic', 'تنظيف أسنان,تبييض أسنان', 'ar')")
@@ -100,7 +109,44 @@ def home():
 def assistant():
     return render_template("index.html")
 
-wa_sessions = {}
+def _wa_load(phone):
+    con = sqlite3.connect(DB_FILE)
+    con.row_factory = sqlite3.Row
+    row = con.execute(
+        "SELECT known_service, known_time, known_name, awaiting_name FROM whatsapp_state WHERE phone = ?",
+        (phone,)
+    ).fetchone()
+    con.close()
+    if row:
+        return {
+            "known_service": row["known_service"],
+            "known_time": row["known_time"],
+            "known_name": row["known_name"],
+            "awaiting_name": bool(row["awaiting_name"]),
+        }
+    return {"known_service": None, "known_time": None, "known_name": None, "awaiting_name": False}
+
+def _wa_save(phone, state):
+    con = sqlite3.connect(DB_FILE)
+    con.execute(
+        """INSERT INTO whatsapp_state (phone, known_service, known_time, known_name, awaiting_name)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(phone) DO UPDATE SET
+               known_service = excluded.known_service,
+               known_time    = excluded.known_time,
+               known_name    = excluded.known_name,
+               awaiting_name = excluded.awaiting_name""",
+        (phone, state.get("known_service"), state.get("known_time"),
+         state.get("known_name"), 1 if state.get("awaiting_name") else 0)
+    )
+    con.commit()
+    con.close()
+
+def _wa_delete(phone):
+    con = sqlite3.connect(DB_FILE)
+    con.execute("DELETE FROM whatsapp_state WHERE phone = ?", (phone,))
+    con.commit()
+    con.close()
 
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
@@ -110,11 +156,11 @@ def whatsapp():
         print(f"[WHATSAPP] From: {sender} | Message: {incoming_msg}")
 
         msg_lower = incoming_msg.lower()
-        state = wa_sessions.get(sender, {})
+        state = _wa_load(sender)
 
         # Step 1: Greeting — reset state
         if msg_lower in ["سلام", "مرحبا", "اهلا", "hello", "hi"]:
-            wa_sessions[sender] = {}
+            _wa_delete(sender)
             reply = "أهلاً 👋 كيف أقدر أساعدك اليوم؟"
 
         else:
@@ -134,7 +180,7 @@ def whatsapp():
                     )
                     con.commit()
                     con.close()
-                    wa_sessions[sender] = {}
+                    _wa_delete(sender)
                     reply = (
                         f"تم تأكيد حجزك بنجاح ✅\n"
                         f"الخدمة: {known_service}\n"
@@ -184,11 +230,12 @@ def whatsapp():
                 # Step 5: Save state
                 state["known_service"] = known_service
                 state["known_time"] = known_time
-                wa_sessions[sender] = state
+                _wa_save(sender, state)
 
                 # Step 6: Ask for next missing field
                 if known_service and known_time:
                     state["awaiting_name"] = True
+                    _wa_save(sender, state)
                     reply = "رائع! ما الاسم الذي تريد تأكيد الحجز باسمه؟"
                 elif known_service and not known_time:
                     reply = "ممتاز! متى تفضل موعدك؟ (مثال: غدًا صباحًا)"
