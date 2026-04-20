@@ -1,13 +1,29 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, session
 import requests
 import os
 import json
 
 app = Flask(__name__)
+app.secret_key = "filtrex-session-key"
 
 bookings = []
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+SERVICE_KEYWORDS = [
+    "تنظيف", "تبييض", "فحص", "علاج", "حجز",
+    "cleaning", "whitening", "consultation", "checkup", "check-up", "treatment", "appointment"
+]
+
+TIME_KEYWORDS = [
+    "اليوم", "غداً", "غدًا", "مساء", "صباح",
+    "today", "tomorrow", "morning", "evening", "afternoon",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"
+]
+
+NAME_TRIGGERS = [
+    "what name", "your name", "اسم", "الاسم", "confirm the booking under", "booking under"
+]
 
 @app.route("/")
 def home():
@@ -16,6 +32,49 @@ def home():
 @app.route("/chat", methods=["POST"])
 def chat():
     user_message = request.json.get("message")
+
+    known_service = session.get("known_service")
+    known_time = session.get("known_time")
+    known_name = session.get("known_name")
+    awaiting_name = session.get("awaiting_name", False)
+
+    msg_lower = user_message.lower()
+
+    if not known_service:
+        for kw in SERVICE_KEYWORDS:
+            if kw.lower() in msg_lower:
+                known_service = user_message.strip()
+                break
+
+    if not known_time:
+        for kw in TIME_KEYWORDS:
+            if kw.lower() in msg_lower:
+                known_time = kw
+                break
+
+    if awaiting_name and not known_name:
+        words = user_message.strip().split()
+        if 1 <= len(words) <= 3:
+            known_name = user_message.strip()
+
+    session["known_service"] = known_service
+    session["known_time"] = known_time
+    session["known_name"] = known_name
+
+    context_parts = []
+    if known_service:
+        context_parts.append(f"service={known_service}")
+    if known_time:
+        context_parts.append(f"time={known_time}")
+    if known_name:
+        context_parts.append(f"name={known_name}")
+
+    context_str = ""
+    if context_parts:
+        context_str = (
+            f"\n\nCurrent known info: {', '.join(context_parts)}. "
+            "Do NOT ask for this information again. Use it directly to move the conversation forward."
+        )
 
     response = requests.post(
         "https://api.openai.com/v1/chat/completions",
@@ -72,6 +131,7 @@ def chat():
                         "- Replace the ... values with the actual service, time, and name collected.\n"
                         "- This line must be valid JSON on a single line.\n"
                         "- Only append this line when the booking is fully confirmed. Never include it in other replies."
+                        + context_str
                     )
                 },
                 {
@@ -98,9 +158,16 @@ def chat():
 
     clean_reply = "\n".join(clean_lines).strip()
 
+    reply_lower = clean_reply.lower()
+    if any(trigger in reply_lower for trigger in NAME_TRIGGERS) and not known_name:
+        session["awaiting_name"] = True
+    else:
+        session["awaiting_name"] = awaiting_name
+
     if booking:
         bookings.append(booking)
         print(f"[BOOKING CONFIRMED] {booking}")
+        session.clear()
         return jsonify({"reply": clean_reply, "booking_confirmed": True, "booking": booking})
 
     return jsonify({"reply": clean_reply})
