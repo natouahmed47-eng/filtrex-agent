@@ -74,12 +74,44 @@ def chat():
 
     booking_intent = any(word in user_lower for word in ["حجز", "موعد", "book", "appointment"])
     if booking_intent:
+        service_keywords = {
+            "تنظيف": "تنظيف أسنان",
+            "تبييض": "تبييض أسنان",
+            "cleaning": "teeth cleaning",
+            "whitening": "teeth whitening"
+        }
+        time_keywords = {
+            "غد": "غدًا",
+            "بكرة": "غدًا",
+            "tomorrow": "tomorrow",
+            "مساء": "مساء",
+            "evening": "evening"
+        }
+
+        detected_service = None
+        for key in service_keywords:
+            if key in user_lower:
+                detected_service = service_keywords[key]
+                break
+
+        detected_time = None
+        for key in time_keywords:
+            if key in user_lower:
+                detected_time = time_keywords[key]
+                break
+
         session.clear()
-        session["known_service"] = None
-        session["known_time"] = None
+        session["known_service"] = detected_service
+        session["known_time"] = detected_time
         session["known_name"] = None
         session["awaiting_name"] = False
-        return jsonify({"reply": "ما نوع الخدمة التي تريد حجزها؟"})
+
+        if not detected_service:
+            return jsonify({"reply": "ما نوع الخدمة التي تريد حجزها؟"})
+        elif not detected_time:
+            return jsonify({"reply": f"ممتاز! متى تفضل موعد {detected_service}؟"})
+        else:
+            return jsonify({"reply": f"رائع! ما الاسم الذي تريد تأكيد الحجز باسمه؟"})
 
     context_str = (
         "\n\nKNOWN DATA (DO NOT ASK AGAIN):\n"
