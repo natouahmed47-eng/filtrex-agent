@@ -22,6 +22,25 @@ def init_db():
             timestamp TEXT
         )
     """)
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id       INTEGER PRIMARY KEY,
+            username TEXT UNIQUE,
+            password TEXT
+        )
+    """)
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS business_settings (
+            user_id          INTEGER PRIMARY KEY,
+            business_name    TEXT,
+            services         TEXT,
+            default_language TEXT
+        )
+    """)
+    con.execute("INSERT OR IGNORE INTO users (id, username, password) VALUES (1, 'admin', '123456')")
+    con.execute("INSERT OR IGNORE INTO users (id, username, password) VALUES (2, 'clinic2', '123456')")
+    con.execute("INSERT OR IGNORE INTO business_settings (user_id, business_name, services, default_language) VALUES (1, 'Veltrix Dental Clinic', 'تنظيف أسنان,تبييض أسنان', 'ar')")
+    con.execute("INSERT OR IGNORE INTO business_settings (user_id, business_name, services, default_language) VALUES (2, 'Bright Smile Studio', 'فحص أسنان,تبييض أسنان', 'ar')")
     con.commit()
     con.close()
 
@@ -29,23 +48,21 @@ init_db()
 
 bookings = []
 
-users = {
-    "admin": {"password": "123456", "id": 1},
-    "clinic2": {"password": "123456", "id": 2}
-}
-
-business_settings = {
-    1: {
-        "business_name": "Veltrix Dental Clinic",
-        "services": ["تنظيف أسنان", "تبييض أسنان"],
-        "default_language": "ar"
-    },
-    2: {
-        "business_name": "Bright Smile Studio",
-        "services": ["فحص أسنان", "تبييض أسنان"],
-        "default_language": "ar"
-    }
-}
+def get_biz(user_id):
+    con = sqlite3.connect(DB_FILE)
+    con.row_factory = sqlite3.Row
+    row = con.execute(
+        "SELECT business_name, services, default_language FROM business_settings WHERE user_id = ?",
+        (user_id,)
+    ).fetchone()
+    con.close()
+    if row:
+        return {
+            "business_name": row["business_name"] or "",
+            "services": [s.strip() for s in (row["services"] or "").split(",") if s.strip()],
+            "default_language": row["default_language"] or "ar"
+        }
+    return {"business_name": "", "services": [], "default_language": "ar"}
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
@@ -60,10 +77,15 @@ def login():
     if request.method == "POST":
         username = request.form.get("username")
         password = request.form.get("password")
-        user = users.get(username)
-        if user and user["password"] == password:
+        con = sqlite3.connect(DB_FILE)
+        con.row_factory = sqlite3.Row
+        row = con.execute(
+            "SELECT id, password FROM users WHERE username = ?", (username,)
+        ).fetchone()
+        con.close()
+        if row and row["password"] == password:
             session["logged_in"] = True
-            session["user_id"] = user["id"]
+            session["user_id"] = row["id"]
             return redirect(url_for("dashboard"))
         error = "Invalid username or password."
     return render_template("login.html", error=error)
@@ -78,19 +100,21 @@ def settings():
     if not session.get("logged_in"):
         return redirect(url_for("login"))
     user_id = session.get("user_id")
-    biz = business_settings.setdefault(user_id, {
-        "business_name": "",
-        "services": [],
-        "default_language": "ar"
-    })
     message = None
     if request.method == "POST":
-        biz["business_name"] = request.form.get("business_name", "").strip()
+        business_name = request.form.get("business_name", "").strip()
         raw_services = request.form.get("services", "")
-        biz["services"] = [s.strip() for s in raw_services.split(",") if s.strip()]
-        biz["default_language"] = request.form.get("default_language", "ar").strip()
-        business_settings[user_id] = biz
+        services_str = ",".join(s.strip() for s in raw_services.split(",") if s.strip())
+        default_language = request.form.get("default_language", "ar").strip()
+        con = sqlite3.connect(DB_FILE)
+        con.execute(
+            "INSERT OR REPLACE INTO business_settings (user_id, business_name, services, default_language) VALUES (?, ?, ?, ?)",
+            (user_id, business_name, services_str, default_language)
+        )
+        con.commit()
+        con.close()
         message = "Settings saved."
+    biz = get_biz(user_id)
     return render_template("settings.html", biz=biz, message=message)
 
 @app.route("/dashboard")
@@ -138,7 +162,7 @@ def chat():
     msg_lower = user_message.strip().lower()
 
     # Load business settings
-    _biz = business_settings.get(session.get("user_id"), {})
+    _biz = get_biz(session.get("user_id"))
     _allowed_services = _biz.get("services", [])
     biz_name = _biz.get("business_name", "")
     biz_language = _biz.get("default_language", "ar")
