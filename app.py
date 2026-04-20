@@ -99,6 +99,13 @@ def home():
 def assistant():
     return render_template("index.html")
 
+@app.route("/whatsapp", methods=["POST"])
+def whatsapp():
+    incoming_msg = request.form.get("Body", "")
+    sender = request.form.get("From", "")
+    print(f"[WHATSAPP] From: {sender} | Message: {incoming_msg}")
+    return "WhatsApp webhook is working", 200
+
 @app.route("/register", methods=["GET", "POST"])
 def register():
     error = None
