@@ -103,8 +103,20 @@ def chat():
             session.pop("known_time", None)
             session.pop("known_name", None)
             session.pop("awaiting_name", None)
+            full_reply = (
+                f"تم تأكيد حجزك بنجاح ✅\n"
+                f"الخدمة: {known_service}\n"
+                f"الموعد: {known_time}\n"
+                f"الاسم: {name}\n\n"
+                f"يسعدنا خدمتك، وننتظرك في الموعد.\n"
+                f'BOOKING_DATA: {{"service":"{known_service}","time":"{known_time}","name":"{name}"}}'
+            )
+            clean_reply = "\n".join(
+                line for line in full_reply.splitlines()
+                if not line.strip().startswith("BOOKING_DATA:")
+            ).strip()
             return jsonify({
-                "reply": f"تم تأكيد حجزك لـ {known_service} في {known_time} باسم {name} ✅",
+                "reply": clean_reply,
                 "booking_confirmed": True,
                 "booking": booking
             })
