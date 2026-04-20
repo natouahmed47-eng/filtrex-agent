@@ -245,10 +245,13 @@ def whatsapp():
 
         msg_lower = incoming_msg.lower()
 
-        # Step 3: Greeting — clear and return
+        # Step 3: Greeting — always reply, even if state clear fails
         if msg_lower in {"سلام", "مرحبا", "اهلا", "hello", "hi"}:
-            wa_clear(sender)
-            print("[WHATSAPP] greeting — state cleared")
+            try:
+                wa_clear(sender)
+                print("[WHATSAPP] greeting — state cleared")
+            except Exception as clear_err:
+                print(f"[WHATSAPP] greeting wa_clear failed (non-fatal): {clear_err}")
             return twilio_reply("أهلاً 👋 كيف أقدر أساعدك اليوم؟")
 
         # Step 4: Extract all fields from message
@@ -349,10 +352,17 @@ def whatsapp():
         print("[WHATSAPP] state_saved awaiting_name=True")
         return twilio_reply("رائع! ما الاسم الذي تريد تأكيد الحجز باسمه؟")
 
+        # Safety fallback — must never be reached; guards against any future path gap
+        print("[WHATSAPP] WARNING: reached end of try block without returning")
+        return twilio_reply("أهلاً! كيف أقدر أساعدك؟")
+
     except Exception as e:
-        import traceback
-        print(f"[WHATSAPP] EXCEPTION: {e}")
-        print(traceback.format_exc())
+        try:
+            import traceback
+            print(f"[WHATSAPP] EXCEPTION: {repr(e)}")
+            print(traceback.format_exc())
+        except Exception:
+            pass
         return twilio_reply("حدث خطأ مؤقت، حاول مرة أخرى.")
 
 @app.route("/register", methods=["GET", "POST"])
