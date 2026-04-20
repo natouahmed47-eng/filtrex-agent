@@ -73,6 +73,26 @@ def logout():
     session.clear()
     return redirect(url_for("login"))
 
+@app.route("/settings", methods=["GET", "POST"])
+def settings():
+    if not session.get("logged_in"):
+        return redirect(url_for("login"))
+    user_id = session.get("user_id")
+    biz = business_settings.setdefault(user_id, {
+        "business_name": "",
+        "services": [],
+        "default_language": "ar"
+    })
+    message = None
+    if request.method == "POST":
+        biz["business_name"] = request.form.get("business_name", "").strip()
+        raw_services = request.form.get("services", "")
+        biz["services"] = [s.strip() for s in raw_services.split(",") if s.strip()]
+        biz["default_language"] = request.form.get("default_language", "ar").strip()
+        business_settings[user_id] = biz
+        message = "Settings saved."
+    return render_template("settings.html", biz=biz, message=message)
+
 @app.route("/dashboard")
 def dashboard():
     if not session.get("logged_in"):

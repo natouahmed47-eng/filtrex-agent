@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Settings</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 30px; }
+    h1 { margin-bottom: 20px; }
+    label { display: block; margin-top: 14px; font-weight: bold; }
+    input, select { width: 100%; max-width: 400px; padding: 7px; margin-top: 4px; box-sizing: border-box; }
+    button { margin-top: 20px; padding: 8px 20px; background: #333; color: white; border: none; cursor: pointer; }
+    .msg { color: green; margin-top: 14px; }
+    .nav { display: flex; gap: 14px; margin-bottom: 24px; }
+    .nav a { padding: 7px 16px; background: #333; color: white; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="nav">
+    <a href="/dashboard">Dashboard</a>
+    <a href="/logout">Logout</a>
+  </div>
+  <h1>Business Settings</h1>
+  <form method="POST">
+    <label>Business Name</label>
+    <input type="text" name="business_name" value="{{ biz.business_name }}">
+
+    <label>Services (comma-separated)</label>
+    <input type="text" name="services" value="{{ biz.services | join(', ') }}">
+
+    <label>Default Language</label>
+    <select name="default_language">
+      <option value="ar" {% if biz.default_language == 'ar' %}selected{% endif %}>Arabic</option>
+      <option value="en" {% if biz.default_language == 'en' %}selected{% endif %}>English</option>
+    </select>
+
+    <button type="submit">Save</button>
+  </form>
+  {% if message %}
+  <p class="msg">{{ message }}</p>
+  {% endif %}
+</body>
+</html>
