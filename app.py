@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify, render_template, session, redirect, url_for
 from werkzeug.security import generate_password_hash, check_password_hash
+from twilio.twiml.messaging_response import MessagingResponse
 import requests
 import os
 import json
@@ -105,6 +106,31 @@ def whatsapp():
     sender = request.form.get("From", "")
     print(f"[WHATSAPP] From: {sender} | Message: {incoming_msg}")
     return "WhatsApp webhook is working", 200
+
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    incoming_msg = request.form.get("Body", "").strip()
+    sender = request.form.get("From", "")
+    print(f"[WEBHOOK] From: {sender} | Message: {incoming_msg}")
+
+    ai_response = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "model": "gpt-4o-mini",
+            "messages": [
+                {"role": "user", "content": incoming_msg}
+            ]
+        }
+    )
+    reply_text = ai_response.json()["choices"][0]["message"]["content"]
+
+    resp = MessagingResponse()
+    resp.message(reply_text)
+    return str(resp), 200, {"Content-Type": "text/xml"}
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
