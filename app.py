@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify, render_template
 import requests
 import os
-import re
+import json
 
 app = Flask(__name__)
 
@@ -66,7 +66,12 @@ def chat():
                         "Booking confirmation:\n"
                         "- When you have enough information (service, time, and name), summarize the booking clearly and confirm it.\n"
                         "- Example: 'Perfect, I've got you down for [service] at [time] under the name [name]. I'm finalizing your booking now.'\n"
-                        "- Always try to reach this confirmation stage as quickly as possible."
+                        "- Always try to reach this confirmation stage as quickly as possible.\n"
+                        "- IMPORTANT: Whenever a booking is confirmed, you MUST append the following line at the very end of your reply, on its own line, exactly as shown:\n"
+                        "  BOOKING_DATA: {\"service\":\"...\",\"time\":\"...\",\"name\":\"...\"}\n"
+                        "- Replace the ... values with the actual service, time, and name collected.\n"
+                        "- This line must be valid JSON on a single line.\n"
+                        "- Only append this line when the booking is fully confirmed. Never include it in other replies."
                     )
                 },
                 {
@@ -79,22 +84,26 @@ def chat():
 
     reply = response.json()["choices"][0]["message"]["content"]
 
-    match = re.search(
-        r"I'?ve got you down for (.+?) at (.+?) under the name (.+?)[.\n]",
-        reply,
-        re.IGNORECASE
-    )
-    if match:
-        booking = {
-            "service": match.group(1).strip(),
-            "time": match.group(2).strip(),
-            "name": match.group(3).strip()
-        }
+    booking = None
+    clean_lines = []
+    for line in reply.splitlines():
+        if line.strip().startswith("BOOKING_DATA:"):
+            try:
+                json_str = line.strip()[len("BOOKING_DATA:"):].strip()
+                booking = json.loads(json_str)
+            except Exception:
+                pass
+        else:
+            clean_lines.append(line)
+
+    clean_reply = "\n".join(clean_lines).strip()
+
+    if booking:
         bookings.append(booking)
         print(f"[BOOKING CONFIRMED] {booking}")
-        return jsonify({"reply": reply, "booking_confirmed": True, "booking": booking})
+        return jsonify({"reply": clean_reply, "booking_confirmed": True, "booking": booking})
 
-    return jsonify({"reply": reply})
+    return jsonify({"reply": clean_reply})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
