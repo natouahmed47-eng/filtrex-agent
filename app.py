@@ -4,7 +4,7 @@ import os
 import json
 
 app = Flask(__name__)
-app.secret_key = "filtrex-session-key"
+app.secret_key = os.getenv("SESSION_SECRET", "dev-secret")
 
 bookings = []
 
