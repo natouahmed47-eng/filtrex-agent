@@ -269,24 +269,27 @@ def whatsapp():
         print(f"[WHATSAPP] sender={sender}")
         print(f"[WHATSAPP] message={incoming_msg!r}")
 
-        # Step 2: Load state
-        state         = wa_load(sender)
-        known_service = state["known_service"]
-        known_time    = state["known_time"]
-        known_name    = state["known_name"]
-        awaiting_name = state["awaiting_name"]
-        print(f"[WHATSAPP] loaded_state={state}")
+        msg_lower = incoming_msg.strip().lower()
 
-        msg_lower = incoming_msg.lower()
-
-        # Step 3: Greeting — always reply, even if state clear fails
+        # Step 2: Greeting — FIRST branch, before wa_load or any state logic.
+        # If wa_load raised on partial state this check would have been skipped.
+        # Moving it here guarantees it runs regardless of DB state.
         if msg_lower in {"سلام", "مرحبا", "اهلا", "hello", "hi"}:
+            print("[WHATSAPP] branch=greeting")
             try:
                 wa_clear(sender)
                 print("[WHATSAPP] greeting — state cleared")
             except Exception as clear_err:
                 print(f"[WHATSAPP] greeting wa_clear failed (non-fatal): {clear_err}")
             return twilio_reply("أهلاً 👋 كيف أقدر أساعدك اليوم؟")
+
+        # Step 3: Load state (only reached for non-greeting messages)
+        state         = wa_load(sender)
+        known_service = state["known_service"]
+        known_time    = state["known_time"]
+        known_name    = state["known_name"]
+        awaiting_name = state["awaiting_name"]
+        print(f"[WHATSAPP] loaded_state={state}")
 
         # Step 4: Extract all fields from message
         biz     = get_biz(WHATSAPP_USER_ID)
