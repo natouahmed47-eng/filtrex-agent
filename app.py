@@ -152,6 +152,7 @@ def wa_clear(phone):
     print(f"[WHATSAPP] state_cleared phone={phone}")
 
 def twilio_reply(text):
+    print(f"[WHATSAPP] final_reply={text!r}")
     resp = MessagingResponse()
     resp.message(text)
     return str(resp), 200, {"Content-Type": "text/xml"}
@@ -260,34 +261,56 @@ def whatsapp():
         state_changed = False
 
         if extracted["service"] and not known_service:
+            print(f"[WHATSAPP] branch=service_detected value={extracted['service']!r}")
             known_service = extracted["service"]
             state_changed = True
         elif extracted["raw_service"] and not known_service:
-            # A service keyword was detected but it's not in the allowed list
+            # Service keyword found but not in the allowed list
             names = "، ".join(allowed)
-            print(f"[WHATSAPP] service not allowed — available={names}")
+            print(f"[WHATSAPP] branch=service_not_allowed raw={extracted['raw_service']!r} available={names}")
             return twilio_reply(f"عذراً، هذه الخدمة غير متاحة. الخدمات المتاحة: {names}")
+        else:
+            print(f"[WHATSAPP] branch=service_no_change known_service={known_service!r}")
 
         if extracted["time"] and not known_time:
+            print(f"[WHATSAPP] branch=time_detected value={extracted['time']!r}")
             known_time    = extracted["time"]
             state_changed = True
+        else:
+            print(f"[WHATSAPP] branch=time_no_change known_time={known_time!r}")
 
         if extracted["name"] and not known_name:
+            print(f"[WHATSAPP] branch=name_extracted value={extracted['name']!r}")
             known_name    = extracted["name"]
             state_changed = True
+        else:
+            print(f"[WHATSAPP] branch=name_no_extract awaiting_name={awaiting_name}")
 
-        # Step 6: If awaiting_name and no name extracted yet — treat full message as name
-        if awaiting_name and not known_name:
+        # Step 6: awaiting_name fallback — only if message contains NO service or time keywords
+        # BUG FIX: without this guard, re-sending "غدًا مساءً" while awaiting name
+        # would be captured as the name and save a wrong booking.
+        if (awaiting_name and not known_name
+                and extracted["raw_service"] is None
+                and extracted["time"] is None):
             known_name    = incoming_msg.strip()
             state_changed = True
-            print(f"[WHATSAPP] awaiting_name fallback — capturing_name={known_name!r}")
+            print(f"[WHATSAPP] branch=awaiting_name_fallback capturing_name={known_name!r}")
+        elif awaiting_name and not known_name:
+            print(f"[WHATSAPP] branch=awaiting_name_skipped (service/time keyword present in message)")
 
+        # BUG FIX: always save with awaiting_name=False here.
+        # awaiting_name=True is only set explicitly in step 10.
+        # Passing the loaded value caused the flag to persist incorrectly when
+        # the user sent new service/time info after the bot had already asked for name.
         if state_changed:
-            wa_save(sender, known_service, known_time, known_name, awaiting_name)
-            print(f"[WHATSAPP] state_saved service={known_service} time={known_time} name={known_name}")
+            wa_save(sender, known_service, known_time, known_name, False)
+            print(f"[WHATSAPP] state_saved service={known_service!r} time={known_time!r} name={known_name!r} awaiting_name=False")
+
+        print(f"[WHATSAPP] merged_state service={known_service!r} time={known_time!r} name={known_name!r}")
 
         # Step 7: All three fields known — confirm booking immediately
         if known_service and known_time and known_name:
+            print("[WHATSAPP] branch=confirm_booking")
             con = sqlite3.connect(DB_FILE)
             con.execute(
                 "INSERT INTO bookings (user_id, name, service, time, timestamp) VALUES (?, ?, ?, ?, ?)",
@@ -303,21 +326,25 @@ def whatsapp():
                 f"الموعد: {known_time}\n"
                 f"الاسم: {known_name}"
             )
-            print(f"[WHATSAPP] booking_saved name={known_name} service={known_service} time={known_time}")
+            print(f"[WHATSAPP] booking_saved name={known_name!r} service={known_service!r} time={known_time!r}")
             return twilio_reply(reply)
 
         # Step 8: Ask for missing service
         if not known_service:
             if known_time:
+                print("[WHATSAPP] branch=ask_service (time known)")
                 return twilio_reply("ما الخدمة التي تريد حجزها؟")
             names = "، ".join(allowed) or "الخدمات المتاحة"
+            print("[WHATSAPP] branch=ask_service (nothing known)")
             return twilio_reply(f"أهلاً! الخدمات المتاحة: {names}. أيها تفضل؟")
 
         # Step 9: Ask for missing time
         if not known_time:
+            print("[WHATSAPP] branch=ask_time")
             return twilio_reply("ممتاز! متى تفضل موعدك؟ (مثال: غدًا صباحًا)")
 
-        # Step 10: Ask for missing name — set awaiting_name flag
+        # Step 10: Ask for missing name — set awaiting_name=True explicitly
+        print("[WHATSAPP] branch=ask_name")
         wa_save(sender, known_service, known_time, known_name, True)
         print("[WHATSAPP] state_saved awaiting_name=True")
         return twilio_reply("رائع! ما الاسم الذي تريد تأكيد الحجز باسمه؟")
