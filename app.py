@@ -71,6 +71,41 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 def home():
     return render_template("index.html")
 
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    error = None
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "").strip()
+        business_name = request.form.get("business_name", "").strip()
+        raw_services = request.form.get("services", "")
+        services_str = ",".join(s.strip() for s in raw_services.split(",") if s.strip())
+        default_language = request.form.get("default_language", "ar").strip()
+        if not username or not password:
+            error = "Username and password are required."
+        else:
+            con = sqlite3.connect(DB_FILE)
+            existing = con.execute(
+                "SELECT id FROM users WHERE username = ?", (username,)
+            ).fetchone()
+            if existing:
+                con.close()
+                error = "Username already exists."
+            else:
+                cur = con.execute(
+                    "INSERT INTO users (username, password) VALUES (?, ?)",
+                    (username, password)
+                )
+                new_id = cur.lastrowid
+                con.execute(
+                    "INSERT INTO business_settings (user_id, business_name, services, default_language) VALUES (?, ?, ?, ?)",
+                    (new_id, business_name, services_str, default_language)
+                )
+                con.commit()
+                con.close()
+                return redirect(url_for("login"))
+    return render_template("register.html", error=error)
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     error = None

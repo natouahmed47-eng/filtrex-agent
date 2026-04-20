@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Create Account</title>
+  <style>
+    body { font-family: Arial, sans-serif; display: flex; justify-content: center; padding-top: 60px; background: #f4f4f4; }
+    .box { background: white; padding: 30px 40px; border: 1px solid #ddd; width: 340px; }
+    h2 { margin-bottom: 20px; }
+    label { display: block; font-size: 13px; margin-bottom: 4px; }
+    input, select { width: 100%; padding: 8px; margin-bottom: 14px; box-sizing: border-box; border: 1px solid #ccc; }
+    button { width: 100%; padding: 9px; background: #333; color: white; border: none; cursor: pointer; }
+    button:hover { background: #555; }
+    .error { color: red; margin-bottom: 12px; font-size: 14px; }
+    .login-link { margin-top: 14px; font-size: 13px; text-align: center; }
+    .login-link a { color: #333; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h2>Create Account</h2>
+    {% if error %}
+    <p class="error">{{ error }}</p>
+    {% endif %}
+    <form method="POST">
+      <label>Username</label>
+      <input type="text" name="username" required />
+
+      <label>Password</label>
+      <input type="password" name="password" required />
+
+      <label>Business Name</label>
+      <input type="text" name="business_name" />
+
+      <label>Services (comma-separated)</label>
+      <input type="text" name="services" />
+
+      <label>Default Language</label>
+      <select name="default_language">
+        <option value="ar">Arabic</option>
+        <option value="en">English</option>
+      </select>
+
+      <button type="submit">Create Account</button>
+    </form>
+    <div class="login-link"><a href="/login">Already have an account? Login</a></div>
+  </div>
+</body>
+</html>
