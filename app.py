@@ -262,98 +262,10 @@ def extract_booking_fields(message, allowed_services=None):
 
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
-    try:
-        # Step A: Read inputs
-        sender       = request.form.get("From", "").strip()
-        incoming_msg = request.form.get("Body", "").strip()
-        msg_lower    = incoming_msg.lower()
-        print(f"[WHATSAPP] sender={sender!r} message={incoming_msg!r}")
-
-        # Step B: Greeting — before any state logic
-        if msg_lower in {"سلام", "مرحبا", "اهلا", "hello", "hi"}:
-            print("[WHATSAPP] branch=greeting")
-            try:
-                wa_clear(sender)
-            except Exception as e:
-                print(f"[WHATSAPP] wa_clear error (non-fatal): {repr(e)}")
-            return twilio_reply("أهلاً 👋 كيف أقدر أساعدك اليوم؟")
-
-        # Step C: Load state
-        state         = wa_load(sender)
-        known_service = state["known_service"]
-        known_time    = state["known_time"]
-        known_name    = state["known_name"]
-        awaiting_name = state["awaiting_name"]
-        print(f"[WHATSAPP] loaded_state={state}")
-
-        # Step D: Extract from message
-        biz       = get_biz(WHATSAPP_USER_ID)
-        allowed   = biz.get("services", [])
-        extracted = extract_booking_fields(incoming_msg, allowed)
-        print(f"[WHATSAPP] extracted={extracted}")
-
-        # Step E: Merge extracted into state (do not overwrite already-set fields)
-        if extracted["service"] and not known_service:
-            known_service = extracted["service"]
-        if extracted["time"] and not known_time:
-            known_time = extracted["time"]
-        if extracted["name"] and not known_name:
-            known_name = extracted["name"]
-
-        # Step F: awaiting_name fallback — treat full message as name only if
-        # it contains no service or time keyword
-        if (awaiting_name and not known_name
-                and extracted["raw_service"] is None
-                and extracted["time"] is None):
-            known_name = incoming_msg.strip()
-
-        print(f"[WHATSAPP] merged_state service={known_service!r} time={known_time!r} name={known_name!r}")
-
-        # Step G: Decision tree — each branch saves state then returns exactly one reply
-        if not known_service:
-            print("[WHATSAPP] branch=ask_service")
-            wa_save(sender, known_service, known_time, known_name, False)
-            return twilio_reply("ما الخدمة التي تريد حجزها؟")
-
-        if not known_time:
-            print("[WHATSAPP] branch=ask_time")
-            wa_save(sender, known_service, known_time, known_name, False)
-            return twilio_reply("متى تفضل موعدك؟ (مثال: غدًا صباحًا)")
-
-        if not known_name:
-            print("[WHATSAPP] branch=ask_name")
-            wa_save(sender, known_service, known_time, known_name, True)
-            return twilio_reply("ما الاسم الذي تريد تأكيد الحجز باسمه؟")
-
-        print("[WHATSAPP] branch=confirm_booking")
-        con = get_db_connection()
-        try:
-            con.execute(
-                "INSERT INTO bookings (user_id, name, service, time, timestamp) VALUES (?, ?, ?, ?, ?)",
-                (str(WHATSAPP_USER_ID), known_name, known_service, known_time,
-                 datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-            )
-            con.commit()
-        finally:
-            con.close()
-        wa_clear(sender)
-        reply = (
-            f"تم تأكيد حجزك بنجاح ✅\n"
-            f"الخدمة: {known_service}\n"
-            f"الموعد: {known_time}\n"
-            f"الاسم: {known_name}"
-        )
-        print(f"[WHATSAPP] final_reply={reply!r}")
-        return twilio_reply(reply)
-
-    except Exception as e:
-        try:
-            import traceback
-            print(f"[WHATSAPP] EXCEPTION: {repr(e)}")
-            print(traceback.format_exc())
-        except Exception:
-            pass
-        return twilio_reply("حدث خطأ مؤقت، حاول مرة أخرى.")
+    sender       = request.form.get("From", "").strip()
+    incoming_msg = request.form.get("Body", "").strip()
+    print(f"[WHATSAPP] sender={sender!r} message={incoming_msg!r}")
+    return twilio_reply("TEST OK")
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
