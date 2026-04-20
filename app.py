@@ -11,13 +11,19 @@ app.secret_key = os.getenv("SESSION_SECRET", "dev-secret")
 bookings = []
 
 users = {
-    "admin": {"password": "123456", "id": 1}
+    "admin": {"password": "123456", "id": 1},
+    "clinic2": {"password": "123456", "id": 2}
 }
 
 business_settings = {
     1: {
         "business_name": "Veltrix Dental Clinic",
         "services": ["تنظيف أسنان", "تبييض أسنان"],
+        "default_language": "ar"
+    },
+    2: {
+        "business_name": "Bright Smile Studio",
+        "services": ["فحص أسنان", "تبييض أسنان"],
         "default_language": "ar"
     }
 }
