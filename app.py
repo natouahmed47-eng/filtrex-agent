@@ -1,8 +1,11 @@
 from flask import Flask, request, jsonify, render_template
 import requests
 import os
+import re
 
 app = Flask(__name__)
+
+bookings = []
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
@@ -75,6 +78,21 @@ def chat():
     )
 
     reply = response.json()["choices"][0]["message"]["content"]
+
+    match = re.search(
+        r"I'?ve got you down for (.+?) at (.+?) under the name (.+?)[.\n]",
+        reply,
+        re.IGNORECASE
+    )
+    if match:
+        booking = {
+            "service": match.group(1).strip(),
+            "time": match.group(2).strip(),
+            "name": match.group(3).strip()
+        }
+        bookings.append(booking)
+        print(f"[BOOKING CONFIRMED] {booking}")
+        return jsonify({"reply": reply, "booking_confirmed": True, "booking": booking})
 
     return jsonify({"reply": reply})
 
