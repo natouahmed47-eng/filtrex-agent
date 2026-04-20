@@ -7,7 +7,22 @@ import sqlite3
 import datetime
 
 app = Flask(__name__)
-app.secret_key = os.getenv("SESSION_SECRET", "dev-secret")
+
+import secrets as _secrets
+_session_secret = os.getenv("SESSION_SECRET")
+if not _session_secret:
+    import warnings
+    warnings.warn(
+        "SESSION_SECRET environment variable is not set. "
+        "A temporary random key is being used — sessions will not persist across restarts. "
+        "Set SESSION_SECRET in production.",
+        stacklevel=2
+    )
+    _session_secret = _secrets.token_hex(32)
+app.secret_key = _session_secret
+
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 DB_FILE = "bookings.db"
 
@@ -338,4 +353,5 @@ def chat():
     return jsonify({"reply": reply})
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    debug = os.getenv("FLASK_DEBUG", "false").lower() == "true"
+    app.run(host="0.0.0.0", port=5000, debug=debug)
