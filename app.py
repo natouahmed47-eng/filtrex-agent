@@ -263,27 +263,22 @@ def extract_booking_fields(message, allowed_services=None):
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
     try:
-        # Step 1: Read inputs
+        # Step A: Read inputs
         sender       = request.form.get("From", "").strip()
         incoming_msg = request.form.get("Body", "").strip()
-        print(f"[WHATSAPP] sender={sender}")
-        print(f"[WHATSAPP] message={incoming_msg!r}")
+        msg_lower    = incoming_msg.lower()
+        print(f"[WHATSAPP] sender={sender!r} message={incoming_msg!r}")
 
-        msg_lower = incoming_msg.strip().lower()
-
-        # Step 2: Greeting — FIRST branch, before wa_load or any state logic.
-        # If wa_load raised on partial state this check would have been skipped.
-        # Moving it here guarantees it runs regardless of DB state.
+        # Step B: Greeting — before any state logic
         if msg_lower in {"سلام", "مرحبا", "اهلا", "hello", "hi"}:
             print("[WHATSAPP] branch=greeting")
             try:
                 wa_clear(sender)
-                print("[WHATSAPP] greeting — state cleared")
-            except Exception as clear_err:
-                print(f"[WHATSAPP] greeting wa_clear failed (non-fatal): {clear_err}")
+            except Exception as e:
+                print(f"[WHATSAPP] wa_clear error (non-fatal): {repr(e)}")
             return twilio_reply("أهلاً 👋 كيف أقدر أساعدك اليوم؟")
 
-        # Step 3: Load state (only reached for non-greeting messages)
+        # Step C: Load state
         state         = wa_load(sender)
         known_service = state["known_service"]
         known_time    = state["known_time"]
@@ -291,115 +286,65 @@ def whatsapp():
         awaiting_name = state["awaiting_name"]
         print(f"[WHATSAPP] loaded_state={state}")
 
-        # Step 4: Extract all fields from message
-        biz     = get_biz(WHATSAPP_USER_ID)
-        allowed = biz.get("services", [])
+        # Step D: Extract from message
+        biz       = get_biz(WHATSAPP_USER_ID)
+        allowed   = biz.get("services", [])
         extracted = extract_booking_fields(incoming_msg, allowed)
         print(f"[WHATSAPP] extracted={extracted}")
 
-        # Step 5: Merge extracted values into state (only if not already set)
-        state_changed = False
-
+        # Step E: Merge extracted into state (do not overwrite already-set fields)
         if extracted["service"] and not known_service:
-            print(f"[WHATSAPP] branch=service_detected value={extracted['service']!r}")
             known_service = extracted["service"]
-            state_changed = True
-        elif extracted["raw_service"] and not known_service:
-            # Service keyword found but not in the allowed list
-            names = "، ".join(allowed)
-            print(f"[WHATSAPP] branch=service_not_allowed raw={extracted['raw_service']!r} available={names}")
-            return twilio_reply(f"عذراً، هذه الخدمة غير متاحة. الخدمات المتاحة: {names}")
-        else:
-            print(f"[WHATSAPP] branch=service_no_change known_service={known_service!r}")
-
         if extracted["time"] and not known_time:
-            print(f"[WHATSAPP] branch=time_detected value={extracted['time']!r}")
-            known_time    = extracted["time"]
-            state_changed = True
-        else:
-            print(f"[WHATSAPP] branch=time_no_change known_time={known_time!r}")
-
+            known_time = extracted["time"]
         if extracted["name"] and not known_name:
-            print(f"[WHATSAPP] branch=name_extracted value={extracted['name']!r}")
-            known_name    = extracted["name"]
-            state_changed = True
-        else:
-            print(f"[WHATSAPP] branch=name_no_extract awaiting_name={awaiting_name}")
+            known_name = extracted["name"]
 
-        # Step 6: awaiting_name fallback — only if message contains NO service or time keywords
-        # BUG FIX: without this guard, re-sending "غدًا مساءً" while awaiting name
-        # would be captured as the name and save a wrong booking.
+        # Step F: awaiting_name fallback — treat full message as name only if
+        # it contains no service or time keyword
         if (awaiting_name and not known_name
                 and extracted["raw_service"] is None
                 and extracted["time"] is None):
-            known_name    = incoming_msg.strip()
-            state_changed = True
-            print(f"[WHATSAPP] branch=awaiting_name_fallback capturing_name={known_name!r}")
-        elif awaiting_name and not known_name:
-            print(f"[WHATSAPP] branch=awaiting_name_skipped (service/time keyword present in message)")
-
-        # BUG FIX: always save with awaiting_name=False here.
-        # awaiting_name=True is only set explicitly in step 10.
-        # Passing the loaded value caused the flag to persist incorrectly when
-        # the user sent new service/time info after the bot had already asked for name.
-        if state_changed:
-            wa_save(sender, known_service, known_time, known_name, False)
-            print(f"[WHATSAPP] state_saved service={known_service!r} time={known_time!r} name={known_name!r} awaiting_name=False")
+            known_name = incoming_msg.strip()
 
         print(f"[WHATSAPP] merged_state service={known_service!r} time={known_time!r} name={known_name!r}")
 
-        # Step 7: All three fields known — confirm booking immediately
-        if known_service and known_time and known_name:
-            print("[WHATSAPP] branch=confirm_booking")
-            print(f"[DB] booking_save opening connection")
-            con = get_db_connection()
-            try:
-                con.execute(
-                    "INSERT INTO bookings (user_id, name, service, time, timestamp) VALUES (?, ?, ?, ?, ?)",
-                    (str(WHATSAPP_USER_ID), known_name, known_service, known_time,
-                     datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-                )
-                con.commit()
-                print(f"[DB] booking_save committed")
-            except Exception as db_err:
-                print(f"[DB] booking_save ERROR: {repr(db_err)}")
-                raise
-            finally:
-                con.close()
-                print(f"[DB] booking_save connection closed")
-            wa_clear(sender)
-            reply = (
-                f"تم تأكيد حجزك بنجاح ✅\n"
-                f"الخدمة: {known_service}\n"
-                f"الموعد: {known_time}\n"
-                f"الاسم: {known_name}"
-            )
-            print(f"[WHATSAPP] booking_saved name={known_name!r} service={known_service!r} time={known_time!r}")
-            return twilio_reply(reply)
-
-        # Step 8: Ask for missing service
+        # Step G: Decision tree — each branch saves state then returns exactly one reply
         if not known_service:
-            if known_time:
-                print("[WHATSAPP] branch=ask_service (time known)")
-                return twilio_reply("ما الخدمة التي تريد حجزها؟")
-            names = "، ".join(allowed) or "الخدمات المتاحة"
-            print("[WHATSAPP] branch=ask_service (nothing known)")
-            return twilio_reply(f"أهلاً! الخدمات المتاحة: {names}. أيها تفضل؟")
+            print("[WHATSAPP] branch=ask_service")
+            wa_save(sender, known_service, known_time, known_name, False)
+            return twilio_reply("ما الخدمة التي تريد حجزها؟")
 
-        # Step 9: Ask for missing time
         if not known_time:
             print("[WHATSAPP] branch=ask_time")
-            return twilio_reply("ممتاز! متى تفضل موعدك؟ (مثال: غدًا صباحًا)")
+            wa_save(sender, known_service, known_time, known_name, False)
+            return twilio_reply("متى تفضل موعدك؟ (مثال: غدًا صباحًا)")
 
-        # Step 10: Ask for missing name — set awaiting_name=True explicitly
-        print("[WHATSAPP] branch=ask_name")
-        wa_save(sender, known_service, known_time, known_name, True)
-        print("[WHATSAPP] state_saved awaiting_name=True")
-        return twilio_reply("رائع! ما الاسم الذي تريد تأكيد الحجز باسمه؟")
+        if not known_name:
+            print("[WHATSAPP] branch=ask_name")
+            wa_save(sender, known_service, known_time, known_name, True)
+            return twilio_reply("ما الاسم الذي تريد تأكيد الحجز باسمه؟")
 
-        # Safety fallback — must never be reached; guards against any future path gap
-        print("[WHATSAPP] WARNING: reached end of try block without returning")
-        return twilio_reply("أهلاً! كيف أقدر أساعدك؟")
+        print("[WHATSAPP] branch=confirm_booking")
+        con = get_db_connection()
+        try:
+            con.execute(
+                "INSERT INTO bookings (user_id, name, service, time, timestamp) VALUES (?, ?, ?, ?, ?)",
+                (str(WHATSAPP_USER_ID), known_name, known_service, known_time,
+                 datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            )
+            con.commit()
+        finally:
+            con.close()
+        wa_clear(sender)
+        reply = (
+            f"تم تأكيد حجزك بنجاح ✅\n"
+            f"الخدمة: {known_service}\n"
+            f"الموعد: {known_time}\n"
+            f"الاسم: {known_name}"
+        )
+        print(f"[WHATSAPP] final_reply={reply!r}")
+        return twilio_reply(reply)
 
     except Exception as e:
         try:
