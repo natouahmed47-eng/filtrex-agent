@@ -49,20 +49,6 @@ business_settings = {
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-SERVICE_KEYWORDS = [
-    "تنظيف", "تبييض", "فحص", "علاج", "حجز",
-    "cleaning", "whitening", "consultation", "checkup", "check-up", "treatment", "appointment"
-]
-
-TIME_KEYWORDS = [
-    "اليوم", "غداً", "غدًا", "مساء", "صباح",
-    "today", "tomorrow", "morning", "evening", "afternoon",
-    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"
-]
-
-NAME_TRIGGERS = [
-    "what name", "your name", "اسم", "الاسم", "confirm the booking under", "booking under"
-]
 
 @app.route("/")
 def home():
@@ -129,182 +115,114 @@ def confirm_booking(name, service, time, reply):
 @app.route("/chat", methods=["POST"])
 def chat():
     user_message = request.json.get("message")
+    msg_lower = user_message.strip().lower()
 
-    # awaiting_name — absolute top priority, runs before everything
-    if session.get("awaiting_name"):
-        name = user_message.strip()
-
-        session["known_name"] = name
-        session["awaiting_name"] = False
-
-        known_service = session.get("known_service")
-        known_time = session.get("known_time")
-
-        if known_service and known_time:
-            return confirm_booking(
-                name, known_service, known_time,
-                f"تم تأكيد حجزك بنجاح ✅\nالخدمة: {known_service}\nالموعد: {known_time}\nالاسم: {name}"
-            )
-
-        return jsonify({"reply": "حدث خطأ، حاول مرة أخرى."})
-
-    # STATE GUARD — runs after awaiting_name check
-    known_service = session.get("known_service")
-    known_time = session.get("known_time")
-    known_name = session.get("known_name")
-    awaiting_name = session.get("awaiting_name", False)
-
-    # Case 2: service and time known but no name → ask for name
-    if known_service and known_time and not known_name:
-        session["awaiting_name"] = True
-        return jsonify({"reply": "ما الاسم الذي تريد تأكيد الحجز باسمه؟"})
-
-    # Case 3: only service known → ask for time
-    if known_service and not known_time:
-        return jsonify({"reply": f"متى تفضل موعد {known_service}؟"})
-
+    # Load business settings
     _biz = business_settings.get(session.get("user_id"), {})
     _allowed_services = _biz.get("services", [])
+    biz_name = _biz.get("business_name", "")
+    biz_language = _biz.get("default_language", "ar")
 
     def validate_service(service):
         if not _allowed_services:
             return True
-        return any(service.lower() == s.lower() or service.lower() in s.lower() or s.lower() in service.lower() for s in _allowed_services)
+        return any(
+            service.lower() == s.lower() or
+            service.lower() in s.lower() or
+            s.lower() in service.lower()
+            for s in _allowed_services
+        )
 
     def unavailable_service_reply():
         names = "، ".join(_allowed_services)
         return jsonify({"reply": f"عذراً، هذه الخدمة غير متاحة. الخدمات المتاحة هي: {names}. أيها تفضل؟"})
 
-    greetings = ["سلام", "مرحبا", "اهلا", "hello", "hi"]
-    clean_msg = user_message.strip().lower()
-    if clean_msg in greetings:
+    # Step 1: Greeting
+    if msg_lower in ["سلام", "مرحبا", "اهلا", "hello", "hi"]:
         session.clear()
+        return jsonify({"reply": "أهلاً 👋 كيف أقدر أساعدك اليوم؟"})
 
+    # Step 2: Load session state
     known_service = session.get("known_service")
     known_time = session.get("known_time")
-    known_name = session.get("known_name")
     awaiting_name = session.get("awaiting_name", False)
 
-    msg_lower = user_message.lower()
+    # Step 3: awaiting_name → capture name and confirm immediately
+    if awaiting_name:
+        name = user_message.strip()
+        session["awaiting_name"] = False
+        if known_service and known_time:
+            return confirm_booking(
+                name, known_service, known_time,
+                f"تم تأكيد حجزك بنجاح ✅\nالخدمة: {known_service}\nالموعد: {known_time}\nالاسم: {name}"
+            )
+        return jsonify({"reply": "حدث خطأ، حاول مرة أخرى."})
 
+    # Step 4: Detect service (if not already known)
+    SERVICE_MAP = {
+        "تنظيف": "تنظيف أسنان",
+        "تبييض": "تبييض أسنان",
+        "فحص": "فحص أسنان",
+        "cleaning": "teeth cleaning",
+        "whitening": "teeth whitening",
+        "checkup": "dental checkup",
+        "check-up": "dental checkup",
+    }
     if not known_service:
-        for kw in SERVICE_KEYWORDS:
-            if kw.lower() in msg_lower:
-                candidate = user_message.strip()
-                if validate_service(candidate):
-                    known_service = candidate
+        for key, val in SERVICE_MAP.items():
+            if key in msg_lower:
+                if validate_service(val):
+                    known_service = val
                 else:
                     return unavailable_service_reply()
                 break
 
+    # Step 5: Detect time (if not already known)
+    DAY_MAP = {
+        "غد": "غدًا", "غدا": "غدًا", "غدًا": "غدًا", "بكرة": "غدًا",
+        "today": "اليوم", "اليوم": "اليوم", "tomorrow": "غدًا",
+    }
+    PERIOD_MAP = {
+        "مساء": "مساءً", "evening": "مساءً", "afternoon": "مساءً",
+        "صباح": "صباحًا", "morning": "صباحًا",
+    }
     if not known_time:
-        for kw in TIME_KEYWORDS:
-            if kw.lower() in msg_lower:
-                known_time = kw
-                break
+        detected_day = next((DAY_MAP[k] for k in DAY_MAP if k in msg_lower), None)
+        detected_period = next((PERIOD_MAP[k] for k in PERIOD_MAP if k in msg_lower), None)
+        if detected_day and detected_period:
+            known_time = f"{detected_day} {detected_period}"
+        elif detected_day:
+            known_time = detected_day
+        elif detected_period:
+            known_time = detected_period
 
-    if awaiting_name and not known_name:
-        words = user_message.strip().split()
-        if 1 <= len(words) <= 3:
-            known_name = user_message.strip()
-
+    # Step 6: Save session
     session["known_service"] = known_service
     session["known_time"] = known_time
-    session["known_name"] = known_name
 
-    user_lower = user_message.strip().lower()
+    # Step 7: Ask for next missing field
+    booking_intent = any(w in msg_lower for w in ["حجز", "موعد", "book", "appointment"])
 
-    if user_lower in ["اهلا", "مرحبا", "سلام", "hello", "hi"]:
-        session.clear()
-        return jsonify({"reply": "أهلاً 👋 كيف أقدر أساعدك اليوم؟"})
+    if known_service and known_time:
+        session["awaiting_name"] = True
+        return jsonify({"reply": f"رائع! ما الاسم الذي تريد تأكيد الحجز باسمه؟"})
 
-    booking_intent = any(word in user_lower for word in ["حجز", "موعد", "book", "appointment"])
-    if booking_intent:
-        service_keywords = {
-            "تنظيف": "تنظيف أسنان",
-            "تبييض": "تبييض أسنان",
-            "cleaning": "teeth cleaning",
-            "whitening": "teeth whitening"
-        }
-        day_keywords = {
-            "غد": "غدًا", "غدا": "غدًا", "غدًا": "غدًا", "بكرة": "غدًا",
-            "today": "اليوم", "اليوم": "اليوم"
-        }
-        period_keywords = {
-            "مساء": "مساءً", "evening": "مساءً",
-            "صباح": "صباحًا", "morning": "صباحًا"
-        }
+    if known_service and not known_time:
+        return jsonify({"reply": f"متى تفضل موعد {known_service}؟"})
 
-        detected_service = None
-        for key in service_keywords:
-            if key in user_lower:
-                detected_service = service_keywords[key]
-                break
+    if booking_intent and not known_service:
+        return jsonify({"reply": "ما نوع الخدمة التي تريد حجزها؟"})
 
-        detected_day = None
-        for key in day_keywords:
-            if key in user_lower:
-                detected_day = day_keywords[key]
-                break
-
-        detected_period = None
-        for key in period_keywords:
-            if key in user_lower:
-                detected_period = period_keywords[key]
-                break
-
-        if detected_day and detected_period:
-            detected_time = f"{detected_day} {detected_period}"
-        elif detected_day:
-            detected_time = detected_day
-        elif detected_period:
-            detected_time = detected_period
-        else:
-            detected_time = None
-
-        if detected_service and not validate_service(detected_service):
-            return unavailable_service_reply()
-
-        session.clear()
-        session["known_service"] = detected_service
-        session["known_time"] = detected_time
-        session["known_name"] = None
-        session["awaiting_name"] = False
-
-        if not detected_service:
-            return jsonify({"reply": "ما نوع الخدمة التي تريد حجزها؟"})
-        elif not detected_time:
-            return jsonify({"reply": f"ممتاز! متى تفضل موعد {detected_service}؟"})
-        else:
-            return jsonify({"reply": f"رائع! ما الاسم الذي تريد تأكيد الحجز باسمه؟"})
-
-    user_id = session.get("user_id")
-    biz = business_settings.get(user_id, {})
-    biz_name = biz.get("business_name", "")
-    biz_services = biz.get("services", [])
-    biz_language = biz.get("default_language", "ar")
-
+    # Step 8: OpenAI fallback (non-booking messages only)
     biz_str = ""
     if biz_name:
-        biz_str += f"\n\nBUSINESS CONTEXT:\n"
+        biz_str += "\n\nBUSINESS CONTEXT:\n"
         biz_str += f"- Business name: {biz_name}\n"
-        biz_str += f"- Use this name naturally in greetings and confirmations.\n"
-    if biz_services:
-        biz_str += f"- Only suggest or accept these services: {', '.join(biz_services)}\n"
-        biz_str += f"- If the user requests a service not in this list, politely redirect to the available ones.\n"
+        biz_str += "- Use this name naturally in greetings.\n"
+    if _allowed_services:
+        biz_str += f"- Available services: {', '.join(_allowed_services)}\n"
     if biz_language:
-        biz_str += f"- Default language: {'Arabic' if biz_language == 'ar' else biz_language}. Use it unless the user clearly writes in another language.\n"
-
-    context_str = (
-        "\n\nKNOWN DATA (DO NOT ASK AGAIN):\n"
-        f"- Service: {known_service or 'UNKNOWN'}\n"
-        f"- Time: {known_time or 'UNKNOWN'}\n"
-        f"- Name: {known_name or 'UNKNOWN'}\n\n"
-        "RULES:\n"
-        "- If a field is not UNKNOWN, you must NOT ask for it again.\n"
-        "- If only one field is UNKNOWN, ask ONLY for that field.\n"
-        "- If all fields are known, immediately confirm the booking.\n"
-    ) + biz_str
+        biz_str += f"- Default language: {'Arabic' if biz_language == 'ar' else biz_language}.\n"
 
     response = requests.post(
         "https://api.openai.com/v1/chat/completions",
@@ -318,136 +236,20 @@ def chat():
                 {
                     "role": "system",
                     "content": (
-                        "You are Filtrex, a high-performance sales closer. Your primary goal is to convert every conversation into a confirmed booking as quickly as possible.\n\n"
-                        "You are confident, persuasive, and proactive. You lead the conversation — the user never leads you.\n\n"
-                        "Conversation strategy:\n"
-                        "- Immediately guide the user toward booking.\n"
-                        "- Ask one focused question at a time.\n"
-                        "- Collect key information: service type, preferred time, and name.\n"
-                        "- Always assume the user is interested — never act uncertain.\n\n"
-                        "Closing behavior:\n"
-                        "- Move fast toward commitment.\n"
-                        "- Use phrases like:\n"
-                        "  'Let's get this booked for you.'\n"
-                        "  'I'll secure your slot now.'\n"
-                        "  'What name should I confirm the booking under?'\n"
-                        "- Once you have enough information, act as if the booking is already in progress.\n\n"
-                        "Handling hesitation:\n"
-                        "- Acknowledge briefly, then redirect.\n"
-                        "- Offer simple choices instead of open-ended questions.\n"
-                        "  Example: 'Would you prefer today or tomorrow?'\n\n"
-                        "Rules:\n"
-                        "- Always reply in the same language as the user (Arabic or English).\n"
-                        "- Never give long explanations.\n"
-                        "- Never end without asking a forward-moving question.\n"
-                        "- Never say you cannot complete the booking.\n\n"
-                        "Tone:\n"
-                        "- Human, confident, direct, and helpful.\n"
-                        "- Not robotic. Not passive.\n\n"
-                        "Goal:\n"
-                        "Convert → Confirm → Close.\n\n"
-                        "Additional rules:\n"
-                        "- Never add random or irrelevant words.\n"
-                        "- Never mention 'AI' or 'artificial intelligence' in replies.\n"
-                        "- Responses must sound natural, human, and professional.\n"
-                        "- Avoid repetition or unnatural phrasing.\n"
-                        "- Every sentence must be clear and intentional.\n\n"
-                        "Booking confirmation:\n"
-                        "- When you have enough information (service, time, and name), summarize the booking clearly and confirm it.\n"
-                        "- Example: 'Perfect, I've got you down for [service] at [time] under the name [name]. I'm finalizing your booking now.'\n"
-                        "- Always try to reach this confirmation stage as quickly as possible.\n"
-                        "- STRICT MANDATORY RULE: When confirming a booking, you MUST ALWAYS append the following line EXACTLY at the very end of your reply, on its own line:\n"
-                        "  BOOKING_DATA: {\"service\":\"...\",\"time\":\"...\",\"name\":\"...\"}\n"
-                        "- Replace the ... values with the actual service, time, and name collected.\n"
-                        "- This is mandatory. If you do not include this line, the booking will NOT be saved.\n"
-                        "- The JSON must be valid and on a single line.\n"
-                        "- Do not skip it under any condition.\n"
-                        "- Only append this line when the booking is fully confirmed. Never include it in other replies.\n\n"
-                        "Conversation control rules:\n"
-                        "- You must strictly follow this order:\n"
-                        "  1. Identify service\n"
-                        "  2. Identify preferred time\n"
-                        "  3. Identify name\n"
-                        "  4. Confirm booking\n"
-                        "- Never jump backward in the flow.\n"
-                        "- Never ask about something already known.\n"
-                        "- If two pieces of information are already known, immediately ask for the missing one.\n"
-                        "- If all three are known, immediately confirm the booking (no extra questions).\n"
-                        "- Always keep the conversation moving forward step-by-step.\n"
-                        "- Do not restart or rephrase previous steps.\n"
-                        "- Do not ask open-ended questions if a specific question is possible.\n\n"
-                        "Goal:\n"
-                        "Fastest path to booking confirmation with zero repetition.\n\n"
-                        "Confirmation tone:\n"
-                        "- When confirming a booking, always use a strong, final, action-oriented tone.\n"
-                        "- Examples of correct confirmations:\n"
-                        "  'Perfect 👌 Your booking for [service] at [time] under the name [name] is now confirmed.'\n"
-                        "  'Done ✅ I've secured your [service] appointment for [time] under the name [name].'\n"
-                        "  'All set. Your appointment is confirmed for [service] at [time].'\n"
-                        "- Do not sound hesitant.\n"
-                        "- Do not ask any more questions after confirmation.\n"
-                        "- Make it feel like the booking is already secured.\n\n"
-                        "Strict data rules:\n"
-                        "- Never assume or invent service, time, or name.\n"
-                        "- Only use information explicitly provided by the user in the current conversation.\n"
-                        "- If any required information is missing, ask for it.\n"
-                        "- If no information is known, start from step 1 (ask for service).\n"
-                        "- After a session reset, behave as if this is a completely new user with no prior data.\n\n"
-                        "Conversation start rule:\n"
-                        "- If the user message is only a greeting (e.g., 'سلام', 'مرحبا', 'hello', 'hi'), do NOT proceed with the booking flow.\n"
-                        "- Instead, respond with a simple, friendly greeting and ask what service they are looking for.\n"
-                        "- Examples:\n"
-                        "  'أهلاً 👋 كيف أقدر أساعدك اليوم؟'\n"
-                        "  'Hi 👋 What service are you looking to book?'\n"
-                        "- Do not mention any service, time, or name unless the user provides it.\n"
-                        "- Do not skip directly to booking steps on greetings.\n\n"
-                        "Intent override rule:\n"
-                        "- If the user message contains a clear intent (e.g. booking, service request, time, or name), you MUST ignore greeting behavior.\n"
-                        "- NEVER greet again after the first greeting.\n"
-                        "- If the user says something like 'I want to book', immediately proceed to step 1 (identify service).\n"
-                        "- Do NOT restart the conversation.\n"
-                        "- Do NOT say 'How can I help you?' more than once at the very beginning.\n"
-                        "- This rule overrides the greeting rule completely."
-                        + context_str
+                        "You are Filtrex, a friendly assistant. "
+                        "Answer the user's question naturally and helpfully. "
+                        "Do not attempt to confirm or save a booking — that is handled separately. "
+                        "Do not mention AI. Reply in the same language as the user."
+                        + biz_str
                     )
                 },
-                {
-                    "role": "user",
-                    "content": user_message
-                }
+                {"role": "user", "content": user_message}
             ]
         }
     )
 
     reply = response.json()["choices"][0]["message"]["content"]
-
-    booking = None
-    clean_lines = []
-    for line in reply.splitlines():
-        if line.strip().startswith("BOOKING_DATA:"):
-            try:
-                json_str = line.strip()[len("BOOKING_DATA:"):].strip()
-                booking = json.loads(json_str)
-            except Exception:
-                pass
-        else:
-            clean_lines.append(line)
-
-    clean_reply = "\n".join(clean_lines).strip()
-
-    reply_lower = clean_reply.lower()
-    if any(trigger in reply_lower for trigger in NAME_TRIGGERS) and not known_name:
-        session["awaiting_name"] = True
-    else:
-        session["awaiting_name"] = awaiting_name
-
-    if booking:
-        return confirm_booking(
-            booking.get("name", ""), booking.get("service", ""), booking.get("time", ""),
-            clean_reply
-        )
-
-    return jsonify({"reply": clean_reply})
+    return jsonify({"reply": reply})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
