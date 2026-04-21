@@ -9,6 +9,7 @@ import datetime
 ULTRAMSG_INSTANCE = os.getenv("ULTRAMSG_INSTANCE", "")
 ULTRAMSG_TOKEN         = os.getenv("ULTRAMSG_TOKEN", "")
 ADMIN_WHATSAPP_NUMBER  = os.getenv("ADMIN_WHATSAPP_NUMBER", "")
+print(f"[STARTUP] ADMIN_WHATSAPP_NUMBER={ADMIN_WHATSAPP_NUMBER!r}")
 
 def ultramsg_send(to, text):
     url = f"https://api.ultramsg.com/{ULTRAMSG_INSTANCE}/messages/chat"
@@ -312,9 +313,6 @@ def is_price_question(msg):
     return any(kw in msg for kw in _WA_PRICE_KEYWORDS)
 
 def notify_admin_booking(phone, state, name):
-    if not ADMIN_WHATSAPP_NUMBER:
-        print("[ADMIN_NOTIFY] ADMIN_WHATSAPP_NUMBER not set, skipping")
-        return
     msg = (
         f"📥 حجز جديد\n"
         f"الاسم: {name}\n"
@@ -322,9 +320,12 @@ def notify_admin_booking(phone, state, name):
         f"الخدمة: {state.get('known_service')}\n"
         f"الموعد: {state.get('known_day')} {state.get('known_time')}"
     )
+    print("[ADMIN_NOTIFY] sending notification...")
+    print(f"[ADMIN_NOTIFY] TO={ADMIN_WHATSAPP_NUMBER!r}")
+    print(f"[ADMIN_NOTIFY] MSG={msg!r}")
     try:
-        ultramsg_send(normalize_number(ADMIN_WHATSAPP_NUMBER), msg)
-        print(f"[ADMIN_NOTIFY] sent to {ADMIN_WHATSAPP_NUMBER!r}")
+        resp = ultramsg_send(ADMIN_WHATSAPP_NUMBER, msg.strip())
+        print(f"[ADMIN_NOTIFY] status={resp.status_code} body={resp.text}")
     except Exception as e:
         print(f"[ADMIN_NOTIFY_ERROR] {e}")
 
