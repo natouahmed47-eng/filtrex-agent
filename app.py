@@ -196,6 +196,35 @@ def wa_clear(phone):
         print(f"[DB] wa_clear connection closed")
     print(f"[WHATSAPP] state_cleared phone={phone}")
 
+WHATSAPP_SYSTEM_PROMPT = (
+    "You are a professional Arabic-speaking WhatsApp business assistant. "
+    "Reply briefly, politely, and clearly. "
+    "Focus on helping users with bookings and business questions. "
+    "Do not be verbose."
+)
+
+def openai_chat(user_message):
+    print(f"[OPENAI] sending message={user_message!r}")
+    resp = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "model": "gpt-4o-mini",
+            "messages": [
+                {"role": "system", "content": WHATSAPP_SYSTEM_PROMPT},
+                {"role": "user",   "content": user_message}
+            ]
+        },
+        timeout=20
+    )
+    print(f"[OPENAI] response status={resp.status_code} body={resp.text[:300]!r}")
+    if resp.status_code == 200:
+        return resp.json()["choices"][0]["message"]["content"].strip()
+    return "عذراً، حدث خطأ. يرجى المحاولة مجدداً."
+
 def normalize_number(sender):
     sender = sender.replace("whatsapp:", "").replace("+", "").strip()
     if not sender.endswith("@c.us"):
@@ -304,7 +333,9 @@ def whatsapp():
             print("[WHATSAPP] ignored non-chat or empty message")
             return "", 200
 
-        return wa_reply(sender, "تم الاستلام ✅")
+        ai_reply = openai_chat(incoming_msg)
+        print(f"[WHATSAPP] ai_reply={ai_reply!r}")
+        return wa_reply(sender, ai_reply)
 
     except Exception as e:
         try:
