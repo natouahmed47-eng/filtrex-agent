@@ -1,11 +1,21 @@
 from flask import Flask, request, jsonify, render_template, session, redirect, url_for
 from werkzeug.security import generate_password_hash, check_password_hash
-from twilio.twiml.messaging_response import MessagingResponse
 import requests
 import os
 import json
 import sqlite3
 import datetime
+
+ULTRAMSG_INSTANCE = os.getenv("ULTRAMSG_INSTANCE", "")
+ULTRAMSG_TOKEN    = os.getenv("ULTRAMSG_TOKEN", "")
+
+def ultramsg_send(to, text):
+    url = f"https://api.ultramsg.com/{ULTRAMSG_INSTANCE}/messages/chat"
+    payload = {"token": ULTRAMSG_TOKEN, "to": to, "body": text}
+    print(f"[ULTRAMSG] sending to={to!r} body={text!r}")
+    resp = requests.post(url, data=payload, timeout=10)
+    print(f"[ULTRAMSG] response status={resp.status_code} body={resp.text!r}")
+    return resp
 
 app = Flask(__name__)
 print("🚀 WHATSAPP TEST VERSION LIVE")
@@ -186,11 +196,10 @@ def wa_clear(phone):
         print(f"[DB] wa_clear connection closed")
     print(f"[WHATSAPP] state_cleared phone={phone}")
 
-def twilio_reply(text):
-    print(f"[WHATSAPP] final_reply={text!r}")
-    resp = MessagingResponse()
-    resp.message(text)
-    return str(resp), 200, {"Content-Type": "text/xml"}
+def wa_reply(to, text):
+    print(f"[WHATSAPP] final_reply to={to!r} text={text!r}")
+    ultramsg_send(to, text)
+    return "", 200
 
 _SERVICE_MAP = {
     "تنظيف": "تنظيف أسنان",
@@ -267,11 +276,34 @@ def build_id():
 
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
-    print("🔥 WHATSAPP ROUTE HIT - REPLIT_DEPLOY_TEST_001")
-    sender       = request.form.get("From", "").strip()
-    incoming_msg = request.form.get("Body", "").strip()
-    print(f"[WHATSAPP] sender={sender!r} message={incoming_msg!r}")
-    return twilio_reply("TEST OK REPLIT_DEPLOY_TEST_001")
+    print("🔥 WHATSAPP ROUTE HIT")
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        print(f"[WHATSAPP] raw_data={data}")
+
+        # UltraMsg sends: {"data": {"from": "...", "body": "...", "type": "chat", ...}}
+        msg_data     = data.get("data", {})
+        sender       = msg_data.get("from", "").strip()
+        incoming_msg = msg_data.get("body", "").strip()
+        msg_type     = msg_data.get("type", "")
+
+        print(f"[WHATSAPP] sender={sender!r} message={incoming_msg!r} type={msg_type!r}")
+
+        # Ignore non-chat messages (images, stickers, etc.)
+        if msg_type != "chat" or not sender or not incoming_msg:
+            print("[WHATSAPP] ignored non-chat or empty message")
+            return "", 200
+
+        return wa_reply(sender, "تم الاستلام ✅")
+
+    except Exception as e:
+        try:
+            import traceback
+            print(f"[WHATSAPP] EXCEPTION: {repr(e)}")
+            print(traceback.format_exc())
+        except Exception:
+            pass
+        return "", 200
 
 @app.route("/whatsapp-test", methods=["GET"])
 def whatsapp_test():
