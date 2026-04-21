@@ -493,6 +493,56 @@ def whatsapp():
         print(traceback.format_exc())
         return "", 200
 
+@app.route("/admin/bookings")
+def admin_bookings():
+    con = get_db_connection()
+    try:
+        rows = con.execute("SELECT * FROM bookings ORDER BY id DESC").fetchall()
+    finally:
+        con.close()
+    html = """
+<html>
+<head>
+    <title>Bookings Dashboard</title>
+    <style>
+        body { font-family: Arial; padding: 20px; background:#f5f5f5; }
+        h2 { margin-bottom:20px; }
+        table { border-collapse: collapse; width: 100%; background:white; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: center; }
+        th { background: #333; color: white; }
+        tr:nth-child(even) { background:#f9f9f9; }
+    </style>
+</head>
+<body>
+    <h2>&#128197; Bookings Dashboard</h2>
+    <table>
+        <tr>
+            <th>ID</th>
+            <th>User ID</th>
+            <th>Name</th>
+            <th>Service</th>
+            <th>Time</th>
+            <th>Timestamp</th>
+        </tr>
+"""
+    for r in rows:
+        html += f"""
+        <tr>
+            <td>{r['id']}</td>
+            <td>{r['user_id']}</td>
+            <td>{r['name']}</td>
+            <td>{r['service']}</td>
+            <td>{r['time']}</td>
+            <td>{r['timestamp']}</td>
+        </tr>
+"""
+    html += """
+    </table>
+</body>
+</html>
+"""
+    return html
+
 @app.route("/whatsapp-test", methods=["GET"])
 def whatsapp_test():
     return "WHATSAPP TEST ROUTE LIVE", 200, {"Content-Type": "text/plain"}
