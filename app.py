@@ -261,13 +261,17 @@ def extract_booking_fields(message, allowed_services=None):
 
     return {"service": service, "time": time, "name": name, "raw_service": raw_service}
 
+@app.route("/build-id")
+def build_id():
+    return "BUILD_ID: REPLIT_DEPLOY_TEST_001", 200
+
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
-    print("🔥 WHATSAPP ROUTE HIT")
+    print("🔥 WHATSAPP ROUTE HIT - REPLIT_DEPLOY_TEST_001")
     sender       = request.form.get("From", "").strip()
     incoming_msg = request.form.get("Body", "").strip()
     print(f"[WHATSAPP] sender={sender!r} message={incoming_msg!r}")
-    return twilio_reply("TEST OK")
+    return twilio_reply("TEST OK REPLIT_DEPLOY_TEST_001")
 
 @app.route("/whatsapp-test", methods=["GET"])
 def whatsapp_test():
