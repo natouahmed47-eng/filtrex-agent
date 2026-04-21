@@ -7,7 +7,8 @@ import sqlite3
 import datetime
 
 ULTRAMSG_INSTANCE = os.getenv("ULTRAMSG_INSTANCE", "")
-ULTRAMSG_TOKEN    = os.getenv("ULTRAMSG_TOKEN", "")
+ULTRAMSG_TOKEN         = os.getenv("ULTRAMSG_TOKEN", "")
+ADMIN_WHATSAPP_NUMBER  = os.getenv("ADMIN_WHATSAPP_NUMBER", "")
 
 def ultramsg_send(to, text):
     url = f"https://api.ultramsg.com/{ULTRAMSG_INSTANCE}/messages/chat"
@@ -310,6 +311,23 @@ def detect_wa_service(msg):
 def is_price_question(msg):
     return any(kw in msg for kw in _WA_PRICE_KEYWORDS)
 
+def notify_admin_booking(phone, state, name):
+    if not ADMIN_WHATSAPP_NUMBER:
+        print("[ADMIN_NOTIFY] ADMIN_WHATSAPP_NUMBER not set, skipping")
+        return
+    msg = (
+        f"📥 حجز جديد\n"
+        f"الاسم: {name}\n"
+        f"الرقم: {phone}\n"
+        f"الخدمة: {state.get('known_service')}\n"
+        f"الموعد: {state.get('known_day')} {state.get('known_time')}"
+    )
+    try:
+        ultramsg_send(normalize_number(ADMIN_WHATSAPP_NUMBER), msg)
+        print(f"[ADMIN_NOTIFY] sent to {ADMIN_WHATSAPP_NUMBER!r}")
+    except Exception as e:
+        print(f"[ADMIN_NOTIFY_ERROR] {e}")
+
 def wa_save_booking(phone, state, name):
     svc  = state.get("known_service") or "غير محدد"
     day  = state.get("known_day")  or ""
@@ -467,6 +485,7 @@ def whatsapp():
         elif step == "name":
             name = incoming_msg.strip()
             wa_save_booking(sender, state, name)
+            notify_admin_booking(sender, state, name)
             wa_clear(sender)
             svc  = state.get("known_service") or "غير محدد"
             day  = state.get("known_day")     or ""
