@@ -78,9 +78,10 @@ def init_db():
             CREATE TABLE IF NOT EXISTS whatsapp_state (
                 phone         TEXT PRIMARY KEY,
                 known_service TEXT,
+                known_day     TEXT,
                 known_time    TEXT,
                 known_name    TEXT,
-                awaiting_name INTEGER DEFAULT 0
+                current_step  TEXT DEFAULT 'service'
             )
         """)
         con.execute("INSERT OR IGNORE INTO users (id, username, password) VALUES (1, 'admin', '123456')")
@@ -100,6 +101,22 @@ def init_db():
         print("[DB] init_db connection closed")
 
 init_db()
+
+def _migrate_whatsapp_state():
+    con = get_db_connection()
+    try:
+        cols = [row[1] for row in con.execute("PRAGMA table_info(whatsapp_state)").fetchall()]
+        if "known_day" not in cols:
+            con.execute("ALTER TABLE whatsapp_state ADD COLUMN known_day TEXT")
+            print("[DB] migration: added known_day")
+        if "current_step" not in cols:
+            con.execute("ALTER TABLE whatsapp_state ADD COLUMN current_step TEXT DEFAULT 'service'")
+            print("[DB] migration: added current_step")
+        con.commit()
+    finally:
+        con.close()
+
+_migrate_whatsapp_state()
 
 bookings = []
 
@@ -138,38 +155,44 @@ def assistant():
 WHATSAPP_USER_ID = 1
 
 def wa_load(phone):
-    print(f"[DB] wa_load opening connection phone={phone}")
+    print(f"[DB] wa_load phone={phone}")
     con = get_db_connection()
     try:
         row = con.execute(
-            "SELECT known_service, known_time, known_name, awaiting_name FROM whatsapp_state WHERE phone = ?",
+            "SELECT known_service, known_day, known_time, known_name, current_step FROM whatsapp_state WHERE phone = ?",
             (phone,)
         ).fetchone()
     finally:
         con.close()
-        print(f"[DB] wa_load connection closed")
     if row:
         return {
             "known_service": row["known_service"],
+            "known_day":     row["known_day"],
             "known_time":    row["known_time"],
             "known_name":    row["known_name"],
-            "awaiting_name": bool(row["awaiting_name"]),
+            "current_step":  row["current_step"] or "service",
         }
-    return {"known_service": None, "known_time": None, "known_name": None, "awaiting_name": False}
+    return {"known_service": None, "known_day": None, "known_time": None, "known_name": None, "current_step": "service"}
 
-def wa_save(phone, known_service, known_time, known_name, awaiting_name):
-    print(f"[DB] wa_save opening connection phone={phone} service={known_service} time={known_time} name={known_name} awaiting_name={awaiting_name}")
+def wa_save(phone, state):
+    print(f"[DB] wa_save phone={phone} state={state}")
     con = get_db_connection()
     try:
         con.execute(
-            """INSERT INTO whatsapp_state (phone, known_service, known_time, known_name, awaiting_name)
-               VALUES (?, ?, ?, ?, ?)
+            """INSERT INTO whatsapp_state (phone, known_service, known_day, known_time, known_name, current_step)
+               VALUES (?, ?, ?, ?, ?, ?)
                ON CONFLICT(phone) DO UPDATE SET
                    known_service = excluded.known_service,
+                   known_day     = excluded.known_day,
                    known_time    = excluded.known_time,
                    known_name    = excluded.known_name,
-                   awaiting_name = excluded.awaiting_name""",
-            (phone, known_service, known_time, known_name, 1 if awaiting_name else 0)
+                   current_step  = excluded.current_step""",
+            (phone,
+             state.get("known_service"),
+             state.get("known_day"),
+             state.get("known_time"),
+             state.get("known_name"),
+             state.get("current_step", "service"))
         )
         con.commit()
         print(f"[DB] wa_save committed")
@@ -178,8 +201,6 @@ def wa_save(phone, known_service, known_time, known_name, awaiting_name):
         raise
     finally:
         con.close()
-        print(f"[DB] wa_save connection closed")
-    print(f"[WHATSAPP] state_saved service={known_service} time={known_time} name={known_name} awaiting_name={awaiting_name}")
 
 def wa_clear(phone):
     print(f"[DB] wa_clear opening connection phone={phone}")
@@ -266,6 +287,49 @@ def wa_reply(to, text):
     print(f"[ULTRAMSG] reply status={resp.status_code if resp else 'N/A'} body={resp.text[:200] if resp else 'N/A'}")
     return "", 200
 
+_WA_PRICES = {
+    "تنظيف أسنان":   "100 ريال",
+    "تبييض الأسنان": "250 ريال",
+    "فحص الأسنان":   "50 ريال",
+}
+
+_WA_SERVICE_KEYWORDS = {
+    "تنظيف": "تنظيف أسنان",
+    "تبييض": "تبييض الأسنان",
+    "فحص":   "فحص الأسنان",
+}
+
+_WA_PRICE_KEYWORDS = ["كم", "سعر", "ثمن", "تكلفة", "بكم", "السعر", "الثمن"]
+
+def detect_wa_service(msg):
+    for kw, svc in _WA_SERVICE_KEYWORDS.items():
+        if kw in msg:
+            return svc
+    return None
+
+def is_price_question(msg):
+    return any(kw in msg for kw in _WA_PRICE_KEYWORDS)
+
+def wa_save_booking(phone, state, name):
+    svc  = state.get("known_service") or "غير محدد"
+    day  = state.get("known_day")  or ""
+    time = state.get("known_time") or ""
+    slot = f"{day} {time}".strip()
+    print(f"[DB] wa_save_booking phone={phone} service={svc} slot={slot} name={name}")
+    con = get_db_connection()
+    try:
+        con.execute(
+            "INSERT INTO bookings (user_id, name, service, time, timestamp) VALUES (?, ?, ?, ?, ?)",
+            (str(WHATSAPP_USER_ID), name, svc, slot, datetime.datetime.now().isoformat())
+        )
+        con.commit()
+        print(f"[DB] wa_save_booking committed")
+    except Exception as db_err:
+        print(f"[DB] wa_save_booking ERROR: {repr(db_err)}")
+        raise
+    finally:
+        con.close()
+
 _SERVICE_MAP = {
     "تنظيف": "تنظيف أسنان",
     "تبييض": "تبييض أسنان",
@@ -344,9 +408,6 @@ def whatsapp():
     print("🔥 WHATSAPP ROUTE HIT")
     try:
         data = request.get_json(force=True, silent=True) or {}
-        print(f"[WHATSAPP] raw_data={data}")
-
-        # UltraMsg sends: {"data": {"from": "...", "body": "...", "type": "chat", ...}}
         msg_data     = data.get("data", {})
         sender       = msg_data.get("from", "").strip()
         incoming_msg = msg_data.get("body", "").strip()
@@ -354,22 +415,82 @@ def whatsapp():
 
         print(f"[WHATSAPP] sender={sender!r} message={incoming_msg!r} type={msg_type!r}")
 
-        # Ignore non-chat messages (images, stickers, etc.)
         if msg_type != "chat" or not sender or not incoming_msg:
             print("[WHATSAPP] ignored non-chat or empty message")
             return "", 200
 
-        ai_reply = openai_chat(incoming_msg)
-        print(f"[WHATSAPP] ai_reply={ai_reply!r}")
-        return wa_reply(sender, ai_reply)
+        state = wa_load(sender)
+        step  = state["current_step"]
+        print(f"[WHATSAPP] step={step!r} state={state}")
+
+        # ── STEP: service ─────────────────────────────────────────────────
+        if step == "service":
+            svc = detect_wa_service(incoming_msg)
+            if svc:
+                price = _WA_PRICES[svc]
+                state["known_service"] = svc
+                state["current_step"]  = "day"
+                wa_save(sender, state)
+                reply = (
+                    f"ممتاز! 😊 {svc} متاح بسعر {price}\n"
+                    f"هل تفضل موعدك اليوم أو غدًا؟"
+                )
+            elif is_price_question(incoming_msg):
+                reply = (
+                    "يسعدنا خدمتك! 😊 لدينا:\n"
+                    "• تنظيف أسنان — 100 ريال\n"
+                    "• تبييض الأسنان — 250 ريال\n"
+                    "• فحص الأسنان — 50 ريال\n"
+                    "أي خدمة تناسبك؟"
+                )
+            else:
+                reply = openai_chat(incoming_msg)
+
+        # ── STEP: day ─────────────────────────────────────────────────────
+        elif step == "day":
+            svc = detect_wa_service(incoming_msg)
+            if svc and not state["known_service"]:
+                state["known_service"] = svc
+            state["known_day"]    = incoming_msg.strip()
+            state["current_step"] = "time"
+            wa_save(sender, state)
+            reply = "ممتاز! في أي وقت بالضبط؟ 🕐"
+
+        # ── STEP: time ────────────────────────────────────────────────────
+        elif step == "time":
+            state["known_time"]   = incoming_msg.strip()
+            state["current_step"] = "name"
+            wa_save(sender, state)
+            reply = "وما اسمك الكريم؟ 😊"
+
+        # ── STEP: name → confirm + save ───────────────────────────────────
+        elif step == "name":
+            name = incoming_msg.strip()
+            wa_save_booking(sender, state, name)
+            wa_clear(sender)
+            svc  = state.get("known_service") or "غير محدد"
+            day  = state.get("known_day")     or ""
+            time = state.get("known_time")    or ""
+            reply = (
+                f"تم حجز موعدك بنجاح ✅\n"
+                f"الخدمة: {svc}\n"
+                f"الموعد: {day} {time}\n"
+                f"الاسم: {name}\n"
+                f"نحن بانتظارك 🌟"
+            )
+
+        else:
+            state["current_step"] = "service"
+            wa_save(sender, state)
+            reply = openai_chat(incoming_msg)
+
+        print(f"[WHATSAPP] reply={reply!r}")
+        return wa_reply(sender, reply)
 
     except Exception as e:
-        try:
-            import traceback
-            print(f"[WHATSAPP] EXCEPTION: {repr(e)}")
-            print(traceback.format_exc())
-        except Exception:
-            pass
+        import traceback
+        print(f"[WHATSAPP] EXCEPTION: {repr(e)}")
+        print(traceback.format_exc())
         return "", 200
 
 @app.route("/whatsapp-test", methods=["GET"])
