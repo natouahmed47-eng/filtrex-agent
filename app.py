@@ -324,7 +324,7 @@ def notify_admin_booking(phone, state, name):
     print(f"[ADMIN_NOTIFY] TO={ADMIN_WHATSAPP_NUMBER!r}")
     print(f"[ADMIN_NOTIFY] MSG={msg!r}")
     try:
-        resp = ultramsg_send(ADMIN_WHATSAPP_NUMBER, msg.strip())
+        resp = ultramsg_send(normalize_number(ADMIN_WHATSAPP_NUMBER), msg.strip())
         print(f"[ADMIN_NOTIFY] status={resp.status_code} body={resp.text}")
     except Exception as e:
         print(f"[ADMIN_NOTIFY_ERROR] {e}")
@@ -486,7 +486,11 @@ def whatsapp():
         elif step == "name":
             name = incoming_msg.strip()
             wa_save_booking(sender, state, name)
-            notify_admin_booking(sender, state, name)
+            print("[WHATSAPP] booking saved — calling notify_admin_booking")
+            try:
+                notify_admin_booking(sender, state, name)
+            except Exception as _ne:
+                print(f"[ADMIN_NOTIFY_OUTER_ERROR] {repr(_ne)}")
             wa_clear(sender)
             svc  = state.get("known_service") or "غير محدد"
             day  = state.get("known_day")     or ""
