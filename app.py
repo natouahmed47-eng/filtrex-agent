@@ -196,9 +196,19 @@ def wa_clear(phone):
         print(f"[DB] wa_clear connection closed")
     print(f"[WHATSAPP] state_cleared phone={phone}")
 
+def normalize_number(sender):
+    sender = sender.replace("whatsapp:", "").replace("+", "").strip()
+    if not sender.endswith("@c.us"):
+        sender = sender + "@c.us"
+    return sender
+
 def wa_reply(to, text):
+    raw = to
+    to  = normalize_number(to)
+    print(f"[WHATSAPP] raw_sender={raw!r} normalized_sender={to!r}")
     print(f"[WHATSAPP] final_reply to={to!r} text={text!r}")
-    ultramsg_send(to, text)
+    resp = ultramsg_send(to, text)
+    print(f"[ULTRAMSG] reply status={resp.status_code if resp else 'N/A'} body={resp.text[:200] if resp else 'N/A'}")
     return "", 200
 
 _SERVICE_MAP = {
