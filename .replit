@@ -40,3 +40,7 @@ run = ["gunicorn", "--bind=0.0.0.0:5000", "--reuse-port", "app:app"]
 [postMerge]
 path = "scripts/post-merge.sh"
 timeoutMs = 60000
+
+[userenv]
+
+[userenv.shared]
