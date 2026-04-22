@@ -297,7 +297,10 @@ def openai_chat(user_message, lang="ar"):
     print(f"[OPENAI] response status={resp.status_code} body={resp.text[:300]!r}")
     if resp.status_code == 200:
         return resp.json()["choices"][0]["message"]["content"].strip()
-    return "عذراً، حدث خطأ. يرجى المحاولة مجدداً."
+    _err = {"ar": "عذراً، حدث خطأ. يرجى المحاولة مجدداً.",
+            "en": "Sorry, an error occurred. Please try again.",
+            "fr": "Désolé, une erreur s'est produite. Veuillez réessayer."}
+    return _err.get(lang, _err["ar"])
 
 def normalize_number(sender):
     sender = sender.replace("whatsapp:", "").replace("+", "").strip()
@@ -319,6 +322,86 @@ _WA_PRICES = {
     "تبييض الأسنان": "250 ريال",
     "فحص الأسنان":   "50 ريال",
 }
+
+_STRINGS = {
+    "ask_service": {
+        "ar": "أهلاً! 😊 كيف يمكنني مساعدتك؟ هل تريد حجز:\n• تنظيف أسنان\n• تبييض الأسنان\n• فحص الأسنان",
+        "en": "Hello! 😊 How can I help you? Would you like to book:\n• Teeth cleaning\n• Teeth whitening\n• Dental checkup",
+        "fr": "Bonjour! 😊 Comment puis-je vous aider? Souhaitez-vous réserver:\n• Nettoyage des dents\n• Blanchiment des dents\n• Contrôle dentaire",
+    },
+    "service_confirmed": {
+        "ar": "ممتاز! 😊 {svc} متاح بسعر {price}\nهل تفضل موعدك اليوم أو غدًا؟",
+        "en": "Great! 😊 {svc} is available for {price}\nWould you prefer today or tomorrow?",
+        "fr": "Parfait! 😊 {svc} est disponible pour {price}\nPréférez-vous aujourd'hui ou demain?",
+    },
+    "price_list": {
+        "ar": (
+            "يسعدنا خدمتك! 😊 أسعارنا:\n"
+            "• تنظيف أسنان — 100 ريال\n"
+            "• تبييض الأسنان — 250 ريال\n"
+            "• فحص الأسنان — 50 ريال\n"
+            "أي خدمة تناسبك؟"
+        ),
+        "en": (
+            "Happy to help! 😊 Our prices:\n"
+            "• Teeth cleaning — 100 SAR\n"
+            "• Teeth whitening — 250 SAR\n"
+            "• Dental checkup — 50 SAR\n"
+            "Which service suits you?"
+        ),
+        "fr": (
+            "Avec plaisir! 😊 Nos tarifs:\n"
+            "• Nettoyage des dents — 100 SAR\n"
+            "• Blanchiment des dents — 250 SAR\n"
+            "• Contrôle dentaire — 50 SAR\n"
+            "Quel service vous convient?"
+        ),
+    },
+    "ask_day": {
+        "ar": "ممتاز! في أي يوم تفضل؟ (اليوم أو غدًا) 🗓️",
+        "en": "Great! Which day do you prefer? (Today or tomorrow) 🗓️",
+        "fr": "Parfait! Quel jour préférez-vous? (Aujourd'hui ou demain) 🗓️",
+    },
+    "ask_time": {
+        "ar": "في أي وقت بالضبط؟ 🕐",
+        "en": "What time exactly? 🕐",
+        "fr": "À quelle heure exactement? 🕐",
+    },
+    "slot_taken_header": {
+        "ar": "عذرًا، هذا الموعد محجوز 🌟\nأقرب الأوقات المتاحة:\n\n",
+        "en": "Sorry, that slot is taken 🌟\nNearest available times:\n\n",
+        "fr": "Désolé, ce créneau est pris 🌟\nProchains créneaux disponibles:\n\n",
+    },
+    "slot_taken_footer": {
+        "ar": "\n\nهل يناسبك أحدها؟ 😊",
+        "en": "\n\nDoes one of these work for you? 😊",
+        "fr": "\n\nL'un de ces créneaux vous convient-il? 😊",
+    },
+    "no_slots": {
+        "ar": "عذرًا، لا توجد مواعيد متاحة في هذا اليوم 😔\nهل ترغب في اختيار يوم آخر؟",
+        "en": "Sorry, no available slots on that day 😔\nWould you like to choose another day?",
+        "fr": "Désolé, aucun créneau disponible ce jour-là 😔\nVoulez-vous choisir un autre jour?",
+    },
+    "ask_name": {
+        "ar": "وما اسمك الكريم؟ 😊",
+        "en": "What is your name? 😊",
+        "fr": "Quel est votre nom? 😊",
+    },
+    "booking_confirmed": {
+        "ar": "تم حجز موعدك بنجاح ✅\nالخدمة: {svc}\nالموعد: {day} {time}\nالاسم: {name}\nنحن بانتظارك 🌟",
+        "en": "Booking confirmed ✅\nService: {svc}\nAppointment: {day} {time}\nName: {name}\nWe look forward to seeing you 🌟",
+        "fr": "Réservation confirmée ✅\nService: {svc}\nRendez-vous: {day} {time}\nNom: {name}\nNous avons hâte de vous accueillir 🌟",
+    },
+    "error": {
+        "ar": "عذراً، حدث خطأ. يرجى المحاولة مجدداً.",
+        "en": "Sorry, an error occurred. Please try again.",
+        "fr": "Désolé, une erreur s'est produite. Veuillez réessayer.",
+    },
+}
+
+def t(key, lang):
+    lang = lang if lang in ("ar", "en", "fr") else "ar"
+    return _STRINGS.get(key, {}).get(lang) or _STRINGS.get(key, {}).get("ar", "")
 
 _WA_SERVICE_ALIASES = {
     "تنظيف أسنان": [
@@ -611,18 +694,9 @@ def whatsapp():
                     state["known_service"] = svc
                     state["current_step"]  = "day"
                     wa_save(sender, state)
-                    reply = (
-                        f"ممتاز! 😊 {svc} متاح بسعر {price}\n"
-                        f"هل تفضل موعدك اليوم أو غدًا؟"
-                    )
+                    reply = t("service_confirmed", lang).format(svc=svc, price=price)
                 elif is_price_question(incoming_msg):
-                    reply = (
-                        "يسعدنا خدمتك! 😊 لدينا:\n"
-                        "• تنظيف أسنان — 100 ريال\n"
-                        "• تبييض الأسنان — 250 ريال\n"
-                        "• فحص الأسنان — 50 ريال\n"
-                        "أي خدمة تناسبك؟"
-                    )
+                    reply = t("price_list", lang)
                 else:
                     reply = openai_chat(incoming_msg, lang=lang)
 
@@ -634,7 +708,7 @@ def whatsapp():
             state["known_day"]    = incoming_msg.strip()
             state["current_step"] = "time"
             wa_save(sender, state)
-            reply = "ممتاز! في أي وقت بالضبط؟ 🕐"
+            reply = t("ask_time", lang)
 
         # ── STEP: time ────────────────────────────────────────────────────
         elif step == "time":
@@ -647,23 +721,15 @@ def whatsapp():
                 top = get_top_times(available)
                 print(f"[SMART_SUGGEST] top={top}")
                 if top:
-                    slots = "\n".join(f"- {t}" for t in top)
-                    reply = (
-                        f"عذرًا، هذا الموعد محجوز 🌟\n"
-                        f"أقرب الأوقات المتاحة:\n\n"
-                        f"{slots}\n\n"
-                        f"هل يناسبك أحدها؟ 😊"
-                    )
+                    slots = "\n".join(f"- {slot}" for slot in top)
+                    reply = t("slot_taken_header", lang) + slots + t("slot_taken_footer", lang)
                 else:
-                    reply = (
-                        "عذرًا، لا توجد مواعيد متاحة في هذا اليوم 😔\n"
-                        "هل ترغب في اختيار يوم آخر؟"
-                    )
+                    reply = t("no_slots", lang)
             else:
                 state["known_time"]   = time_val
                 state["current_step"] = "name"
                 wa_save(sender, state)
-                reply = "وما اسمك الكريم؟ 😊"
+                reply = t("ask_name", lang)
 
         # ── STEP: name → confirm + save ───────────────────────────────────
         elif step == "name":
@@ -675,16 +741,10 @@ def whatsapp():
             except Exception as _ne:
                 print(f"[ADMIN_NOTIFY_OUTER_ERROR] {repr(_ne)}")
             wa_clear(sender)
-            svc  = state.get("known_service") or "غير محدد"
+            svc  = state.get("known_service") or "-"
             day  = state.get("known_day")     or ""
             time = state.get("known_time")    or ""
-            reply = (
-                f"تم حجز موعدك بنجاح ✅\n"
-                f"الخدمة: {svc}\n"
-                f"الموعد: {day} {time}\n"
-                f"الاسم: {name}\n"
-                f"نحن بانتظارك 🌟"
-            )
+            reply = t("booking_confirmed", lang).format(svc=svc, day=day, time=time, name=name)
 
         else:
             state["current_step"] = "service"
