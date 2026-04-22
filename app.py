@@ -15,8 +15,21 @@ def ultramsg_send(to, text):
     url = f"https://api.ultramsg.com/{ULTRAMSG_INSTANCE}/messages/chat"
     payload = {"token": ULTRAMSG_TOKEN, "to": to, "body": text}
     print(f"[ULTRAMSG] sending to={to!r} body={text!r}")
-    resp = requests.post(url, data=payload, timeout=10)
+    try:
+        resp = requests.post(url, data=payload, timeout=10)
+    except Exception as req_err:
+        print(f"[ULTRAMSG_ERROR] request failed: {repr(req_err)}")
+        return None
     print(f"[ULTRAMSG] response status={resp.status_code} body={resp.text!r}")
+    body_lower = resp.text.lower()
+    if "demo" in body_lower and "limit" in body_lower:
+        print(
+            "[ULTRAMSG_LIMIT] ⚠️  Demo daily sending limit exceeded. "
+            "Message was NOT delivered. "
+            "Either wait for the daily reset (midnight UTC) or upgrade your UltraMsg plan."
+        )
+    elif resp.status_code != 200 or '"sent"' not in resp.text.lower():
+        print(f"[ULTRAMSG_WARN] message may not have been delivered — status={resp.status_code} body={resp.text!r}")
     return resp
 
 app = Flask(__name__)
