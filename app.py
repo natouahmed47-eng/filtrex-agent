@@ -161,7 +161,6 @@ def assistant():
 WHATSAPP_USER_ID = 1
 
 def wa_load(phone):
-    print(f"[DB] wa_load phone={phone}")
     con = get_db_connection()
     try:
         row = con.execute(
@@ -171,7 +170,7 @@ def wa_load(phone):
     finally:
         con.close()
     if row:
-        return {
+        state = {
             "known_service": row["known_service"],
             "known_day":     row["known_day"],
             "known_time":    row["known_time"],
@@ -179,10 +178,13 @@ def wa_load(phone):
             "current_step":  row["current_step"] or "service",
             "lang":          row["lang"] or "",
         }
-    return {"known_service": None, "known_day": None, "known_time": None, "known_name": None, "current_step": "service", "lang": ""}
+    else:
+        state = {"known_service": None, "known_day": None, "known_time": None, "known_name": None, "current_step": "service", "lang": ""}
+    print(f"[STATE_LOAD] sender={phone} state={state}")
+    return state
 
 def wa_save(phone, state):
-    print(f"[DB] wa_save phone={phone} state={state}")
+    print(f"[STATE_SAVE] sender={phone} state={state}")
     con = get_db_connection()
     try:
         con.execute(
@@ -194,7 +196,7 @@ def wa_save(phone, state):
                    known_time    = excluded.known_time,
                    known_name    = excluded.known_name,
                    current_step  = excluded.current_step,
-                   lang          = excluded.lang""",
+                   lang          = CASE WHEN excluded.lang != '' THEN excluded.lang ELSE whatsapp_state.lang END""",
             (phone,
              state.get("known_service"),
              state.get("known_day"),
@@ -204,7 +206,7 @@ def wa_save(phone, state):
              state.get("lang", ""))
         )
         con.commit()
-        print(f"[DB] wa_save committed")
+        print(f"[STATE_SAVE] committed lang={state.get('lang')!r}")
     except Exception as db_err:
         print(f"[DB] wa_save ERROR: {repr(db_err)}")
         raise
@@ -559,6 +561,8 @@ def whatsapp():
         state = wa_load(sender)
         step  = state["current_step"]
 
+        print(f"[LANG_DEBUG_BEFORE] {state.get('lang')!r}")
+
         # Detect language ONCE — never overwrite after first message
         if not state.get("lang"):
             lang = detect_lang(incoming_msg)
@@ -568,6 +572,7 @@ def whatsapp():
         else:
             lang = state["lang"]
 
+        print(f"[LANG_DEBUG_AFTER] {lang!r}")
         print(f"[LANG_FINAL] using={lang!r}")
         print(f"[WHATSAPP] step={step!r} lang={lang!r}")
 
