@@ -329,6 +329,20 @@ def notify_admin_booking(phone, state, name):
     except Exception as e:
         print(f"[ADMIN_NOTIFY_ERROR] {e}")
 
+def is_time_slot_taken(service, day, time_val):
+    con = get_db_connection()
+    try:
+        slot = f"{day} {time_val}".strip()
+        row = con.execute(
+            "SELECT id FROM bookings WHERE service = ? AND time = ? LIMIT 1",
+            (service, slot)
+        ).fetchone()
+        taken = row is not None
+        print(f"[SLOT_CHECK] service={service!r} slot={slot!r} taken={taken}")
+        return taken
+    finally:
+        con.close()
+
 def wa_save_booking(phone, state, name):
     svc  = state.get("known_service") or "غير محدد"
     day  = state.get("known_day")  or ""
@@ -477,10 +491,19 @@ def whatsapp():
 
         # ── STEP: time ────────────────────────────────────────────────────
         elif step == "time":
-            state["known_time"]   = incoming_msg.strip()
-            state["current_step"] = "name"
-            wa_save(sender, state)
-            reply = "وما اسمك الكريم؟ 😊"
+            time_val = incoming_msg.strip()
+            svc      = state.get("known_service") or ""
+            day      = state.get("known_day")     or ""
+            if is_time_slot_taken(svc, day, time_val):
+                reply = (
+                    "عذرًا، هذا الموعد محجوز بالفعل 🌟\n"
+                    "يرجى اختيار وقت آخر."
+                )
+            else:
+                state["known_time"]   = time_val
+                state["current_step"] = "name"
+                wa_save(sender, state)
+                reply = "وما اسمك الكريم؟ 😊"
 
         # ── STEP: name → confirm + save ───────────────────────────────────
         elif step == "name":
