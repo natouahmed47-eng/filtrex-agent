@@ -345,6 +345,9 @@ _ALL_TIMES = [
     "الساعة 5", "الساعة 6", "الساعة 7",
 ]
 
+def get_top_times(times, limit=3):
+    return times[:limit]
+
 def get_available_times(service, day):
     print(f"[AVAILABILITY] checking available times service={service!r} day={day!r}")
     con = get_db_connection()
@@ -547,18 +550,21 @@ def whatsapp():
             day      = state.get("known_day")     or ""
             if is_time_slot_taken(svc, day, time_val):
                 available = get_available_times(svc, day)
-                if available:
-                    slots = "\n".join(f"- {t}" for t in available)
+                print(f"[SMART_SUGGEST] full={available}")
+                top = get_top_times(available)
+                print(f"[SMART_SUGGEST] top={top}")
+                if top:
+                    slots = "\n".join(f"- {t}" for t in top)
                     reply = (
-                        f"عذرًا، هذا الموعد محجوز بالفعل 🌟\n"
-                        f"هذه الأوقات المتاحة:\n\n"
+                        f"عذرًا، هذا الموعد محجوز 🌟\n"
+                        f"أقرب الأوقات المتاحة:\n\n"
                         f"{slots}\n\n"
-                        f"يرجى اختيار وقت مناسب لك 😊"
+                        f"هل يناسبك أحدها؟ 😊"
                     )
                 else:
                     reply = (
-                        "عذرًا، لا تتوفر مواعيد في هذا اليوم 😔\n"
-                        "هل تفضل يومًا آخر؟"
+                        "عذرًا، لا توجد مواعيد متاحة في هذا اليوم 😔\n"
+                        "هل ترغب في اختيار يوم آخر؟"
                     )
             else:
                 state["known_time"]   = time_val
