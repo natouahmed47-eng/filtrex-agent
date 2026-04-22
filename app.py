@@ -260,32 +260,23 @@ DO NOT:
 - Ask unnecessary questions"""
 
 def detect_lang(msg):
-    print(f"[LANG_DETECT] detecting language for msg={msg[:40]!r}")
-    try:
-        resp = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": "gpt-4o-mini",
-                "messages": [
-                    {"role": "system", "content": "Detect the language of the message. Reply with ONLY a 2-letter ISO 639-1 language code (e.g. ar, en, fr, es, de). Nothing else."},
-                    {"role": "user",   "content": msg}
-                ],
-                "max_tokens": 5
-            },
-            timeout=10
-        )
-        if resp.status_code == 200:
-            code = resp.json()["choices"][0]["message"]["content"].strip().lower()[:2]
-            print(f"[LANG_DETECT] detected={code!r}")
-            return code
-    except Exception as e:
-        print(f"[LANG_DETECT] error={e}")
+    print(f"[LANG_DETECT] detecting for msg={msg[:40]!r}")
+    msg_lower = msg.lower()
+    if any(w in msg_lower for w in ["hello", "hi", "hey", "good morning", "good evening", "how are you", "i want", "i need", "please", "thank"]):
+        print("[LANG_DETECT] rule=en")
+        return "en"
+    if any(w in msg_lower for w in ["bonjour", "salut", "bonsoir", "merci", "je veux", "je voudrais"]):
+        print("[LANG_DETECT] rule=fr")
+        return "fr"
+    if any(w in msg_lower for w in ["hola", "buenos", "gracias", "quiero"]):
+        print("[LANG_DETECT] rule=es")
+        return "es"
+    print("[LANG_DETECT] rule=ar (default)")
     return "ar"
 
 def openai_chat(user_message, lang="ar"):
     print(f"[OPENAI] sending message={user_message!r} lang={lang!r}")
-    lang_note = f"\n\nIMPORTANT: The user's language is '{lang}'. You MUST reply in that language only."
+    lang_note = f"\n\nSYSTEM LANGUAGE RULE (STRICT):\nYou MUST reply ONLY in this language: {lang}\nDO NOT use any other language.\nDO NOT translate unless the user asks."
     resp = requests.post(
         "https://api.openai.com/v1/chat/completions",
         headers={
@@ -551,18 +542,18 @@ def whatsapp():
 
         state = wa_load(sender)
         step  = state["current_step"]
-        lang  = state.get("lang") or ""
 
-        # Detect and store language on first message
-        if not lang:
+        # Detect language ONCE — never overwrite after first message
+        if not state.get("lang"):
             lang = detect_lang(incoming_msg)
             state["lang"] = lang
             wa_save(sender, state)
             print(f"[LANG] detected={lang!r} stored for sender={sender!r}")
         else:
-            print(f"[LANG] stored={lang!r} reply_language={lang!r}")
+            lang = state["lang"]
 
-        print(f"[WHATSAPP] step={step!r} lang={lang!r} state={state}")
+        print(f"[LANG_FINAL] using={lang!r}")
+        print(f"[WHATSAPP] step={step!r} lang={lang!r}")
 
         # ── STEP: service ─────────────────────────────────────────────────
         if step == "service":
