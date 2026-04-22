@@ -403,6 +403,50 @@ def t(key, lang):
     lang = lang if lang in ("ar", "en", "fr") else "ar"
     return _STRINGS.get(key, {}).get(lang) or _STRINGS.get(key, {}).get("ar", "")
 
+_SVC_DISPLAY = {
+    "تنظيف أسنان": {
+        "ar": "تنظيف أسنان",
+        "en": "Teeth Cleaning",
+        "fr": "Nettoyage des dents",
+    },
+    "تبييض الأسنان": {
+        "ar": "تبييض الأسنان",
+        "en": "Teeth Whitening",
+        "fr": "Blanchiment des dents",
+    },
+    "فحص الأسنان": {
+        "ar": "فحص الأسنان",
+        "en": "Dental Checkup",
+        "fr": "Contrôle dentaire",
+    },
+}
+
+_PRICE_DISPLAY = {
+    "تنظيف أسنان": {
+        "ar": "100 ريال",
+        "en": "100 SAR",
+        "fr": "100 SAR",
+    },
+    "تبييض الأسنان": {
+        "ar": "250 ريال",
+        "en": "250 SAR",
+        "fr": "250 SAR",
+    },
+    "فحص الأسنان": {
+        "ar": "50 ريال",
+        "en": "50 SAR",
+        "fr": "50 SAR",
+    },
+}
+
+def svc_name(canonical, lang):
+    lang = lang if lang in ("ar", "en", "fr") else "ar"
+    return _SVC_DISPLAY.get(canonical, {}).get(lang, canonical)
+
+def svc_price(canonical, lang):
+    lang = lang if lang in ("ar", "en", "fr") else "ar"
+    return _PRICE_DISPLAY.get(canonical, {}).get(lang, _WA_PRICES.get(canonical, ""))
+
 _WA_SERVICE_ALIASES = {
     "تنظيف أسنان": [
         "تنظيف", "تنظيف أسنان",
@@ -477,9 +521,9 @@ def notify_admin_booking(phone, state, name):
         print(f"[ADMIN_NOTIFY_ERROR] {e}")
 
 _ALL_TIMES = [
-    "الساعة 9", "الساعة 10", "الساعة 11", "الساعة 12",
-    "الساعة 1", "الساعة 2", "الساعة 3", "الساعة 4",
-    "الساعة 5", "الساعة 6", "الساعة 7",
+    "09:00", "10:00", "11:00", "12:00",
+    "13:00", "14:00", "15:00", "16:00",
+    "17:00", "18:00", "19:00",
 ]
 
 def get_top_times(times, limit=3):
@@ -488,13 +532,32 @@ def get_top_times(times, limit=3):
 def normalize_time_input(msg):
     msg = msg.strip()
     mapping = {
-        "الصباح": "الساعة 9",
-        "بدري":   "الساعة 10",
-        "الظهر":  "الساعة 12",
-        "العصر":  "الساعة 4",
-        "المغرب": "الساعة 6",
-        "المساء": "الساعة 7",
-        "الليل":  "الساعة 8",
+        "الصباح": "09:00",
+        "بدري":   "10:00",
+        "الظهر":  "12:00",
+        "العصر":  "16:00",
+        "المغرب": "18:00",
+        "المساء": "19:00",
+        "الليل":  "20:00",
+        "الساعة 9":  "09:00",
+        "الساعة 10": "10:00",
+        "الساعة 11": "11:00",
+        "الساعة 12": "12:00",
+        "الساعة 1":  "13:00",
+        "الساعة 2":  "14:00",
+        "الساعة 3":  "15:00",
+        "الساعة 4":  "16:00",
+        "الساعة 5":  "17:00",
+        "الساعة 6":  "18:00",
+        "الساعة 7":  "19:00",
+        "9am": "09:00", "10am": "10:00", "11am": "11:00",
+        "12pm": "12:00", "1pm": "13:00", "2pm": "14:00",
+        "3pm": "15:00", "4pm": "16:00", "5pm": "17:00",
+        "6pm": "18:00", "7pm": "19:00",
+        "9h": "09:00", "10h": "10:00", "11h": "11:00",
+        "12h": "12:00", "13h": "13:00", "14h": "14:00",
+        "15h": "15:00", "16h": "16:00", "17h": "17:00",
+        "18h": "18:00", "19h": "19:00",
     }
     for k, v in mapping.items():
         if k in msg:
@@ -690,11 +753,13 @@ def whatsapp():
             else:
                 svc = detect_wa_service(incoming_msg)
                 if svc:
-                    price = _WA_PRICES[svc]
                     state["known_service"] = svc
                     state["current_step"]  = "day"
                     wa_save(sender, state)
-                    reply = t("service_confirmed", lang).format(svc=svc, price=price)
+                    reply = t("service_confirmed", lang).format(
+                        svc=svc_name(svc, lang),
+                        price=svc_price(svc, lang),
+                    )
                 elif is_price_question(incoming_msg):
                     reply = t("price_list", lang)
                 else:
@@ -744,7 +809,12 @@ def whatsapp():
             svc  = state.get("known_service") or "-"
             day  = state.get("known_day")     or ""
             time = state.get("known_time")    or ""
-            reply = t("booking_confirmed", lang).format(svc=svc, day=day, time=time, name=name)
+            reply = t("booking_confirmed", lang).format(
+                svc=svc_name(svc, lang),
+                day=day,
+                time=time,
+                name=name,
+            )
 
         else:
             state["current_step"] = "service"
