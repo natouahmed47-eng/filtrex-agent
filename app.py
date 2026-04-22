@@ -477,6 +477,15 @@ def is_greeting_only(msg):
     cleaned = msg.strip().lower()
     return any(cleaned.startswith(g.lower()) for g in _WA_GREETINGS) and len(cleaned) < 40
 
+def is_greeting(msg):
+    msg = (msg or "").lower().strip()
+    greetings = [
+        "hello", "hi", "hey",
+        "bonjour", "salut",
+        "السلام عليكم", "السلام", "مرحبا", "أهلا", "اهلا",
+    ]
+    return any(g in msg for g in greetings)
+
 _WEAK_REPLIES = {"ok","okay","yes","no","sure","yep","nope","yeah","fine",
                  "نعم","لا","اوك","تمام","حسنا","حسناً","موافق",
                  "oui","non","merci","d'accord","daccord"}
@@ -720,35 +729,23 @@ def whatsapp():
         state = wa_load(sender)
         step  = state["current_step"]
 
-        stored_lang  = state.get("lang") or ""
-        detected_lang = detect_lang(incoming_msg)
-        print(f"[LANG_DEBUG_BEFORE] stored={stored_lang!r}")
+        old_lang     = state.get("lang") or ""
+        new_lang     = detect_lang(incoming_msg)
+        print(f"[LANG_DETECT] detected={new_lang!r} stored={old_lang!r}")
 
-        if not stored_lang:
-            # First message — store whatever we detect
-            lang = detected_lang
-            state["lang"] = lang
+        if new_lang and new_lang != old_lang:
+            print(f"[LANG_SWITCH] old={old_lang!r} new={new_lang!r} sender={sender!r}")
+            state["lang"] = new_lang
             wa_save(sender, state)
-            print(f"[LANG] first-detect={lang!r} stored for sender={sender!r}")
-        elif detected_lang != stored_lang and is_lang_switch_worthy(incoming_msg):
-            # User clearly switched language — follow them
-            print(f"[LANG_SWITCH_CHECK] stored={stored_lang!r} detected={detected_lang!r} msg={incoming_msg!r}")
-            print(f"[LANG_SWITCH] updated sender={sender!r} from={stored_lang!r} to={detected_lang!r}")
-            lang = detected_lang
-            state["lang"] = lang
-            wa_save(sender, state)
-        else:
-            # Same language or too short to be certain — keep stored
-            print(f"[LANG_SWITCH_CHECK] stored={stored_lang!r} detected={detected_lang!r} msg={incoming_msg!r}")
-            lang = stored_lang
 
-        print(f"[LANG_DEBUG_AFTER] {lang!r}")
+        lang = state.get("lang") or new_lang or "ar"
         print(f"[LANG_FINAL] using={lang!r}")
         print(f"[WHATSAPP] step={step!r} lang={lang!r}")
 
         # ── STEP: service ─────────────────────────────────────────────────
         if step == "service":
-            if is_greeting_only(incoming_msg):
+            if is_greeting(incoming_msg):
+                print(f"[GREETING] sender={sender!r} lang={lang!r}")
                 reply = openai_chat(incoming_msg, lang=lang)
             else:
                 svc = detect_wa_service(incoming_msg)
