@@ -499,6 +499,32 @@ def is_recommendation_request(msg):
     msg_lower = msg.lower()
     return any(kw in msg_lower for kw in _RECOMMEND_KEYWORDS)
 
+def is_affirmation(msg):
+    msg = (msg or "").strip().lower()
+    return msg in {"yes", "oui", "نعم", "ok", "okay", "يعم", "ايه", "اوك"}
+
+def is_valid_name(text):
+    text = (text or "").strip().lower()
+    bad_words = [
+        "je veux", "i want", "bonjour", "hello", "salam",
+        "تنظيف", "تبييض", "فحص", "اريد", "أريد",
+        "service", "nettoyage", "cleaning", "whitening", "checkup",
+        "today", "tomorrow", "demain", "اليوم", "غدا", "غدًا",
+    ]
+    if any(w in text for w in bad_words):
+        return False
+    if len(text.split()) > 4:
+        return False
+    if len(text.strip()) < 2:
+        return False
+    return True
+
+def sanitize_booking_field(text, max_len=40):
+    if not text:
+        return ""
+    text = str(text).strip()
+    return text[:max_len]
+
 _RECOMMENDED_SERVICE = "تنظيف أسنان"
 
 _UPSELL_MAP = {
@@ -877,44 +903,65 @@ def whatsapp():
 
         # ── STEP: time ────────────────────────────────────────────────────
         elif step == "time":
-            time_val = normalize_time_input(incoming_msg)
-            svc      = state.get("known_service") or ""
-            day      = state.get("known_day")     or ""
-            if is_time_slot_taken(svc, day, time_val):
-                available = get_available_times(svc, day)
-                print(f"[SMART_SUGGEST] full={available}")
-                top = get_top_times(available)
-                print(f"[SMART_SUGGEST] top={top}")
+            if is_affirmation(incoming_msg):
+                svc_tmp = state.get("known_service") or ""
+                day_tmp = state.get("known_day") or ""
+                avail   = get_available_times(svc_tmp, day_tmp)
+                top     = get_top_times(avail, 2)
                 if top:
-                    slots = "\n".join(f"- {slot}" for slot in top)
-                    reply = t("slot_taken_header", lang) + slots + t("slot_taken_footer", lang)
+                    slots_str = " / ".join(top)
+                    reply = openai_chat(
+                        f"Ask the user to choose one of these available times: {slots_str}",
+                        lang=lang,
+                    )
                 else:
-                    reply = t("no_slots", lang)
+                    reply = t("ask_time", lang)
             else:
-                state["known_time"]   = time_val
-                state["current_step"] = "name"
-                wa_save(sender, state)
-                reply = t("ask_name", lang)
+                time_val = normalize_time_input(incoming_msg)
+                svc      = state.get("known_service") or ""
+                day      = state.get("known_day")     or ""
+                if is_time_slot_taken(svc, day, time_val):
+                    available = get_available_times(svc, day)
+                    print(f"[SMART_SUGGEST] full={available}")
+                    top = get_top_times(available)
+                    print(f"[SMART_SUGGEST] top={top}")
+                    if top:
+                        slots = "\n".join(f"- {slot}" for slot in top)
+                        reply = t("slot_taken_header", lang) + slots + t("slot_taken_footer", lang)
+                    else:
+                        reply = t("no_slots", lang)
+                else:
+                    state["known_time"]   = time_val
+                    state["current_step"] = "name"
+                    wa_save(sender, state)
+                    reply = t("ask_name", lang)
 
         # ── STEP: name → confirm + save ───────────────────────────────────
         elif step == "name":
             name = incoming_msg.strip()
-            wa_save_booking(sender, state, name)
-            print("[WHATSAPP] booking saved — calling notify_admin_booking")
-            try:
-                notify_admin_booking(sender, state, name)
-            except Exception as _ne:
-                print(f"[ADMIN_NOTIFY_OUTER_ERROR] {repr(_ne)}")
-            wa_clear(sender)
-            svc  = state.get("known_service") or "-"
-            day  = state.get("known_day")     or ""
-            time = state.get("known_time")    or ""
-            reply = t("booking_confirmed", lang).format(
-                svc=svc_name(svc, lang),
-                day=day,
-                time=time,
-                name=name,
-            )
+            if not is_valid_name(name):
+                print(f"[NAME_INVALID] rejected={name!r}")
+                reply = openai_chat(
+                    "Ask the user politely to provide their name only for the booking. Keep it short.",
+                    lang=lang,
+                )
+            else:
+                wa_save_booking(sender, state, name)
+                print("[WHATSAPP] booking saved — calling notify_admin_booking")
+                try:
+                    notify_admin_booking(sender, state, name)
+                except Exception as _ne:
+                    print(f"[ADMIN_NOTIFY_OUTER_ERROR] {repr(_ne)}")
+                wa_clear(sender)
+                svc  = sanitize_booking_field(state.get("known_service")) or "-"
+                day  = sanitize_booking_field(state.get("known_day"))
+                time = sanitize_booking_field(state.get("known_time"))
+                reply = t("booking_confirmed", lang).format(
+                    svc=svc_name(svc, lang),
+                    day=day,
+                    time=time,
+                    name=name,
+                )
 
         else:
             state["current_step"] = "service"
