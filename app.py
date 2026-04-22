@@ -742,25 +742,31 @@ def whatsapp():
         print(f"[LANG_FINAL] using={lang!r}")
         print(f"[WHATSAPP] step={step!r} lang={lang!r}")
 
+        # ── GREETING — reset state and return immediately ──────────────────
+        if is_greeting(incoming_msg):
+            print(f"[GREETING] resetting state for sender={sender!r}")
+            wa_clear(sender)
+            reply = openai_chat(
+                "User greeted you. Reply politely and ask how you can help.",
+                lang=lang,
+            )
+            return wa_reply(sender, reply)
+
         # ── STEP: service ─────────────────────────────────────────────────
         if step == "service":
-            if is_greeting(incoming_msg):
-                print(f"[GREETING] sender={sender!r} lang={lang!r}")
-                reply = openai_chat(incoming_msg, lang=lang)
+            svc = detect_wa_service(incoming_msg)
+            if svc:
+                state["known_service"] = svc
+                state["current_step"]  = "day"
+                wa_save(sender, state)
+                reply = t("service_confirmed", lang).format(
+                    svc=svc_name(svc, lang),
+                    price=svc_price(svc, lang),
+                )
+            elif is_price_question(incoming_msg):
+                reply = t("price_list", lang)
             else:
-                svc = detect_wa_service(incoming_msg)
-                if svc:
-                    state["known_service"] = svc
-                    state["current_step"]  = "day"
-                    wa_save(sender, state)
-                    reply = t("service_confirmed", lang).format(
-                        svc=svc_name(svc, lang),
-                        price=svc_price(svc, lang),
-                    )
-                elif is_price_question(incoming_msg):
-                    reply = t("price_list", lang)
-                else:
-                    reply = openai_chat(incoming_msg, lang=lang)
+                reply = openai_chat(incoming_msg, lang=lang)
 
         # ── STEP: day ─────────────────────────────────────────────────────
         elif step == "day":
