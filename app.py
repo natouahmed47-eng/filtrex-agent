@@ -303,6 +303,16 @@ _WA_SERVICE_KEYWORDS = {
 
 _WA_PRICE_KEYWORDS = ["كم", "سعر", "ثمن", "تكلفة", "بكم", "السعر", "الثمن"]
 
+_WA_GREETINGS = [
+    "السلام", "سلام", "مرحبا", "مرحبً", "أهلا", "اهلا", "أهلً",
+    "هلا", "هلو", "hello", "hi", "hey", "صباح الخير", "مساء الخير",
+    "صباح", "مساء", "كيف حالك", "كيف الحال",
+]
+
+def is_greeting_only(msg):
+    cleaned = msg.strip().lower()
+    return any(cleaned.startswith(g.lower()) for g in _WA_GREETINGS) and len(cleaned) < 40
+
 def detect_wa_service(msg):
     for kw, svc in _WA_SERVICE_KEYWORDS.items():
         if kw in msg:
@@ -492,26 +502,33 @@ def whatsapp():
 
         # ── STEP: service ─────────────────────────────────────────────────
         if step == "service":
-            svc = detect_wa_service(incoming_msg)
-            if svc:
-                price = _WA_PRICES[svc]
-                state["known_service"] = svc
-                state["current_step"]  = "day"
-                wa_save(sender, state)
+            if is_greeting_only(incoming_msg):
                 reply = (
-                    f"ممتاز! 😊 {svc} متاح بسعر {price}\n"
-                    f"هل تفضل موعدك اليوم أو غدًا؟"
-                )
-            elif is_price_question(incoming_msg):
-                reply = (
-                    "يسعدنا خدمتك! 😊 لدينا:\n"
-                    "• تنظيف أسنان — 100 ريال\n"
-                    "• تبييض الأسنان — 250 ريال\n"
-                    "• فحص الأسنان — 50 ريال\n"
-                    "أي خدمة تناسبك؟"
+                    "وعليكم السلام ورحمة الله 🌟 أهلاً وسهلاً بك!\n"
+                    "يسعدني مساعدتك في الحجز أو الاستفسار.\n"
+                    "كيف أقدر أخدمك اليوم؟ 😊"
                 )
             else:
-                reply = openai_chat(incoming_msg)
+                svc = detect_wa_service(incoming_msg)
+                if svc:
+                    price = _WA_PRICES[svc]
+                    state["known_service"] = svc
+                    state["current_step"]  = "day"
+                    wa_save(sender, state)
+                    reply = (
+                        f"ممتاز! 😊 {svc} متاح بسعر {price}\n"
+                        f"هل تفضل موعدك اليوم أو غدًا؟"
+                    )
+                elif is_price_question(incoming_msg):
+                    reply = (
+                        "يسعدنا خدمتك! 😊 لدينا:\n"
+                        "• تنظيف أسنان — 100 ريال\n"
+                        "• تبييض الأسنان — 250 ريال\n"
+                        "• فحص الأسنان — 50 ريال\n"
+                        "أي خدمة تناسبك؟"
+                    )
+                else:
+                    reply = openai_chat(incoming_msg)
 
         # ── STEP: day ─────────────────────────────────────────────────────
         elif step == "day":
