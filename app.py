@@ -329,6 +329,27 @@ def notify_admin_booking(phone, state, name):
     except Exception as e:
         print(f"[ADMIN_NOTIFY_ERROR] {e}")
 
+_ALL_TIMES = [
+    "الساعة 9", "الساعة 10", "الساعة 11", "الساعة 12",
+    "الساعة 1", "الساعة 2", "الساعة 3", "الساعة 4",
+    "الساعة 5", "الساعة 6", "الساعة 7",
+]
+
+def get_available_times(service, day):
+    print(f"[AVAILABILITY] checking available times service={service!r} day={day!r}")
+    con = get_db_connection()
+    try:
+        rows = con.execute(
+            "SELECT time FROM bookings WHERE service = ? AND time LIKE ?",
+            (service, f"{day}%")
+        ).fetchall()
+    finally:
+        con.close()
+    booked = {row["time"] for row in rows}
+    available = [t for t in _ALL_TIMES if f"{day} {t}".strip() not in booked]
+    print(f"[AVAILABILITY] booked={booked} result={available}")
+    return available
+
 def is_time_slot_taken(service, day, time_val):
     con = get_db_connection()
     try:
@@ -495,10 +516,20 @@ def whatsapp():
             svc      = state.get("known_service") or ""
             day      = state.get("known_day")     or ""
             if is_time_slot_taken(svc, day, time_val):
-                reply = (
-                    "عذرًا، هذا الموعد محجوز بالفعل 🌟\n"
-                    "يرجى اختيار وقت آخر."
-                )
+                available = get_available_times(svc, day)
+                if available:
+                    slots = "\n".join(f"- {t}" for t in available)
+                    reply = (
+                        f"عذرًا، هذا الموعد محجوز بالفعل 🌟\n"
+                        f"هذه الأوقات المتاحة:\n\n"
+                        f"{slots}\n\n"
+                        f"يرجى اختيار وقت مناسب لك 😊"
+                    )
+                else:
+                    reply = (
+                        "عذرًا، لا تتوفر مواعيد في هذا اليوم 😔\n"
+                        "هل تفضل يومًا آخر؟"
+                    )
             else:
                 state["known_time"]   = time_val
                 state["current_step"] = "name"
