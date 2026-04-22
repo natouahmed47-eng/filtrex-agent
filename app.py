@@ -345,24 +345,37 @@ def get_available_times(service, day):
         ).fetchall()
     finally:
         con.close()
-    booked = {row["time"] for row in rows}
-    available = [t for t in _ALL_TIMES if f"{day} {t}".strip() not in booked]
+    booked    = {normalize_slot_text(row["time"]) for row in rows}
+    available = [t for t in _ALL_TIMES if normalize_slot_text(f"{day} {t}") not in booked]
     print(f"[AVAILABILITY] booked={booked} result={available}")
     return available
 
+def normalize_slot_text(text):
+    text = (text or "").strip()
+    text = text.replace("غدًا", "غدا")
+    text = text.replace("الساعة ", "الساعة")
+    text = text.replace("  ", " ")
+    return text
+
 def is_time_slot_taken(service, day, time_val):
+    incoming_slot = normalize_slot_text(f"{day} {time_val}")
+    print(f"[SLOT_CHECK] service={service!r}")
+    print(f"[SLOT_CHECK] known_day={day!r}")
+    print(f"[SLOT_CHECK] incoming_time={time_val!r}")
+    print(f"[SLOT_CHECK] normalized_slot={incoming_slot!r}")
     con = get_db_connection()
     try:
-        slot = f"{day} {time_val}".strip()
-        row = con.execute(
-            "SELECT id FROM bookings WHERE service = ? AND time = ? LIMIT 1",
-            (service, slot)
-        ).fetchone()
-        taken = row is not None
-        print(f"[SLOT_CHECK] service={service!r} slot={slot!r} taken={taken}")
-        return taken
+        rows = con.execute(
+            "SELECT time FROM bookings WHERE service = ?",
+            (service,)
+        ).fetchall()
     finally:
         con.close()
+    stored_slots = [normalize_slot_text(row["time"]) for row in rows]
+    print(f"[SLOT_CHECK] stored_slots={stored_slots}")
+    taken = incoming_slot in stored_slots
+    print(f"[SLOT_CHECK] conflict={taken}")
+    return taken
 
 def wa_save_booking(phone, state, name):
     svc  = state.get("known_service") or "غير محدد"
