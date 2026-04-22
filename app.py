@@ -348,6 +348,24 @@ _ALL_TIMES = [
 def get_top_times(times, limit=3):
     return times[:limit]
 
+def normalize_time_input(msg):
+    msg = msg.strip()
+    mapping = {
+        "الصباح": "الساعة 9",
+        "بدري":   "الساعة 10",
+        "الظهر":  "الساعة 12",
+        "العصر":  "الساعة 4",
+        "المغرب": "الساعة 6",
+        "المساء": "الساعة 7",
+        "الليل":  "الساعة 8",
+    }
+    for k, v in mapping.items():
+        if k in msg:
+            print(f"[TIME_NORMALIZE] raw={msg!r} → normalized={v!r}")
+            return v
+    print(f"[TIME_NORMALIZE] raw={msg!r} → normalized={msg!r}")
+    return msg
+
 def get_available_times(service, day):
     print(f"[AVAILABILITY] checking available times service={service!r} day={day!r}")
     con = get_db_connection()
@@ -545,7 +563,7 @@ def whatsapp():
 
         # ── STEP: time ────────────────────────────────────────────────────
         elif step == "time":
-            time_val = incoming_msg.strip()
+            time_val = normalize_time_input(incoming_msg)
             svc      = state.get("known_service") or ""
             day      = state.get("known_day")     or ""
             if is_time_slot_taken(svc, day, time_val):
