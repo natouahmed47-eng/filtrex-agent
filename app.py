@@ -350,6 +350,19 @@ def is_greeting_only(msg):
     cleaned = msg.strip().lower()
     return any(cleaned.startswith(g.lower()) for g in _WA_GREETINGS) and len(cleaned) < 40
 
+_WEAK_REPLIES = {"ok","okay","yes","no","sure","yep","nope","yeah","fine",
+                 "نعم","لا","اوك","تمام","حسنا","حسناً","موافق",
+                 "oui","non","merci","d'accord","daccord"}
+
+def is_lang_switch_worthy(msg):
+    cleaned = msg.strip().lower()
+    if cleaned in _WEAK_REPLIES:
+        return False
+    if is_greeting_only(msg):
+        return False
+    words = cleaned.split()
+    return len(words) >= 3 or len(cleaned) >= 10
+
 def detect_wa_service(msg):
     msg_lower = msg.lower()
     for normalized_svc, aliases in _WA_SERVICE_ALIASES.items():
@@ -561,16 +574,27 @@ def whatsapp():
         state = wa_load(sender)
         step  = state["current_step"]
 
-        print(f"[LANG_DEBUG_BEFORE] {state.get('lang')!r}")
+        stored_lang  = state.get("lang") or ""
+        detected_lang = detect_lang(incoming_msg)
+        print(f"[LANG_DEBUG_BEFORE] stored={stored_lang!r}")
 
-        # Detect language ONCE — never overwrite after first message
-        if not state.get("lang"):
-            lang = detect_lang(incoming_msg)
+        if not stored_lang:
+            # First message — store whatever we detect
+            lang = detected_lang
             state["lang"] = lang
             wa_save(sender, state)
-            print(f"[LANG] detected={lang!r} stored for sender={sender!r}")
+            print(f"[LANG] first-detect={lang!r} stored for sender={sender!r}")
+        elif detected_lang != stored_lang and is_lang_switch_worthy(incoming_msg):
+            # User clearly switched language — follow them
+            print(f"[LANG_SWITCH_CHECK] stored={stored_lang!r} detected={detected_lang!r} msg={incoming_msg!r}")
+            print(f"[LANG_SWITCH] updated sender={sender!r} from={stored_lang!r} to={detected_lang!r}")
+            lang = detected_lang
+            state["lang"] = lang
+            wa_save(sender, state)
         else:
-            lang = state["lang"]
+            # Same language or too short to be certain — keep stored
+            print(f"[LANG_SWITCH_CHECK] stored={stored_lang!r} detected={detected_lang!r} msg={incoming_msg!r}")
+            lang = stored_lang
 
         print(f"[LANG_DEBUG_AFTER] {lang!r}")
         print(f"[LANG_FINAL] using={lang!r}")
