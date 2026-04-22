@@ -330,9 +330,9 @@ _STRINGS = {
         "fr": "Bonjour! 😊 Comment puis-je vous aider? Souhaitez-vous réserver:\n• Nettoyage des dents\n• Blanchiment des dents\n• Contrôle dentaire",
     },
     "service_confirmed": {
-        "ar": "خيار ممتاز ✨ {svc} {benefit}.\nالسعر {price} فقط — هل تفضل اليوم أو غدًا؟",
-        "en": "Great choice ✨ {svc} {benefit}.\nOnly {price} — would you prefer today or tomorrow?",
-        "fr": "Excellent choix ✨ {svc} {benefit}.\nSeulement {price} — aujourd'hui ou demain?",
+        "ar": "خيار ممتاز ✨ {svc} {benefit}.\nالسعر {price} فقط.",
+        "en": "Great choice ✨ {svc} {benefit}.\nOnly {price}.",
+        "fr": "Excellent choix ✨ {svc} {benefit}.\nSeulement {price}.",
     },
     "price_list": {
         "ar": (
@@ -500,6 +500,36 @@ def is_recommendation_request(msg):
     return any(kw in msg_lower for kw in _RECOMMEND_KEYWORDS)
 
 _RECOMMENDED_SERVICE = "تنظيف أسنان"
+
+_UPSELL_MAP = {
+    "تنظيف أسنان":   "تبييض الأسنان",
+    "فحص الأسنان":   "تنظيف أسنان",
+    "تبييض الأسنان": "فحص الأسنان",
+}
+
+def build_times_hint(svc, lang, day_offset=0):
+    candidates = _ALL_TIMES[-(4 + day_offset):-day_offset] if day_offset else _ALL_TIMES[-4:]
+    top = candidates[:2] if len(candidates) >= 2 else _ALL_TIMES[-2:]
+    t1, t2 = top[0], top[1]
+    _hints = {
+        "ar": f"لدينا مواعيد اليوم الساعة {t1} أو {t2}، أيهما يناسبك؟",
+        "en": f"We have available times today at {t1} or {t2}. Which works best for you?",
+        "fr": f"Nous avons des créneaux disponibles aujourd'hui à {t1} ou {t2}. Lequel vous convient?",
+    }
+    return _hints.get(lang, _hints["ar"])
+
+def build_upsell(svc, lang):
+    upsell_svc = _UPSELL_MAP.get(svc)
+    if not upsell_svc:
+        return ""
+    uname = svc_name(upsell_svc, lang)
+    _lang = lang if lang in ("ar", "en", "fr") else "ar"
+    _upsell = {
+        "ar": f"وإذا رغبت، يمكن إضافة {uname} بعد ذلك لنتيجة أجمل 🌟",
+        "en": f"If you'd like, you can also add {uname} afterwards for an even better result 🌟",
+        "fr": f"Si vous le souhaitez, vous pouvez aussi ajouter {uname} après pour un résultat encore meilleur 🌟",
+    }
+    return _upsell[_lang]
 
 _WA_SERVICE_ALIASES = {
     "تنظيف أسنان": [
@@ -818,6 +848,10 @@ def whatsapp():
                     price=svc_price(svc, lang),
                     benefit=svc_benefit(svc, lang),
                 )
+                reply += "\n" + build_times_hint(svc, lang)
+                upsell = build_upsell(svc, lang)
+                if upsell:
+                    reply += "\n" + upsell
             elif is_price_question(incoming_msg):
                 reply = t("price_list", lang)
             elif is_recommendation_request(incoming_msg):
