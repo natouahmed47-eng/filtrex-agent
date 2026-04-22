@@ -318,13 +318,25 @@ _WA_PRICES = {
     "فحص الأسنان":   "50 ريال",
 }
 
-_WA_SERVICE_KEYWORDS = {
-    "تنظيف": "تنظيف أسنان",
-    "تبييض": "تبييض الأسنان",
-    "فحص":   "فحص الأسنان",
+_WA_SERVICE_ALIASES = {
+    "تنظيف أسنان": [
+        "تنظيف", "تنظيف أسنان",
+        "teeth cleaning", "cleaning",
+        "nettoyage", "nettoyage des dents",
+    ],
+    "تبييض الأسنان": [
+        "تبييض", "تبييض الأسنان",
+        "whitening", "teeth whitening",
+        "blanchiment", "blanchiment des dents",
+    ],
+    "فحص الأسنان": [
+        "فحص", "فحص الأسنان",
+        "checkup", "dental checkup",
+        "consultation", "contrôle", "controle", "contrôle dentaire",
+    ],
 }
 
-_WA_PRICE_KEYWORDS = ["كم", "سعر", "ثمن", "تكلفة", "بكم", "السعر", "الثمن"]
+_WA_PRICE_KEYWORDS = ["كم", "سعر", "ثمن", "تكلفة", "بكم", "السعر", "الثمن", "price", "how much", "combien", "tarif", "coût", "cout"]
 
 _WA_GREETINGS = [
     "السلام", "سلام", "مرحبا", "مرحبً", "أهلا", "اهلا", "أهلً",
@@ -337,9 +349,13 @@ def is_greeting_only(msg):
     return any(cleaned.startswith(g.lower()) for g in _WA_GREETINGS) and len(cleaned) < 40
 
 def detect_wa_service(msg):
-    for kw, svc in _WA_SERVICE_KEYWORDS.items():
-        if kw in msg:
-            return svc
+    msg_lower = msg.lower()
+    for normalized_svc, aliases in _WA_SERVICE_ALIASES.items():
+        for alias in aliases:
+            if alias.lower() in msg_lower:
+                print(f"[SERVICE_DETECT] raw={msg!r} matched_alias={alias!r} normalized={normalized_svc!r}")
+                return normalized_svc
+    print(f"[SERVICE_DETECT] raw={msg!r} no match")
     return None
 
 def is_price_question(msg):
