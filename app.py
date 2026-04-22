@@ -525,6 +525,17 @@ def sanitize_booking_field(text, max_len=40):
     text = str(text).strip()
     return text[:max_len]
 
+def confirmation_message(state, name, lang):
+    svc  = sanitize_booking_field(state.get("known_service")) or "-"
+    day  = sanitize_booking_field(state.get("known_day"))
+    time = sanitize_booking_field(state.get("known_time"))
+    return t("booking_confirmed", lang).format(
+        svc=svc_name(svc, lang),
+        day=day,
+        time=time,
+        name=name,
+    )
+
 _RECOMMENDED_SERVICE = "تنظيف أسنان"
 
 _UPSELL_MAP = {
@@ -938,30 +949,31 @@ def whatsapp():
 
         # ── STEP: name → confirm + save ───────────────────────────────────
         elif step == "name":
-            name = incoming_msg.strip()
+            name = (incoming_msg or "").strip()
+
+            print(f"[DEBUG] validating name={name!r}")
+
             if not is_valid_name(name):
-                print(f"[NAME_INVALID] rejected={name!r}")
-                reply = openai_chat(
-                    "Ask the user politely to provide their name only for the booking. Keep it short.",
+                print("[DEBUG] invalid name detected — rejecting")
+                return wa_reply(sender, openai_chat(
+                    "Ask the user politely to provide their name only (one or two words). Do not accept sentences.",
                     lang=lang,
-                )
-            else:
-                wa_save_booking(sender, state, name)
-                print("[WHATSAPP] booking saved — calling notify_admin_booking")
-                try:
-                    notify_admin_booking(sender, state, name)
-                except Exception as _ne:
-                    print(f"[ADMIN_NOTIFY_OUTER_ERROR] {repr(_ne)}")
-                wa_clear(sender)
-                svc  = sanitize_booking_field(state.get("known_service")) or "-"
-                day  = sanitize_booking_field(state.get("known_day"))
-                time = sanitize_booking_field(state.get("known_time"))
-                reply = t("booking_confirmed", lang).format(
-                    svc=svc_name(svc, lang),
-                    day=day,
-                    time=time,
-                    name=name,
-                )
+                ))
+
+            print("[DEBUG] name accepted — saving booking")
+
+            wa_save_booking(sender, state, name)
+
+            print("[WHATSAPP] booking saved — calling notify_admin_booking")
+
+            try:
+                notify_admin_booking(sender, state, name)
+            except Exception as _ne:
+                print(f"[ADMIN_NOTIFY_OUTER_ERROR] {repr(_ne)}")
+
+            wa_clear(sender)
+
+            return wa_reply(sender, confirmation_message(state, name, lang))
 
         else:
             state["current_step"] = "service"
