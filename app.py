@@ -83,7 +83,8 @@ def init_db():
                 known_day     TEXT,
                 known_time    TEXT,
                 known_name    TEXT,
-                current_step  TEXT DEFAULT 'service'
+                current_step  TEXT DEFAULT 'service',
+                lang          TEXT DEFAULT ''
             )
         """)
         con.execute("INSERT OR IGNORE INTO users (id, username, password) VALUES (1, 'admin', '123456')")
@@ -114,6 +115,9 @@ def _migrate_whatsapp_state():
         if "current_step" not in cols:
             con.execute("ALTER TABLE whatsapp_state ADD COLUMN current_step TEXT DEFAULT 'service'")
             print("[DB] migration: added current_step")
+        if "lang" not in cols:
+            con.execute("ALTER TABLE whatsapp_state ADD COLUMN lang TEXT DEFAULT ''")
+            print("[DB] migration: added lang")
         con.commit()
     finally:
         con.close()
@@ -161,7 +165,7 @@ def wa_load(phone):
     con = get_db_connection()
     try:
         row = con.execute(
-            "SELECT known_service, known_day, known_time, known_name, current_step FROM whatsapp_state WHERE phone = ?",
+            "SELECT known_service, known_day, known_time, known_name, current_step, lang FROM whatsapp_state WHERE phone = ?",
             (phone,)
         ).fetchone()
     finally:
@@ -173,28 +177,31 @@ def wa_load(phone):
             "known_time":    row["known_time"],
             "known_name":    row["known_name"],
             "current_step":  row["current_step"] or "service",
+            "lang":          row["lang"] or "",
         }
-    return {"known_service": None, "known_day": None, "known_time": None, "known_name": None, "current_step": "service"}
+    return {"known_service": None, "known_day": None, "known_time": None, "known_name": None, "current_step": "service", "lang": ""}
 
 def wa_save(phone, state):
     print(f"[DB] wa_save phone={phone} state={state}")
     con = get_db_connection()
     try:
         con.execute(
-            """INSERT INTO whatsapp_state (phone, known_service, known_day, known_time, known_name, current_step)
-               VALUES (?, ?, ?, ?, ?, ?)
+            """INSERT INTO whatsapp_state (phone, known_service, known_day, known_time, known_name, current_step, lang)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(phone) DO UPDATE SET
                    known_service = excluded.known_service,
                    known_day     = excluded.known_day,
                    known_time    = excluded.known_time,
                    known_name    = excluded.known_name,
-                   current_step  = excluded.current_step""",
+                   current_step  = excluded.current_step,
+                   lang          = excluded.lang""",
             (phone,
              state.get("known_service"),
              state.get("known_day"),
              state.get("known_time"),
              state.get("known_name"),
-             state.get("current_step", "service"))
+             state.get("current_step", "service"),
+             state.get("lang", ""))
         )
         con.commit()
         print(f"[DB] wa_save committed")
@@ -219,41 +226,66 @@ def wa_clear(phone):
         print(f"[DB] wa_clear connection closed")
     print(f"[WHATSAPP] state_cleared phone={phone}")
 
-WHATSAPP_SYSTEM_PROMPT = """You are a smart WhatsApp business assistant.
+WHATSAPP_SYSTEM_PROMPT = """You are a smart WhatsApp business assistant for a dental clinic.
+
+LANGUAGE RULE (MOST IMPORTANT):
+- ALWAYS reply in the exact same language the user is writing in.
+- If the user writes in English → reply in English.
+- If the user writes in Arabic → reply in Arabic.
+- If the user writes in French → reply in French.
+- Never switch languages unless the user switches first.
 
 IMPORTANT RULES:
-
 - NEVER restart the conversation
-- NEVER say 'كيف يمكنني مساعدتك اليوم' unless it's the first message
 - Always continue based on the user's last message
-- Assume context from the last user message only
 - If user asks about service → continue booking flow
 - If user repeats the same request → continue, do NOT restart
 
 BOOKING FLOW:
-
 1. If user asks for a service → suggest booking
-2. If user asks price → give price, then ask for booking
-3. If user says 'today' or 'tomorrow' → ask for time
+2. If user asks price → give price, then ask for booking day
+3. If user gives day → ask for exact time
 4. If user gives time → ask for name
 5. If user gives name → confirm booking
 
 STYLE:
-
-- Arabic
-- Short
+- Short (2-3 lines max)
 - Direct
 - Friendly
 - Sales-focused
 
 DO NOT:
-
 - Reset conversation
 - Repeat greeting
 - Ask unnecessary questions"""
 
-def openai_chat(user_message):
-    print(f"[OPENAI] sending message={user_message!r}")
+def detect_lang(msg):
+    print(f"[LANG_DETECT] detecting language for msg={msg[:40]!r}")
+    try:
+        resp = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {"role": "system", "content": "Detect the language of the message. Reply with ONLY a 2-letter ISO 639-1 language code (e.g. ar, en, fr, es, de). Nothing else."},
+                    {"role": "user",   "content": msg}
+                ],
+                "max_tokens": 5
+            },
+            timeout=10
+        )
+        if resp.status_code == 200:
+            code = resp.json()["choices"][0]["message"]["content"].strip().lower()[:2]
+            print(f"[LANG_DETECT] detected={code!r}")
+            return code
+    except Exception as e:
+        print(f"[LANG_DETECT] error={e}")
+    return "ar"
+
+def openai_chat(user_message, lang="ar"):
+    print(f"[OPENAI] sending message={user_message!r} lang={lang!r}")
+    lang_note = f"\n\nIMPORTANT: The user's language is '{lang}'. You MUST reply in that language only."
     resp = requests.post(
         "https://api.openai.com/v1/chat/completions",
         headers={
@@ -263,7 +295,7 @@ def openai_chat(user_message):
         json={
             "model": "gpt-4o-mini",
             "messages": [
-                {"role": "system", "content": WHATSAPP_SYSTEM_PROMPT},
+                {"role": "system", "content": WHATSAPP_SYSTEM_PROMPT + lang_note},
                 {"role": "user",   "content": user_message}
             ]
         },
@@ -519,16 +551,23 @@ def whatsapp():
 
         state = wa_load(sender)
         step  = state["current_step"]
-        print(f"[WHATSAPP] step={step!r} state={state}")
+        lang  = state.get("lang") or ""
+
+        # Detect and store language on first message
+        if not lang:
+            lang = detect_lang(incoming_msg)
+            state["lang"] = lang
+            wa_save(sender, state)
+            print(f"[LANG] detected={lang!r} stored for sender={sender!r}")
+        else:
+            print(f"[LANG] stored={lang!r} reply_language={lang!r}")
+
+        print(f"[WHATSAPP] step={step!r} lang={lang!r} state={state}")
 
         # ── STEP: service ─────────────────────────────────────────────────
         if step == "service":
             if is_greeting_only(incoming_msg):
-                reply = (
-                    "وعليكم السلام ورحمة الله 🌟 أهلاً وسهلاً بك!\n"
-                    "يسعدني مساعدتك في الحجز أو الاستفسار.\n"
-                    "كيف أقدر أخدمك اليوم؟ 😊"
-                )
+                reply = openai_chat(incoming_msg, lang=lang)
             else:
                 svc = detect_wa_service(incoming_msg)
                 if svc:
@@ -549,7 +588,7 @@ def whatsapp():
                         "أي خدمة تناسبك؟"
                     )
                 else:
-                    reply = openai_chat(incoming_msg)
+                    reply = openai_chat(incoming_msg, lang=lang)
 
         # ── STEP: day ─────────────────────────────────────────────────────
         elif step == "day":
@@ -614,7 +653,7 @@ def whatsapp():
         else:
             state["current_step"] = "service"
             wa_save(sender, state)
-            reply = openai_chat(incoming_msg)
+            reply = openai_chat(incoming_msg, lang=lang)
 
         print(f"[WHATSAPP] reply={reply!r}")
         return wa_reply(sender, reply)
