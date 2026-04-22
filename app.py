@@ -330,9 +330,9 @@ _STRINGS = {
         "fr": "Bonjour! 😊 Comment puis-je vous aider? Souhaitez-vous réserver:\n• Nettoyage des dents\n• Blanchiment des dents\n• Contrôle dentaire",
     },
     "service_confirmed": {
-        "ar": "ممتاز! 😊 {svc} متاح بسعر {price}\nهل تفضل موعدك اليوم أو غدًا؟",
-        "en": "Great! 😊 {svc} is available for {price}\nWould you prefer today or tomorrow?",
-        "fr": "Parfait! 😊 {svc} est disponible pour {price}\nPréférez-vous aujourd'hui ou demain?",
+        "ar": "خيار ممتاز ✨ {svc} {benefit}.\nالسعر {price} فقط — هل تفضل اليوم أو غدًا؟",
+        "en": "Great choice ✨ {svc} {benefit}.\nOnly {price} — would you prefer today or tomorrow?",
+        "fr": "Excellent choix ✨ {svc} {benefit}.\nSeulement {price} — aujourd'hui ou demain?",
     },
     "price_list": {
         "ar": (
@@ -446,6 +446,60 @@ def svc_name(canonical, lang):
 def svc_price(canonical, lang):
     lang = lang if lang in ("ar", "en", "fr") else "ar"
     return _PRICE_DISPLAY.get(canonical, {}).get(lang, _WA_PRICES.get(canonical, ""))
+
+_SVC_BENEFITS = {
+    "تنظيف أسنان": {
+        "ar": "يساعد على صحة اللثة ويمنحك إحساسًا بالنظافة والانتعاش",
+        "en": "helps improve gum health and leaves your teeth feeling fresh",
+        "fr": "aide à garder des gencives saines et une sensation de fraîcheur",
+    },
+    "تبييض الأسنان": {
+        "ar": "يحسّن بياض الابتسامة ويمنحك مظهرًا أكثر إشراقًا",
+        "en": "brightens your smile and boosts your appearance and confidence",
+        "fr": "illumine votre sourire et améliore votre apparence et confiance",
+    },
+    "فحص الأسنان": {
+        "ar": "يكشف المشاكل مبكرًا ويريحك من القلق على صحة أسنانك",
+        "en": "detects issues early and gives you peace of mind about your dental health",
+        "fr": "détecte les problèmes tôt et vous rassure sur votre santé dentaire",
+    },
+}
+
+_RECOMMENDATION = {
+    "ar": (
+        "أنصحك بـ {svc} كبداية ✨\n"
+        "{benefit}.\n"
+        "السعر {price} فقط — هل تفضل اليوم أو غدًا؟"
+    ),
+    "en": (
+        "I'd recommend starting with {svc} ✨\n"
+        "It {benefit}.\n"
+        "Only {price} — would you prefer today or tomorrow?"
+    ),
+    "fr": (
+        "Je vous recommande de commencer par {svc} ✨\n"
+        "Cela {benefit}.\n"
+        "Seulement {price} — aujourd'hui ou demain?"
+    ),
+}
+
+_RECOMMEND_KEYWORDS = [
+    "recommend", "suggest", "best", "what do you offer", "what should i",
+    "which service", "not sure", "don't know", "what's good",
+    "ماذا تنصح", "ماذا تقترح", "ايش تنصح", "ما الأفضل", "ما هو الأفضل",
+    "مش عارف", "مو عارف", "ما أدري", "شو تنصح",
+    "que recommandez", "que conseillez", "quoi choisir", "pas sûr",
+]
+
+def svc_benefit(canonical, lang):
+    lang = lang if lang in ("ar", "en", "fr") else "ar"
+    return _SVC_BENEFITS.get(canonical, {}).get(lang, "")
+
+def is_recommendation_request(msg):
+    msg_lower = msg.lower()
+    return any(kw in msg_lower for kw in _RECOMMEND_KEYWORDS)
+
+_RECOMMENDED_SERVICE = "تنظيف أسنان"
 
 _WA_SERVICE_ALIASES = {
     "تنظيف أسنان": [
@@ -762,9 +816,18 @@ def whatsapp():
                 reply = t("service_confirmed", lang).format(
                     svc=svc_name(svc, lang),
                     price=svc_price(svc, lang),
+                    benefit=svc_benefit(svc, lang),
                 )
             elif is_price_question(incoming_msg):
                 reply = t("price_list", lang)
+            elif is_recommendation_request(incoming_msg):
+                rec = _RECOMMENDED_SERVICE
+                _rec_lang = lang if lang in ("ar", "en", "fr") else "ar"
+                reply = _RECOMMENDATION[_rec_lang].format(
+                    svc=svc_name(rec, lang),
+                    benefit=svc_benefit(rec, lang),
+                    price=svc_price(rec, lang),
+                )
             else:
                 reply = openai_chat(incoming_msg, lang=lang)
 
