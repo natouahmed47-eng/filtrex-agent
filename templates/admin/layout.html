@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>{% block title %}Admin{% endblock %} — Filtrex AI</title>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f0f2f5;min-height:100vh;color:#111}
+    a{color:inherit;text-decoration:none}
+    /* ── Nav ── */
+    .nav{background:#fff;border-bottom:1px solid #e5e7eb;height:60px;display:flex;align-items:center;justify-content:space-between;padding:0 28px;position:sticky;top:0;z-index:100}
+    .nav-brand{font-size:17px;font-weight:700;letter-spacing:-.5px}.nav-brand span{color:#4f46e5}
+    .nav-links{display:flex;gap:4px;align-items:center}
+    .nav-link{padding:7px 13px;font-size:13px;font-weight:600;border-radius:7px;color:#374151;transition:background .12s}
+    .nav-link:hover{background:#f3f4f6}
+    .nav-link.active{background:#eef2ff;color:#4f46e5}
+    .nav-right{display:flex;gap:8px}
+    .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;font-size:13px;font-weight:600;border-radius:8px;cursor:pointer;border:none;transition:background .12s,color .12s}
+    .btn-primary{background:#4f46e5;color:#fff}.btn-primary:hover{background:#4338ca}
+    .btn-ghost{background:transparent;color:#374151;border:1.5px solid #e5e7eb}.btn-ghost:hover{background:#f3f4f6}
+    .btn-danger{background:transparent;color:#b91c1c;border:1.5px solid #fecaca}.btn-danger:hover{background:#fef2f2}
+    .btn-sm{padding:5px 11px;font-size:12px}
+    /* ── Layout ── */
+    .shell{max-width:1040px;margin:0 auto;padding:36px 24px}
+    .page-head{margin-bottom:28px;display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:12px}
+    .page-title{font-size:22px;font-weight:700;letter-spacing:-.5px}
+    .page-sub{font-size:13px;color:#6b7280;margin-top:3px}
+    /* ── Card ── */
+    .card{background:#fff;border-radius:12px;box-shadow:0 1px 6px rgba(0,0,0,.06);overflow:hidden}
+    /* ── Table ── */
+    table{width:100%;border-collapse:collapse;font-size:13.5px}
+    thead{background:#f9fafb;border-bottom:1px solid #e5e7eb}
+    th{padding:12px 18px;text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b7280}
+    td{padding:13px 18px;color:#374151;border-bottom:1px solid #f3f4f6;vertical-align:middle}
+    tr:last-child td{border-bottom:none}
+    tbody tr:hover{background:#fafafa}
+    /* ── Badge ── */
+    .badge{display:inline-block;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:600}
+    .badge-purple{background:#ede9fe;color:#4f46e5}
+    .badge-green{background:#dcfce7;color:#16a34a}
+    .badge-gray{background:#f3f4f6;color:#6b7280}
+    .badge-orange{background:#ffedd5;color:#c2410c}
+    /* ── Empty ── */
+    .empty{padding:64px 24px;text-align:center;color:#9ca3af}
+    .empty-icon{font-size:36px;margin-bottom:12px}
+    .empty-text{font-size:15px;font-weight:600;color:#6b7280}
+    .empty-sub{font-size:13px;margin-top:4px}
+    /* ── Stats row ── */
+    .stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px;margin-bottom:28px}
+    .stat-card{background:#fff;border-radius:12px;box-shadow:0 1px 6px rgba(0,0,0,.06);padding:22px 20px}
+    .stat-label{font-size:12px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.06em}
+    .stat-val{font-size:30px;font-weight:800;margin-top:6px;color:#111;letter-spacing:-1px}
+    /* ── Form ── */
+    .form-card{background:#fff;border-radius:12px;box-shadow:0 1px 6px rgba(0,0,0,.06);padding:28px 32px;max-width:640px}
+    .form-row{margin-bottom:20px}
+    label{display:block;font-size:13px;font-weight:600;color:#374151;margin-bottom:6px}
+    input[type=text],input[type=number],select,textarea{width:100%;padding:9px 13px;border:1.5px solid #e5e7eb;border-radius:8px;font-size:14px;color:#111;background:#fff;transition:border .12s}
+    input:focus,select:focus,textarea:focus{outline:none;border-color:#4f46e5}
+    textarea{resize:vertical;min-height:80px}
+    .form-hint{font-size:12px;color:#9ca3af;margin-top:4px}
+    .form-actions{display:flex;gap:10px;margin-top:24px}
+    /* ── Alert ── */
+    .alert{padding:12px 16px;border-radius:8px;font-size:13px;font-weight:500;margin-bottom:20px}
+    .alert-success{background:#dcfce7;color:#15803d;border:1px solid #bbf7d0}
+    .alert-error{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca}
+    @media(max-width:600px){
+      .nav{padding:0 14px}.shell{padding:20px 14px}
+      th,td{padding:11px 12px}
+    }
+  </style>
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-brand">Filtrex <span>AI</span></div>
+  <div class="nav-links">
+    <a href="/admin/dashboard" class="nav-link {% if active=='dashboard' %}active{% endif %}">Dashboard</a>
+    <a href="/admin/catalog" class="nav-link {% if active=='catalog' %}active{% endif %}">Catalog</a>
+    <a href="/admin/orders" class="nav-link {% if active=='orders' %}active{% endif %}">Orders</a>
+    <a href="/admin/settings" class="nav-link {% if active=='settings' %}active{% endif %}">Settings</a>
+  </div>
+  <div class="nav-right">
+    <a href="/logout" class="btn btn-ghost btn-sm">Logout</a>
+  </div>
+</nav>
+<div class="shell">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for cat, msg in messages %}
+      <div class="alert alert-{{ 'success' if cat=='success' else 'error' }}">{{ msg }}</div>
+    {% endfor %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+</div>
+</body>
+</html>

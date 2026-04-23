@@ -1,0 +1,67 @@
+{% extends "admin/layout.html" %}
+{% block title %}{{ 'Edit' if item else 'New' }} Catalog Item{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">{{ 'Edit Item' if item else 'New Catalog Item' }}</h1>
+    <p class="page-sub">{{ 'Update details for this item' if item else 'Add a product or service to your catalog' }}</p>
+  </div>
+  <a href="/admin/catalog" class="btn btn-ghost btn-sm">← Back</a>
+</div>
+
+<div class="form-card">
+  <form method="post">
+    <div class="form-row">
+      <label>Title (Arabic or local language)</label>
+      <input type="text" name="title" value="{{ item.title if item else '' }}" required placeholder="e.g. تنظيف الأسنان"/>
+    </div>
+    <div class="form-row">
+      <label>Type</label>
+      <select name="type">
+        <option value="service" {{ 'selected' if item and item.type=='service' else '' }}>Service</option>
+        <option value="product" {{ 'selected' if item and item.type=='product' else '' }}>Product</option>
+      </select>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="form-row">
+        <label>Price ({{ currency }})</label>
+        <input type="number" name="price" step="0.01" value="{{ item.price if item else '0' }}" required/>
+      </div>
+      <div class="form-row">
+        <label>Sale Price (optional)</label>
+        <input type="number" name="sale_price" step="0.01" value="{{ item.sale_price if item and item.sale_price else '' }}" placeholder="Leave empty for none"/>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="form-row">
+        <label>Duration (minutes, services only)</label>
+        <input type="number" name="duration_min" value="{{ item.duration_min if item and item.duration_min else '' }}" placeholder="e.g. 30"/>
+      </div>
+      <div class="form-row">
+        <label>Stock Qty (products only)</label>
+        <input type="number" name="stock_qty" value="{{ item.stock_qty if item and item.stock_qty else '' }}" placeholder="Leave empty for unlimited"/>
+      </div>
+    </div>
+    <div class="form-row">
+      <label>Description</label>
+      <textarea name="description" placeholder="Short description shown to customers">{{ item.description if item else '' }}</textarea>
+    </div>
+    <div class="form-row">
+      <label>Aliases (comma-separated, for message matching)</label>
+      <input type="text" name="aliases" value="{{ aliases_str }}" placeholder="e.g. تنظيف, cleaning, nettoyage"/>
+      <div class="form-hint">The bot uses these words to detect this item in customer messages</div>
+    </div>
+    <div class="form-row">
+      <label>Active</label>
+      <select name="is_active">
+        <option value="1" {{ 'selected' if not item or item.is_active }}>Yes</option>
+        <option value="0" {{ 'selected' if item and not item.is_active }}>No</option>
+      </select>
+    </div>
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">{{ 'Save Changes' if item else 'Create Item' }}</button>
+      <a href="/admin/catalog" class="btn btn-ghost">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

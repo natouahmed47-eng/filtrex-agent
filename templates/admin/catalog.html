@@ -1,0 +1,59 @@
+{% extends "admin/layout.html" %}
+{% block title %}Catalog{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Catalog</h1>
+    <p class="page-sub">Products and services offered to customers</p>
+  </div>
+  <a href="/admin/catalog/new" class="btn btn-primary">+ New Item</a>
+</div>
+
+<div class="card">
+  {% if items %}
+  <table>
+    <thead>
+      <tr>
+        <th>Title</th>
+        <th>Type</th>
+        <th>Price</th>
+        <th>Sale Price</th>
+        <th>Duration</th>
+        <th>Status</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for item in items %}
+    <tr>
+      <td style="font-weight:600">{{ item.title }}</td>
+      <td><span class="badge badge-purple">{{ item.type }}</span></td>
+      <td>{{ item.price }} {{ currency }}</td>
+      <td>{% if item.sale_price %}<span style="color:#16a34a;font-weight:600">{{ item.sale_price }} {{ currency }}</span>{% else %}—{% endif %}</td>
+      <td>{% if item.duration_min %}{{ item.duration_min }} min{% else %}—{% endif %}</td>
+      <td>
+        {% if item.is_active %}
+          <span class="badge badge-green">Active</span>
+        {% else %}
+          <span class="badge badge-gray">Inactive</span>
+        {% endif %}
+      </td>
+      <td style="text-align:right">
+        <a href="/admin/catalog/{{ item.id }}/edit" class="btn btn-ghost btn-sm">Edit</a>
+        <form method="post" action="/admin/catalog/{{ item.id }}/delete" style="display:inline" onsubmit="return confirm('Delete this item?')">
+          <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">
+    <div class="empty-icon">🗂️</div>
+    <div class="empty-text">No catalog items yet</div>
+    <div class="empty-sub"><a href="/admin/catalog/new" style="color:#4f46e5">Add your first item</a></div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

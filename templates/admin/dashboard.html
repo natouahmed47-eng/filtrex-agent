@@ -1,0 +1,60 @@
+{% extends "admin/layout.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Dashboard</h1>
+    <p class="page-sub">{{ client.name }} — {{ client.business_type }}</p>
+  </div>
+</div>
+
+<div class="stats">
+  <div class="stat-card">
+    <div class="stat-label">Total Orders</div>
+    <div class="stat-val">{{ stats.total_orders }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Today</div>
+    <div class="stat-val">{{ stats.today_orders }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Catalog Items</div>
+    <div class="stat-val">{{ stats.catalog_count }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Active Conversations</div>
+    <div class="stat-val">{{ stats.active_convos }}</div>
+  </div>
+</div>
+
+<div class="page-head" style="margin-bottom:14px">
+  <div>
+    <h2 style="font-size:16px;font-weight:700">Recent Orders</h2>
+  </div>
+  <a href="/admin/orders" class="btn btn-ghost btn-sm">View all</a>
+</div>
+<div class="card">
+  {% if recent_orders %}
+  <table>
+    <thead><tr><th>Date</th><th>Name</th><th>Items</th><th>Scheduled</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for o in recent_orders %}
+    <tr>
+      <td>{{ o.created_at[:16] }}</td>
+      <td>{{ o.name or '—' }}</td>
+      <td>{{ o.items }}</td>
+      <td>{{ o.scheduled or '—' }}</td>
+      <td><span class="badge badge-{{ 'green' if o.status=='confirmed' else 'orange' }}">{{ o.status }}</span></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">
+    <div class="empty-icon">📋</div>
+    <div class="empty-text">No orders yet</div>
+    <div class="empty-sub">Orders will appear here once customers start booking</div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,51 @@
+{% extends "admin/layout.html" %}
+{% block title %}Orders{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Orders</h1>
+    <p class="page-sub">All confirmed bookings and orders</p>
+  </div>
+</div>
+
+<div class="card">
+  {% if orders %}
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Date</th>
+        <th>Customer</th>
+        <th>Phone</th>
+        <th>Items</th>
+        <th>Scheduled</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for o in orders %}
+    <tr>
+      <td style="color:#9ca3af">{{ o.id }}</td>
+      <td>{{ o.created_at[:16] }}</td>
+      <td style="font-weight:600">{{ o.name or '—' }}</td>
+      <td style="font-size:12px;color:#6b7280">{{ o.phone }}</td>
+      <td>{{ o.items }}</td>
+      <td>{{ o.scheduled or '—' }}</td>
+      <td>
+        <span class="badge {{ 'badge-green' if o.status=='confirmed' else 'badge-orange' if o.status=='pending' else 'badge-gray' }}">
+          {{ o.status }}
+        </span>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">
+    <div class="empty-icon">📦</div>
+    <div class="empty-text">No orders yet</div>
+    <div class="empty-sub">Customer orders will appear here</div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template, session, redirect, url_for
+from flask import Flask, request, jsonify, render_template, session, redirect, url_for, flash
 from werkzeug.security import generate_password_hash, check_password_hash
 import requests
 import os
@@ -143,6 +143,236 @@ def _migrate_whatsapp_state():
 
 _migrate_whatsapp_state()
 
+# ── SAAS SCHEMA MIGRATION ─────────────────────────────────────────────────────
+
+def _migrate_saas():
+    con = get_db_connection()
+    try:
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS clients (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                name              TEXT NOT NULL,
+                business_type     TEXT DEFAULT 'clinic',
+                default_language  TEXT DEFAULT 'ar',
+                currency          TEXT DEFAULT 'MAD',
+                timezone          TEXT DEFAULT 'Africa/Casablanca',
+                admin_whatsapp    TEXT,
+                ultramsg_instance TEXT,
+                ultramsg_token    TEXT,
+                is_active         INTEGER DEFAULT 1,
+                created_at        TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS catalogs (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id    INTEGER NOT NULL REFERENCES clients(id),
+                title        TEXT NOT NULL,
+                type         TEXT DEFAULT 'service',
+                price        REAL DEFAULT 0,
+                sale_price   REAL,
+                description  TEXT,
+                duration_min INTEGER,
+                stock_qty    INTEGER,
+                is_active    INTEGER DEFAULT 1,
+                created_at   TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS catalog_aliases (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                catalog_id INTEGER NOT NULL REFERENCES catalogs(id),
+                alias      TEXT NOT NULL,
+                lang       TEXT DEFAULT 'ar'
+            )
+        """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS catalog_options (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                catalog_id INTEGER NOT NULL REFERENCES catalogs(id),
+                option_key TEXT NOT NULL,
+                option_val TEXT NOT NULL
+            )
+        """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS upsells (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id       INTEGER NOT NULL REFERENCES clients(id),
+                trigger_item_id INTEGER NOT NULL REFERENCES catalogs(id),
+                upsell_item_id  INTEGER NOT NULL REFERENCES catalogs(id),
+                is_active       INTEGER DEFAULT 1
+            )
+        """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS orders (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id  INTEGER NOT NULL REFERENCES clients(id),
+                phone      TEXT,
+                name       TEXT,
+                items      TEXT,
+                scheduled  TEXT,
+                status     TEXT DEFAULT 'pending',
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        con.commit()
+
+        # ── Seed dental clinic client (id=1) ─────────────────────────────
+        exists = con.execute("SELECT id FROM clients WHERE id = 1").fetchone()
+        if not exists:
+            con.execute("""
+                INSERT INTO clients (id, name, business_type, default_language,
+                    currency, timezone, admin_whatsapp, is_active)
+                VALUES (1, 'Veltrix Dental Clinic', 'clinic', 'ar',
+                    'MAD', 'Africa/Casablanca', ?, 1)
+            """, (ADMIN_WHATSAPP_NUMBER,))
+            con.commit()
+            print("[SAAS] seeded client id=1")
+
+        # ── Seed catalog items ────────────────────────────────────────────
+        cat_count = con.execute(
+            "SELECT COUNT(*) FROM catalogs WHERE client_id=1"
+        ).fetchone()[0]
+        if cat_count == 0:
+            _seed_services = [
+                ("تنظيف الأسنان", "service", 200, None,
+                 "تنظيف احترافي للأسنان يزيل الجير واللويحات الجرثومية", 30, None),
+                ("تبييض الأسنان", "service", 350, 300,
+                 "تبييض متقدم بتقنية LED لابتسامة أكثر إشراقاً", 60, None),
+                ("فحص الأسنان", "service", 100, None,
+                 "فحص شامل مع تقرير صحة الأسنان", 20, None),
+            ]
+            cat_ids = []
+            for title, typ, price, sale, desc, dur, stock in _seed_services:
+                cur = con.execute("""
+                    INSERT INTO catalogs (client_id, title, type, price, sale_price,
+                        description, duration_min, stock_qty)
+                    VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+                """, (title, typ, price, sale, desc, dur, stock))
+                cat_ids.append(cur.lastrowid)
+            con.commit()
+
+            # catalog_aliases per language
+            _aliases = [
+                # teeth_cleaning (cat_ids[0])
+                (cat_ids[0], "تنظيف", "ar"),
+                (cat_ids[0], "تنظيف أسنان", "ar"),
+                (cat_ids[0], "تنظيف الأسنان", "ar"),
+                (cat_ids[0], "teeth cleaning", "en"),
+                (cat_ids[0], "cleaning", "en"),
+                (cat_ids[0], "nettoyage", "fr"),
+                (cat_ids[0], "nettoyage des dents", "fr"),
+                # teeth_whitening (cat_ids[1])
+                (cat_ids[1], "تبييض", "ar"),
+                (cat_ids[1], "تبييض أسنان", "ar"),
+                (cat_ids[1], "تبييض الأسنان", "ar"),
+                (cat_ids[1], "teeth whitening", "en"),
+                (cat_ids[1], "whitening", "en"),
+                (cat_ids[1], "blanchiment", "fr"),
+                (cat_ids[1], "blanchiment des dents", "fr"),
+                # dental_checkup (cat_ids[2])
+                (cat_ids[2], "فحص", "ar"),
+                (cat_ids[2], "فحص الأسنان", "ar"),
+                (cat_ids[2], "فحص أسنان", "ar"),
+                (cat_ids[2], "checkup", "en"),
+                (cat_ids[2], "dental checkup", "en"),
+                (cat_ids[2], "consultation", "fr"),
+                (cat_ids[2], "contrôle", "fr"),
+            ]
+            con.executemany(
+                "INSERT INTO catalog_aliases (catalog_id, alias, lang) VALUES (?, ?, ?)",
+                _aliases,
+            )
+
+            # upsell: cleaning → whitening, checkup → cleaning
+            con.execute("""
+                INSERT INTO upsells (client_id, trigger_item_id, upsell_item_id, is_active)
+                VALUES (1, ?, ?, 1)
+            """, (cat_ids[0], cat_ids[1]))
+            con.execute("""
+                INSERT INTO upsells (client_id, trigger_item_id, upsell_item_id, is_active)
+                VALUES (1, ?, ?, 1)
+            """, (cat_ids[2], cat_ids[0]))
+            con.commit()
+            print(f"[SAAS] seeded catalog ids={cat_ids} + aliases + upsells")
+
+    finally:
+        con.close()
+
+_migrate_saas()
+
+# ── SAAS HELPERS ──────────────────────────────────────────────────────────────
+
+CLIENT_ID = 1   # single-tenant MVP; future: resolve by webhook token
+
+def get_client(client_id=CLIENT_ID):
+    con = get_db_connection()
+    try:
+        row = con.execute("SELECT * FROM clients WHERE id=?", (client_id,)).fetchone()
+    finally:
+        con.close()
+    return dict(row) if row else {}
+
+def find_catalog_match(client_id, msg, lang="ar"):
+    """Return catalog row dict for the first alias that appears in msg, or None."""
+    if not msg:
+        return None
+    msg_lower = msg.lower()
+    con = get_db_connection()
+    try:
+        rows = con.execute("""
+            SELECT ca.alias, ca.lang, c.*
+            FROM catalog_aliases ca
+            JOIN catalogs c ON c.id = ca.catalog_id
+            WHERE c.client_id = ? AND c.is_active = 1
+            ORDER BY LENGTH(ca.alias) DESC
+        """, (client_id,)).fetchall()
+    finally:
+        con.close()
+    for row in rows:
+        alias = (row["alias"] or "").lower()
+        if alias and alias in msg_lower:
+            print(f"[CATALOG_MATCH] alias={alias!r} → id={row['id']} title={row['title']!r}")
+            return dict(row)
+    print(f"[CATALOG_MATCH] no match for msg={msg!r}")
+    return None
+
+def get_catalog_item(catalog_id):
+    con = get_db_connection()
+    try:
+        row = con.execute("SELECT * FROM catalogs WHERE id=?", (catalog_id,)).fetchone()
+    finally:
+        con.close()
+    return dict(row) if row else {}
+
+def get_upsell_for_item(client_id, catalog_id):
+    """Return upsell catalog row dict, or None."""
+    con = get_db_connection()
+    try:
+        row = con.execute("""
+            SELECT c.*
+            FROM upsells u
+            JOIN catalogs c ON c.id = u.upsell_item_id
+            WHERE u.client_id=? AND u.trigger_item_id=? AND u.is_active=1 AND c.is_active=1
+            LIMIT 1
+        """, (client_id, catalog_id)).fetchone()
+    finally:
+        con.close()
+    return dict(row) if row else None
+
+def save_order(client_id, phone, name, items, scheduled, status="confirmed"):
+    items_json = json.dumps(items, ensure_ascii=False) if isinstance(items, list) else items
+    con = get_db_connection()
+    try:
+        con.execute("""
+            INSERT INTO orders (client_id, phone, name, items, scheduled, status)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (client_id, phone, name, items_json, scheduled, status))
+        con.commit()
+    finally:
+        con.close()
+    print(f"[ORDER_SAVED] client={client_id} phone={phone!r} name={name!r} items={items_json!r}")
+
 bookings = []
 
 def get_biz(user_id):
@@ -170,7 +400,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 @app.route("/")
 def home():
     if session.get("logged_in"):
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("admin_dashboard"))
     return redirect(url_for("login"))
 
 @app.route("/assistant")
@@ -483,6 +713,18 @@ def svc_name(canonical, lang):
 
 def svc_price(canonical, lang):
     lang = lang if lang in ("ar", "en", "fr") else "ar"
+    con = get_db_connection()
+    try:
+        row = con.execute(
+            "SELECT price, sale_price FROM catalogs WHERE client_id=? AND title=? AND is_active=1",
+            (CLIENT_ID, canonical)
+        ).fetchone()
+    finally:
+        con.close()
+    if row:
+        p = row["sale_price"] or row["price"]
+        _cur = get_client(CLIENT_ID).get("currency", "MAD")
+        return f"{int(p)} {_cur}"
     return _PRICE_DISPLAY.get(canonical, {}).get(lang, _WA_PRICES.get(canonical, ""))
 
 _SVC_BENEFITS = {
@@ -531,6 +773,16 @@ _RECOMMEND_KEYWORDS = [
 
 def svc_benefit(canonical, lang):
     lang = lang if lang in ("ar", "en", "fr") else "ar"
+    con = get_db_connection()
+    try:
+        row = con.execute(
+            "SELECT description FROM catalogs WHERE client_id=? AND title=? AND is_active=1",
+            (CLIENT_ID, canonical)
+        ).fetchone()
+    finally:
+        con.close()
+    if row and row["description"]:
+        return row["description"]
     return _SVC_BENEFITS.get(canonical, {}).get(lang, "")
 
 def is_recommendation_request(msg):
@@ -792,13 +1044,41 @@ def build_times_hint(svc, lang, day_offset=0, day=None):
         }
     return _hints.get(lang, _hints["ar"])
 
+def _catalog_id_for_title(title):
+    """Return catalog id for an exact title match, or None."""
+    if not title:
+        return None
+    con = get_db_connection()
+    try:
+        row = con.execute(
+            "SELECT id FROM catalogs WHERE client_id=? AND title=? AND is_active=1",
+            (CLIENT_ID, title)
+        ).fetchone()
+    finally:
+        con.close()
+    return row["id"] if row else None
+
 def build_upsell(svc, lang):
+    _lang = lang if lang in ("ar", "en", "fr") else "ar"
+    # ── DB-first upsell lookup ────────────────────────────────────────────
+    cat_id = _catalog_id_for_title(svc)
+    if cat_id:
+        upsell_item = get_upsell_for_item(CLIENT_ID, cat_id)
+        if upsell_item:
+            uname = upsell_item["title"]
+            print(f"[UPSELL] DB suggested={uname!r} for svc={svc!r}")
+            _upsell = {
+                "ar": f"وإذا رغبت، يمكن إضافة {uname} بعد ذلك لنتيجة أجمل 🌟",
+                "en": f"If you'd like, you can also add {uname} afterwards for an even better result 🌟",
+                "fr": f"Si vous le souhaitez, vous pouvez aussi ajouter {uname} après pour un résultat encore meilleur 🌟",
+            }
+            return _upsell[_lang]
+    # ── Hardcoded fallback ────────────────────────────────────────────────
     upsell_svc = _UPSELL_MAP.get(svc)
     if not upsell_svc:
         return ""
     uname = svc_name(upsell_svc, lang)
-    print(f"[UPSELL] suggested={upsell_svc!r} for svc={svc!r}")
-    _lang = lang if lang in ("ar", "en", "fr") else "ar"
+    print(f"[UPSELL] hardcoded suggested={upsell_svc!r} for svc={svc!r}")
     _upsell = {
         "ar": f"وإذا رغبت، يمكن إضافة {uname} بعد ذلك لنتيجة أجمل 🌟",
         "en": f"If you'd like, you can also add {uname} afterwards for an even better result 🌟",
@@ -1060,6 +1340,7 @@ def wa_save_booking(phone, state, name):
         raise
     finally:
         con.close()
+    save_order(CLIENT_ID, phone, name, _svcs, slot, status="confirmed")
 
 _SERVICE_MAP = {
     "تنظيف": "تنظيف أسنان",
@@ -1208,11 +1489,17 @@ def whatsapp():
             wa_save(sender, state)
             print(f"[STATE_MERGE] updated_state={state}")
 
-        # ── REGEX FALLBACK (only when LLM found nothing) ──────────────────
+        # ── REGEX + CATALOG FALLBACK (only when LLM found nothing) ───────
         _parser_found = any([_p_svc, _p_addon, _p_day, _p_time])
         if not _parser_found:
             _e_svc, _e_day, _e_time = extract_entities(incoming_msg)
             _re_changed = False
+            # Catalog alias match as extra fallback for service
+            if not _e_svc:
+                _cat_match = find_catalog_match(CLIENT_ID, incoming_msg,
+                                                lang=state.get("lang") or "ar")
+                if _cat_match:
+                    _e_svc = _cat_match["title"]
             if _e_svc:
                 _arabic_svc = _CANONICAL_SERVICE_MAP.get(_e_svc, _e_svc)
                 _cur_svcs   = state["known_service"]
@@ -1458,6 +1745,225 @@ def whatsapp():
         print(traceback.format_exc())
         return "", 200
 
+def _admin_guard():
+    if not session.get("logged_in"):
+        return redirect(url_for("login"))
+    return None
+
+# ── /admin/dashboard ──────────────────────────────────────────────────────────
+@app.route("/admin/dashboard")
+def admin_dashboard():
+    guard = _admin_guard()
+    if guard:
+        return guard
+    client = get_client(CLIENT_ID)
+    con = get_db_connection()
+    try:
+        total_orders  = con.execute("SELECT COUNT(*) FROM orders WHERE client_id=?", (CLIENT_ID,)).fetchone()[0]
+        today_str     = datetime.datetime.now().strftime("%Y-%m-%d")
+        today_orders  = con.execute(
+            "SELECT COUNT(*) FROM orders WHERE client_id=? AND created_at LIKE ?",
+            (CLIENT_ID, today_str + "%")
+        ).fetchone()[0]
+        catalog_count = con.execute(
+            "SELECT COUNT(*) FROM catalogs WHERE client_id=? AND is_active=1", (CLIENT_ID,)
+        ).fetchone()[0]
+        active_convos = con.execute(
+            "SELECT COUNT(*) FROM whatsapp_state WHERE current_step != 'service'"
+        ).fetchone()[0]
+        recent_orders = [dict(r) for r in con.execute(
+            "SELECT * FROM orders WHERE client_id=? ORDER BY id DESC LIMIT 10", (CLIENT_ID,)
+        ).fetchall()]
+    finally:
+        con.close()
+    stats = dict(total_orders=total_orders, today_orders=today_orders,
+                 catalog_count=catalog_count, active_convos=active_convos)
+    return render_template("admin/dashboard.html", client=client, stats=stats,
+                           recent_orders=recent_orders, active="dashboard")
+
+# ── /admin/catalog ────────────────────────────────────────────────────────────
+@app.route("/admin/catalog")
+def admin_catalog():
+    guard = _admin_guard()
+    if guard:
+        return guard
+    client = get_client(CLIENT_ID)
+    con = get_db_connection()
+    try:
+        items = [dict(r) for r in con.execute(
+            "SELECT * FROM catalogs WHERE client_id=? ORDER BY id ASC", (CLIENT_ID,)
+        ).fetchall()]
+    finally:
+        con.close()
+    return render_template("admin/catalog.html", items=items,
+                           currency=client.get("currency", "MAD"), active="catalog")
+
+# ── /admin/catalog/new ────────────────────────────────────────────────────────
+@app.route("/admin/catalog/new", methods=["GET", "POST"])
+def admin_catalog_new():
+    guard = _admin_guard()
+    if guard:
+        return guard
+    client = get_client(CLIENT_ID)
+    if request.method == "POST":
+        title       = request.form.get("title", "").strip()
+        typ         = request.form.get("type", "service")
+        price       = float(request.form.get("price") or 0)
+        sale_price  = request.form.get("sale_price") or None
+        description = request.form.get("description", "").strip()
+        duration    = request.form.get("duration_min") or None
+        stock       = request.form.get("stock_qty") or None
+        is_active   = int(request.form.get("is_active", 1))
+        aliases_raw = request.form.get("aliases", "")
+        if not title:
+            flash("Title is required.", "error")
+        else:
+            con = get_db_connection()
+            try:
+                cur = con.execute("""
+                    INSERT INTO catalogs (client_id,title,type,price,sale_price,
+                        description,duration_min,stock_qty,is_active)
+                    VALUES (?,?,?,?,?,?,?,?,?)
+                """, (CLIENT_ID, title, typ, price,
+                      float(sale_price) if sale_price else None,
+                      description, int(duration) if duration else None,
+                      int(stock) if stock else None, is_active))
+                cat_id = cur.lastrowid
+                for alias in [a.strip() for a in aliases_raw.split(",") if a.strip()]:
+                    con.execute(
+                        "INSERT INTO catalog_aliases (catalog_id, alias, lang) VALUES (?,?,?)",
+                        (cat_id, alias.lower(), "ar")
+                    )
+                con.commit()
+            finally:
+                con.close()
+            flash("Catalog item created.", "success")
+            return redirect(url_for("admin_catalog"))
+    return render_template("admin/catalog_form.html", item=None, aliases_str="",
+                           currency=client.get("currency", "MAD"), active="catalog")
+
+# ── /admin/catalog/<id>/edit ──────────────────────────────────────────────────
+@app.route("/admin/catalog/<int:cat_id>/edit", methods=["GET", "POST"])
+def admin_catalog_edit(cat_id):
+    guard = _admin_guard()
+    if guard:
+        return guard
+    client = get_client(CLIENT_ID)
+    con = get_db_connection()
+    try:
+        item_row = con.execute(
+            "SELECT * FROM catalogs WHERE id=? AND client_id=?", (cat_id, CLIENT_ID)
+        ).fetchone()
+        if not item_row:
+            flash("Item not found.", "error")
+            return redirect(url_for("admin_catalog"))
+        item = dict(item_row)
+        aliases_list = [r["alias"] for r in con.execute(
+            "SELECT alias FROM catalog_aliases WHERE catalog_id=?", (cat_id,)
+        ).fetchall()]
+    finally:
+        con.close()
+    aliases_str = ", ".join(aliases_list)
+    if request.method == "POST":
+        title       = request.form.get("title", "").strip()
+        typ         = request.form.get("type", "service")
+        price       = float(request.form.get("price") or 0)
+        sale_price  = request.form.get("sale_price") or None
+        description = request.form.get("description", "").strip()
+        duration    = request.form.get("duration_min") or None
+        stock       = request.form.get("stock_qty") or None
+        is_active   = int(request.form.get("is_active", 1))
+        aliases_raw = request.form.get("aliases", "")
+        con = get_db_connection()
+        try:
+            con.execute("""
+                UPDATE catalogs SET title=?,type=?,price=?,sale_price=?,
+                    description=?,duration_min=?,stock_qty=?,is_active=?
+                WHERE id=? AND client_id=?
+            """, (title, typ, price,
+                  float(sale_price) if sale_price else None,
+                  description, int(duration) if duration else None,
+                  int(stock) if stock else None, is_active, cat_id, CLIENT_ID))
+            con.execute("DELETE FROM catalog_aliases WHERE catalog_id=?", (cat_id,))
+            for alias in [a.strip() for a in aliases_raw.split(",") if a.strip()]:
+                con.execute(
+                    "INSERT INTO catalog_aliases (catalog_id, alias, lang) VALUES (?,?,?)",
+                    (cat_id, alias.lower(), "ar")
+                )
+            con.commit()
+        finally:
+            con.close()
+        flash("Changes saved.", "success")
+        return redirect(url_for("admin_catalog"))
+    return render_template("admin/catalog_form.html", item=item, aliases_str=aliases_str,
+                           currency=client.get("currency", "MAD"), active="catalog")
+
+# ── /admin/catalog/<id>/delete ────────────────────────────────────────────────
+@app.route("/admin/catalog/<int:cat_id>/delete", methods=["POST"])
+def admin_catalog_delete(cat_id):
+    guard = _admin_guard()
+    if guard:
+        return guard
+    con = get_db_connection()
+    try:
+        con.execute("DELETE FROM catalog_aliases WHERE catalog_id=?", (cat_id,))
+        con.execute("DELETE FROM upsells WHERE trigger_item_id=? OR upsell_item_id=?",
+                    (cat_id, cat_id))
+        con.execute("DELETE FROM catalogs WHERE id=? AND client_id=?", (cat_id, CLIENT_ID))
+        con.commit()
+    finally:
+        con.close()
+    flash("Item deleted.", "success")
+    return redirect(url_for("admin_catalog"))
+
+# ── /admin/orders ─────────────────────────────────────────────────────────────
+@app.route("/admin/orders")
+def admin_orders():
+    guard = _admin_guard()
+    if guard:
+        return guard
+    con = get_db_connection()
+    try:
+        orders = [dict(r) for r in con.execute(
+            "SELECT * FROM orders WHERE client_id=? ORDER BY id DESC", (CLIENT_ID,)
+        ).fetchall()]
+    finally:
+        con.close()
+    return render_template("admin/orders.html", orders=orders, active="orders")
+
+# ── /admin/settings ───────────────────────────────────────────────────────────
+@app.route("/admin/settings", methods=["GET", "POST"])
+def admin_settings():
+    guard = _admin_guard()
+    if guard:
+        return guard
+    client = get_client(CLIENT_ID)
+    if request.method == "POST":
+        name             = request.form.get("name", "").strip()
+        business_type    = request.form.get("business_type", "clinic")
+        default_language = request.form.get("default_language", "ar")
+        currency         = request.form.get("currency", "MAD").strip()
+        timezone         = request.form.get("timezone", "Africa/Casablanca").strip()
+        admin_whatsapp   = request.form.get("admin_whatsapp", "").strip()
+        ultramsg_inst    = request.form.get("ultramsg_instance", "").strip()
+        ultramsg_tok     = request.form.get("ultramsg_token", "").strip()
+        con = get_db_connection()
+        try:
+            con.execute("""
+                UPDATE clients SET name=?,business_type=?,default_language=?,
+                    currency=?,timezone=?,admin_whatsapp=?,
+                    ultramsg_instance=?,ultramsg_token=?
+                WHERE id=?
+            """, (name, business_type, default_language, currency, timezone,
+                  admin_whatsapp, ultramsg_inst or None, ultramsg_tok or None, CLIENT_ID))
+            con.commit()
+        finally:
+            con.close()
+        flash("Settings saved.", "success")
+        return redirect(url_for("admin_settings"))
+    return render_template("admin/settings.html", client=client, active="settings")
+
+# ── /admin/bookings ──────────────────────────────────────────────────────────── (legacy)
 @app.route("/admin/bookings")
 def admin_bookings():
     con = get_db_connection()
@@ -1565,7 +2071,7 @@ def login():
         if row and check_password_hash(row["password"], password):
             session["logged_in"] = True
             session["user_id"] = row["id"]
-            return redirect(url_for("dashboard"))
+            return redirect(url_for("admin_dashboard"))
         error = "Invalid username or password."
     return render_template("login.html", error=error)
 

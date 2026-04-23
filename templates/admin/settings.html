@@ -1,0 +1,65 @@
+{% extends "admin/layout.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Settings</h1>
+    <p class="page-sub">Business configuration for this client</p>
+  </div>
+</div>
+
+<div class="form-card">
+  <form method="post">
+    <div class="form-row">
+      <label>Business Name</label>
+      <input type="text" name="name" value="{{ client.name }}" required/>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="form-row">
+        <label>Business Type</label>
+        <select name="business_type">
+          <option value="clinic" {{ 'selected' if client.business_type=='clinic' }}>Clinic</option>
+          <option value="store" {{ 'selected' if client.business_type=='store' }}>Retail Store</option>
+          <option value="restaurant" {{ 'selected' if client.business_type=='restaurant' }}>Restaurant</option>
+          <option value="other" {{ 'selected' if client.business_type=='other' }}>Other</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>Default Language</label>
+        <select name="default_language">
+          <option value="ar" {{ 'selected' if client.default_language=='ar' }}>Arabic (ar)</option>
+          <option value="en" {{ 'selected' if client.default_language=='en' }}>English (en)</option>
+          <option value="fr" {{ 'selected' if client.default_language=='fr' }}>French (fr)</option>
+        </select>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="form-row">
+        <label>Currency</label>
+        <input type="text" name="currency" value="{{ client.currency }}" placeholder="MAD"/>
+      </div>
+      <div class="form-row">
+        <label>Timezone</label>
+        <input type="text" name="timezone" value="{{ client.timezone }}" placeholder="Africa/Casablanca"/>
+      </div>
+    </div>
+    <div class="form-row">
+      <label>Admin WhatsApp Number</label>
+      <input type="text" name="admin_whatsapp" value="{{ client.admin_whatsapp or '' }}" placeholder="e.g. 2126xxxxxxxx"/>
+      <div class="form-hint">Receives booking notifications</div>
+    </div>
+    <div class="form-row">
+      <label>UltraMsg Instance</label>
+      <input type="text" name="ultramsg_instance" value="{{ client.ultramsg_instance or '' }}" placeholder="instance12345"/>
+    </div>
+    <div class="form-row">
+      <label>UltraMsg Token</label>
+      <input type="text" name="ultramsg_token" value="{{ client.ultramsg_token or '' }}" placeholder="token…"/>
+      <div class="form-hint">Leave blank to use the server environment variables</div>
+    </div>
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">Save Settings</button>
+    </div>
+  </form>
+</div>
+{% endblock %}
