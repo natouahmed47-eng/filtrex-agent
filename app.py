@@ -516,12 +516,24 @@ def is_affirmation(msg):
     msg = (msg or "").strip().lower()
     return msg in {"yes", "oui", "نعم", "ok", "okay", "يعم", "ايه", "اوك"}
 
+_CANONICAL_SERVICE_MAP = {
+    "teeth_cleaning":  "تنظيف أسنان",
+    "teeth_whitening": "تبييض الأسنان",
+    "dental_checkup":  "فحص الأسنان",
+}
+
 def extract_entities(msg):
     import re
-    text    = (msg or "").lower()
-    service = detect_wa_service(msg)
+    text    = (msg or "").lower().strip()
+    service = None
     day     = None
     time    = None
+    if "تنظيف" in text:
+        service = "teeth_cleaning"
+    elif "تبييض" in text:
+        service = "teeth_whitening"
+    elif "فحص" in text:
+        service = "dental_checkup"
     if "اليوم" in text or "today" in text or "aujourd'hui" in text:
         day = "اليوم"
     elif any(w in text for w in ["غد", "غدا", "غدًا", "tomorrow", "demain"]):
@@ -534,7 +546,7 @@ def extract_entities(msg):
         if m:
             time = normalize_time_input(m.group())
         else:
-            m = re.search(r"\b([5-9]|1[0-9]|20)\b", text)
+            m = re.search(r"\b\d{1,2}\b", text)
             if m:
                 candidate = normalize_time_input(m.group())
                 if is_valid_time(candidate):
@@ -911,14 +923,15 @@ def whatsapp():
         _e_svc, _e_day, _e_time = extract_entities(incoming_msg)
         _changed = False
         if _e_svc and not state.get("known_service"):
-            state["known_service"] = _e_svc;  _changed = True
+            state["known_service"] = _CANONICAL_SERVICE_MAP.get(_e_svc, _e_svc)
+            _changed = True
         if _e_day and not state.get("known_day"):
-            state["known_day"]     = _e_day;   _changed = True
+            state["known_day"]  = _e_day;   _changed = True
         if _e_time and not state.get("known_time"):
-            state["known_time"]    = _e_time;  _changed = True
+            state["known_time"] = _e_time;  _changed = True
         if _changed:
             wa_save(sender, state)
-            print(f"[MULTI_INTENT] prefilled service={_e_svc!r} day={_e_day!r} time={_e_time!r}")
+            print(f"[MULTI_INTENT] prefilled svc={_e_svc!r} day={_e_day!r} time={_e_time!r}")
 
         step  = state["current_step"]
 
@@ -950,14 +963,22 @@ def whatsapp():
             svc = detect_wa_service(incoming_msg)
             if svc:
                 state["known_service"] = svc
-                state["current_step"]  = "day"
+                _has_day  = bool(state.get("known_day"))
+                _has_time = bool(state.get("known_time"))
+                if _has_day and _has_time:
+                    state["current_step"] = "name"
+                elif _has_day:
+                    state["current_step"] = "time"
+                else:
+                    state["current_step"] = "day"
                 wa_save(sender, state)
                 reply = t("service_confirmed", lang).format(
                     svc=svc_name(svc, lang),
                     price=svc_price(svc, lang),
                     benefit=svc_benefit(svc, lang),
                 )
-                reply += "\n" + build_times_hint(svc, lang)
+                if not _has_day:
+                    reply += "\n" + build_times_hint(svc, lang)
                 upsell = build_upsell(svc, lang)
                 if upsell:
                     reply += "\n" + upsell
@@ -985,13 +1006,21 @@ def whatsapp():
             svc = detect_wa_service(incoming_msg)
             if svc and not state["known_service"]:
                 state["known_service"] = svc
-            state["known_day"]    = incoming_msg.strip()
-            state["current_step"] = "time"
-            wa_save(sender, state)
-            return wa_reply(sender, openai_chat(
-                "Ask the user for the exact time.",
-                lang=lang,
-            ))
+            state["known_day"] = incoming_msg.strip()
+            if state.get("known_time"):
+                state["current_step"] = "name"
+                wa_save(sender, state)
+                return wa_reply(sender, openai_chat(
+                    "Ask the user for their name to complete the booking.",
+                    lang=lang,
+                ))
+            else:
+                state["current_step"] = "time"
+                wa_save(sender, state)
+                return wa_reply(sender, openai_chat(
+                    "Ask the user for the exact time.",
+                    lang=lang,
+                ))
 
         # ── STEP: time ────────────────────────────────────────────────────
         elif step == "time":
