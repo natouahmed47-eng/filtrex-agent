@@ -516,6 +516,26 @@ def is_affirmation(msg):
     msg = (msg or "").strip().lower()
     return msg in {"yes", "oui", "نعم", "ok", "okay", "يعم", "ايه", "اوك"}
 
+def is_valid_time(text):
+    import re
+    text = (text or "").strip().lower()
+    if "الساعة" in text:
+        return True
+    if re.match(r"^\d{1,2}(:\d{2})?$", text):
+        return True
+    if any(x in text for x in ["am", "pm"]):
+        return True
+    return False
+
+def is_valid_day(text):
+    text = (text or "").strip().lower()
+    valid_days = [
+        "اليوم", "غدا", "غدًا",
+        "today", "tomorrow",
+        "aujourd'hui", "demain",
+    ]
+    return text in valid_days
+
 def is_valid_name(text):
     text = (text or "").strip().lower()
     bad_words = [
@@ -917,13 +937,22 @@ def whatsapp():
 
         # ── STEP: day ─────────────────────────────────────────────────────
         elif step == "day":
+            if not is_valid_day(incoming_msg):
+                print(f"[DAY_INVALID] rejected={incoming_msg!r}")
+                return wa_reply(sender, openai_chat(
+                    "Ask the user to choose a valid day like today or tomorrow only.",
+                    lang=lang,
+                ))
             svc = detect_wa_service(incoming_msg)
             if svc and not state["known_service"]:
                 state["known_service"] = svc
             state["known_day"]    = incoming_msg.strip()
             state["current_step"] = "time"
             wa_save(sender, state)
-            reply = t("ask_time", lang)
+            return wa_reply(sender, openai_chat(
+                "Ask the user for the exact time.",
+                lang=lang,
+            ))
 
         # ── STEP: time ────────────────────────────────────────────────────
         elif step == "time":
@@ -934,16 +963,25 @@ def whatsapp():
                 top     = get_top_times(avail, 2)
                 if top:
                     slots_str = " / ".join(top)
-                    reply = openai_chat(
+                    return wa_reply(sender, openai_chat(
                         f"Ask the user to choose one of these available times: {slots_str}",
                         lang=lang,
-                    )
+                    ))
                 else:
-                    reply = t("ask_time", lang)
+                    return wa_reply(sender, openai_chat(
+                        "Ask the user for the exact time.",
+                        lang=lang,
+                    ))
             else:
                 time_val = normalize_time_input(incoming_msg)
-                svc      = state.get("known_service") or ""
-                day      = state.get("known_day")     or ""
+                if not is_valid_time(time_val):
+                    print(f"[TIME_INVALID] rejected={incoming_msg!r} normalized={time_val!r}")
+                    return wa_reply(sender, openai_chat(
+                        "Ask the user to provide a valid time (example: 16:00).",
+                        lang=lang,
+                    ))
+                svc = state.get("known_service") or ""
+                day = state.get("known_day")     or ""
                 if is_time_slot_taken(svc, day, time_val):
                     available = get_available_times(svc, day)
                     print(f"[SMART_SUGGEST] full={available}")
