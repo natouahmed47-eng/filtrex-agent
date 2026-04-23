@@ -667,15 +667,55 @@ _UPSELL_MAP = {
     "تبييض الأسنان": "فحص الأسنان",
 }
 
-def build_times_hint(svc, lang, day_offset=0):
-    candidates = _ALL_TIMES[-(4 + day_offset):-day_offset] if day_offset else _ALL_TIMES[-4:]
-    top = candidates[:2] if len(candidates) >= 2 else _ALL_TIMES[-2:]
-    t1, t2 = top[0], top[1]
-    _hints = {
-        "ar": f"لدينا مواعيد اليوم الساعة {t1} أو {t2}، أيهما يناسبك؟",
-        "en": f"We have available times today at {t1} or {t2}. Which works best for you?",
-        "fr": f"Nous avons des créneaux disponibles aujourd'hui à {t1} ou {t2}. Lequel vous convient?",
-    }
+def build_times_hint(svc, lang, day_offset=0, day=None):
+    _day = (day or "اليوم").strip()
+    _day_label = {"اليوم": {"ar": "اليوم", "en": "today", "fr": "aujourd'hui"},
+                  "غدا":   {"ar": "غداً",  "en": "tomorrow", "fr": "demain"}}
+    _dl = _day_label.get(_day, {}).get(lang, _day)
+
+    priority = get_time_priority(_day)          # [(time, count), ...]
+    available = [(t, c) for t, c in priority]  # all priority slots with counts
+
+    urgency = len([t for t, c in available if c == 0]) == 1  # exactly 1 free slot
+
+    if not available:
+        _fallback = _ALL_TIMES[-2:]
+        t1, t2 = _fallback[0], _fallback[1]
+        _hints = {
+            "ar": f"لدينا مواعيد {_dl} الساعة {t1} أو {t2}، أيهما يناسبك؟",
+            "en": f"We have slots {_dl} at {t1} or {t2}. Which works best?",
+            "fr": f"Nous avons des créneaux {_dl} à {t1} ou {t2}. Lequel vous convient?",
+        }
+        return _hints.get(lang, _hints["ar"])
+
+    t1, c1 = available[0]
+    if urgency and c1 == 0:
+        _urgent = {
+            "ar": f"بقي موعد أخير {_dl} الساعة {t1} 🔥\nأيهم يناسبك؟ 😊",
+            "en": f"Only one slot left {_dl} at {t1} 🔥\nDoes that work for you? 😊",
+            "fr": f"Il ne reste qu'un créneau {_dl} à {t1} 🔥\nCela vous convient? 😊",
+        }
+        return _urgent.get(lang, _urgent["ar"])
+
+    if len(available) >= 2:
+        t2, _ = available[1]
+        _hints = {
+            "ar": (f"لدينا موعد متاح {_dl} الساعة {t1} ⭐\n"
+                   f"ويوجد أيضًا {t2} إذا رغبت\n"
+                   f"أيهم يناسبك؟ 😊"),
+            "en": (f"We have a slot {_dl} at {t1} ⭐\n"
+                   f"Also available: {t2}\n"
+                   f"Which works best? 😊"),
+            "fr": (f"Nous avons un créneau {_dl} à {t1} ⭐\n"
+                   f"Aussi disponible: {t2}\n"
+                   f"Lequel vous convient? 😊"),
+        }
+    else:
+        _hints = {
+            "ar": f"لدينا موعد متاح {_dl} الساعة {t1} ⭐\nأيهم يناسبك؟ 😊",
+            "en": f"We have a slot {_dl} at {t1} ⭐\nDoes that work? 😊",
+            "fr": f"Nous avons un créneau {_dl} à {t1} ⭐\nCela vous convient? 😊",
+        }
     return _hints.get(lang, _hints["ar"])
 
 def build_upsell(svc, lang):
@@ -834,6 +874,30 @@ def get_available_times(service, day):
     available = [t for t in _ALL_TIMES if normalize_slot_text(f"{day} {t}") not in booked]
     print(f"[AVAILABILITY] booked={booked} result={available}")
     return available
+
+_PRIORITY_TIMES = ["16:00", "17:00", "18:00"]
+
+def get_time_priority(day):
+    """Return _PRIORITY_TIMES sorted by booking count ascending (least booked first)."""
+    day = (day or "اليوم").strip()
+    con = get_db_connection()
+    try:
+        rows = con.execute(
+            "SELECT time FROM bookings WHERE time LIKE ?",
+            (f"{day}%",)
+        ).fetchall()
+    finally:
+        con.close()
+    counts = {t: 0 for t in _PRIORITY_TIMES}
+    for row in rows:
+        slot = normalize_slot_text(row["time"])
+        for pt in _PRIORITY_TIMES:
+            if pt in slot:
+                counts[pt] += 1
+                break
+    sorted_times = sorted(counts.items(), key=lambda x: x[1])
+    print(f"[TIME_PRIORITY] day={day!r} counts={counts} sorted={[t for t,_ in sorted_times]}")
+    return sorted_times   # list of (time, count)
 
 def normalize_slot_text(text):
     text = (text or "").strip()
@@ -1071,7 +1135,7 @@ def whatsapp():
                     benefit=svc_benefit(_primary, lang),
                 )
                 if not _has_day:
-                    reply += "\n" + build_times_hint(_primary, lang)
+                    reply += "\n" + build_times_hint(_primary, lang, day=state.get("known_day"))
                 upsell = build_upsell(_primary, lang)
                 if upsell:
                     reply += "\n" + upsell
