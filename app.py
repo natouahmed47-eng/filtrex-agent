@@ -516,6 +516,15 @@ def is_affirmation(msg):
     msg = (msg or "").strip().lower()
     return msg in {"yes", "oui", "نعم", "ok", "okay", "يعم", "ايه", "اوك"}
 
+_NOISE_MESSAGES = {
+    "سلام", "السلام", "السلام عليكم", "وعليكم السلام",
+    "hi", "hello", "hey",
+    "bonjour", "bonsoir", "salut",
+}
+
+def is_noise_message(msg):
+    return (msg or "").strip().lower() in _NOISE_MESSAGES
+
 _CANONICAL_SERVICE_MAP = {
     "teeth_cleaning":  "تنظيف أسنان",
     "teeth_whitening": "تبييض الأسنان",
@@ -923,6 +932,11 @@ def whatsapp():
             return "", 200
 
         state = wa_load(sender)
+        _step_early = state.get("current_step", "service")
+
+        if is_noise_message(incoming_msg) and _step_early != "service":
+            print(f"[NOISE] ignored mid-booking greeting at step={_step_early!r}")
+            return "", 200
 
         _e_svc, _e_day, _e_time = extract_entities(incoming_msg)
         _DAY_NORM = {"today": "اليوم", "tomorrow": "غدا"}
