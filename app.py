@@ -528,16 +528,19 @@ def extract_entities(msg):
     service = None
     day     = None
     time    = None
-    if "تنظيف" in text:
-        service = "teeth_cleaning"
-    elif "تبييض" in text:
-        service = "teeth_whitening"
-    elif "فحص" in text:
-        service = "dental_checkup"
+    _svc_keywords = {
+        "teeth_cleaning":  ["تنظيف", "cleaning", "nettoyage"],
+        "teeth_whitening": ["تبييض", "whitening", "blanchiment"],
+        "dental_checkup":  ["فحص", "checkup", "consultation", "contrôle", "controle"],
+    }
+    for _canon, _kws in _svc_keywords.items():
+        if any(kw in text for kw in _kws):
+            service = _canon
+            break
     if "اليوم" in text or "today" in text or "aujourd'hui" in text:
-        day = "اليوم"
+        day = "today"
     elif any(w in text for w in ["غد", "غدا", "غدًا", "tomorrow", "demain"]):
-        day = "غدا"
+        day = "tomorrow"
     m = re.search(r"(?<!\d)\d{1,2}:\d{2}(?!\d)", text)
     if m:
         time = normalize_time_input(m.group())
@@ -551,7 +554,7 @@ def extract_entities(msg):
                 candidate = normalize_time_input(m.group())
                 if is_valid_time(candidate):
                     time = candidate
-    print(f"[EXTRACT_ENTITIES] service={service!r} day={day!r} time={time!r}")
+    print(f"[ENTITY_EXTRACT] service={service!r} day={day!r} time={time!r}")
     return service, day, time
 
 def is_valid_time(text):
@@ -631,6 +634,7 @@ def build_upsell(svc, lang):
     if not upsell_svc:
         return ""
     uname = svc_name(upsell_svc, lang)
+    print(f"[UPSELL] suggested={upsell_svc!r} for svc={svc!r}")
     _lang = lang if lang in ("ar", "en", "fr") else "ar"
     _upsell = {
         "ar": f"وإذا رغبت، يمكن إضافة {uname} بعد ذلك لنتيجة أجمل 🌟",
@@ -921,17 +925,18 @@ def whatsapp():
         state = wa_load(sender)
 
         _e_svc, _e_day, _e_time = extract_entities(incoming_msg)
+        _DAY_NORM = {"today": "اليوم", "tomorrow": "غدا"}
         _changed = False
         if _e_svc and not state.get("known_service"):
             state["known_service"] = _CANONICAL_SERVICE_MAP.get(_e_svc, _e_svc)
             _changed = True
         if _e_day and not state.get("known_day"):
-            state["known_day"]  = _e_day;   _changed = True
+            state["known_day"]  = _DAY_NORM.get(_e_day, _e_day);  _changed = True
         if _e_time and not state.get("known_time"):
             state["known_time"] = _e_time;  _changed = True
         if _changed:
             wa_save(sender, state)
-            print(f"[MULTI_INTENT] prefilled svc={_e_svc!r} day={_e_day!r} time={_e_time!r}")
+            print(f"[ENTITY_EXTRACT] merged svc={_e_svc!r} day={_e_day!r} time={_e_time!r}")
 
         step  = state["current_step"]
 
@@ -948,7 +953,9 @@ def whatsapp():
         print(f"[LANG_FINAL] using={lang!r}")
         print(f"[WHATSAPP] step={step!r} lang={lang!r}")
 
-        # ── GREETING — only reset at entry step, ignore mid-booking ──────────
+        print(f"[FLOW] current_step={step!r}")
+
+        # ── GREETING — only reset at entry step, re-ask mid-booking ──────────
         if is_greeting(incoming_msg):
             if step == "service":
                 print(f"[GREETING] resetting state for sender={sender!r}")
@@ -959,8 +966,15 @@ def whatsapp():
                 )
                 return wa_reply(sender, reply)
             else:
-                print(f"[GREETING] mid-booking greeting ignored at step={step!r}")
-                return "", 200
+                _ask_map = {
+                    "day":     "Ask the user for the appointment day (today or tomorrow only).",
+                    "time":    "Ask the user for the appointment time (example: 16:00).",
+                    "name":    "Ask the user for their name to complete the booking.",
+                    "confirm": "Ask the user to confirm their booking (yes or no).",
+                }
+                _ask = _ask_map.get(step, "Ask the user what service they need.")
+                print(f"[FLOW] asking_for={step!r} (after mid-booking greeting)")
+                return wa_reply(sender, openai_chat(_ask, lang=lang))
 
         # ── STEP: service ─────────────────────────────────────────────────
         if step == "service":
@@ -975,6 +989,7 @@ def whatsapp():
                     state["current_step"] = "time"
                 else:
                     state["current_step"] = "day"
+                print(f"[FLOW] asking_for={state['current_step']!r}")
                 wa_save(sender, state)
                 reply = t("service_confirmed", lang).format(
                     svc=svc_name(svc, lang),
@@ -1013,6 +1028,7 @@ def whatsapp():
             state["known_day"] = incoming_msg.strip()
             if state.get("known_time"):
                 state["current_step"] = "name"
+                print(f"[FLOW] asking_for='name' (time already known)")
                 wa_save(sender, state)
                 return wa_reply(sender, openai_chat(
                     "Ask the user for their name to complete the booking.",
@@ -1020,6 +1036,7 @@ def whatsapp():
                 ))
             else:
                 state["current_step"] = "time"
+                print(f"[FLOW] asking_for='time'")
                 wa_save(sender, state)
                 return wa_reply(sender, openai_chat(
                     "Ask the user for the exact time.",
