@@ -516,6 +516,32 @@ def is_affirmation(msg):
     msg = (msg or "").strip().lower()
     return msg in {"yes", "oui", "نعم", "ok", "okay", "يعم", "ايه", "اوك"}
 
+def extract_entities(msg):
+    import re
+    text    = (msg or "").lower()
+    service = detect_wa_service(msg)
+    day     = None
+    time    = None
+    if "اليوم" in text or "today" in text or "aujourd'hui" in text:
+        day = "اليوم"
+    elif any(w in text for w in ["غد", "غدا", "غدًا", "tomorrow", "demain"]):
+        day = "غدا"
+    m = re.search(r"\b\d{1,2}:\d{2}\b", text)
+    if m:
+        time = normalize_time_input(m.group())
+    else:
+        m = re.search(r"\b\d{1,2}(am|pm)\b", text)
+        if m:
+            time = normalize_time_input(m.group())
+        else:
+            m = re.search(r"\b([5-9]|1[0-9]|20)\b", text)
+            if m:
+                candidate = normalize_time_input(m.group())
+                if is_valid_time(candidate):
+                    time = candidate
+    print(f"[EXTRACT_ENTITIES] service={service!r} day={day!r} time={time!r}")
+    return service, day, time
+
 def is_valid_time(text):
     import re
     text = (text or "").strip().lower()
@@ -881,6 +907,19 @@ def whatsapp():
             return "", 200
 
         state = wa_load(sender)
+
+        _e_svc, _e_day, _e_time = extract_entities(incoming_msg)
+        _changed = False
+        if _e_svc and not state.get("known_service"):
+            state["known_service"] = _e_svc;  _changed = True
+        if _e_day and not state.get("known_day"):
+            state["known_day"]     = _e_day;   _changed = True
+        if _e_time and not state.get("known_time"):
+            state["known_time"]    = _e_time;  _changed = True
+        if _changed:
+            wa_save(sender, state)
+            print(f"[MULTI_INTENT] prefilled service={_e_svc!r} day={_e_day!r} time={_e_time!r}")
+
         step  = state["current_step"]
 
         old_lang     = state.get("lang") or ""
