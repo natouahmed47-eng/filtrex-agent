@@ -148,102 +148,175 @@ _migrate_whatsapp_state()
 def _migrate_saas():
     con = get_db_connection()
     try:
+        # ── STEP 1: clients ───────────────────────────────────────────────
         con.execute("""
             CREATE TABLE IF NOT EXISTS clients (
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
                 name              TEXT NOT NULL,
-                business_type     TEXT DEFAULT 'clinic',
+                business_type     TEXT NOT NULL DEFAULT 'clinic',
                 default_language  TEXT DEFAULT 'ar',
-                currency          TEXT DEFAULT 'MAD',
-                timezone          TEXT DEFAULT 'Africa/Casablanca',
+                currency          TEXT DEFAULT 'SAR',
+                timezone          TEXT DEFAULT 'Africa/Nouakchott',
                 admin_whatsapp    TEXT,
                 ultramsg_instance TEXT,
                 ultramsg_token    TEXT,
                 is_active         INTEGER DEFAULT 1,
-                created_at        TEXT DEFAULT (datetime('now'))
+                created_at        TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # ── STEP 2: catalogs ─────────────────────────────────────────────
         con.execute("""
             CREATE TABLE IF NOT EXISTS catalogs (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                client_id    INTEGER NOT NULL REFERENCES clients(id),
+                client_id    INTEGER NOT NULL,
                 title        TEXT NOT NULL,
-                type         TEXT DEFAULT 'service',
-                price        REAL DEFAULT 0,
+                type         TEXT NOT NULL DEFAULT 'service',
+                price        REAL NOT NULL DEFAULT 0,
                 sale_price   REAL,
                 description  TEXT,
                 duration_min INTEGER,
                 stock_qty    INTEGER,
                 is_active    INTEGER DEFAULT 1,
-                created_at   TEXT DEFAULT (datetime('now'))
+                created_at   TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
+
+        # ── STEP 3: catalog_aliases (lang before alias per spec) ─────────
         con.execute("""
             CREATE TABLE IF NOT EXISTS catalog_aliases (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                catalog_id INTEGER NOT NULL REFERENCES catalogs(id),
-                alias      TEXT NOT NULL,
-                lang       TEXT DEFAULT 'ar'
+                catalog_id INTEGER NOT NULL,
+                lang       TEXT NOT NULL,
+                alias      TEXT NOT NULL
             )
         """)
+
+        # ── STEP 4: catalog_options (spec columns) ────────────────────────
         con.execute("""
             CREATE TABLE IF NOT EXISTS catalog_options (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                catalog_id INTEGER NOT NULL REFERENCES catalogs(id),
-                option_key TEXT NOT NULL,
-                option_val TEXT NOT NULL
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                catalog_id   INTEGER NOT NULL,
+                option_type  TEXT NOT NULL,
+                option_value TEXT NOT NULL,
+                extra_price  REAL DEFAULT 0
             )
         """)
+
+        # ── STEP 5: upsells (spec columns) ───────────────────────────────
         con.execute("""
             CREATE TABLE IF NOT EXISTS upsells (
-                id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                client_id       INTEGER NOT NULL REFERENCES clients(id),
-                trigger_item_id INTEGER NOT NULL REFERENCES catalogs(id),
-                upsell_item_id  INTEGER NOT NULL REFERENCES catalogs(id),
-                is_active       INTEGER DEFAULT 1
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id          INTEGER NOT NULL,
+                source_catalog_id  INTEGER NOT NULL,
+                target_catalog_id  INTEGER NOT NULL,
+                priority           INTEGER DEFAULT 1
             )
         """)
+
+        # ── STEP 6: conversations ─────────────────────────────────────────
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS conversations (
+                id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id             INTEGER NOT NULL,
+                phone                 TEXT NOT NULL,
+                lang                  TEXT DEFAULT '',
+                current_step          TEXT DEFAULT 'service',
+                known_catalog_ids_json TEXT DEFAULT '[]',
+                known_day             TEXT,
+                known_time            TEXT,
+                known_name            TEXT,
+                upsell_offered        INTEGER DEFAULT 0,
+                upsell_rejected       INTEGER DEFAULT 0,
+                updated_at            TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(client_id, phone)
+            )
+        """)
+
+        # ── STEP 7: bookings_or_orders ────────────────────────────────────
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS bookings_or_orders (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id     INTEGER NOT NULL,
+                phone         TEXT NOT NULL,
+                customer_name TEXT,
+                items_json    TEXT NOT NULL DEFAULT '[]',
+                day           TEXT,
+                time          TEXT,
+                total_price   REAL DEFAULT 0,
+                status        TEXT DEFAULT 'new',
+                created_at    TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # ── Legacy orders table (keep for backward compat) ────────────────
         con.execute("""
             CREATE TABLE IF NOT EXISTS orders (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                client_id  INTEGER NOT NULL REFERENCES clients(id),
+                client_id  INTEGER NOT NULL,
                 phone      TEXT,
                 name       TEXT,
                 items      TEXT,
                 scheduled  TEXT,
                 status     TEXT DEFAULT 'pending',
-                created_at TEXT DEFAULT (datetime('now'))
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
         con.commit()
 
-        # ── Seed dental clinic client (id=1) ─────────────────────────────
+        # ── Column migrations for existing tables ─────────────────────────
+        # upsells: old schema had trigger_item_id/upsell_item_id/is_active
+        _upsell_cols = [r[1] for r in con.execute("PRAGMA table_info(upsells)").fetchall()]
+        if "source_catalog_id" not in _upsell_cols:
+            con.execute("ALTER TABLE upsells ADD COLUMN source_catalog_id INTEGER DEFAULT 0")
+            con.execute("ALTER TABLE upsells ADD COLUMN target_catalog_id INTEGER DEFAULT 0")
+            con.execute("ALTER TABLE upsells ADD COLUMN priority INTEGER DEFAULT 1")
+            if "trigger_item_id" in _upsell_cols:
+                con.execute("UPDATE upsells SET source_catalog_id = trigger_item_id")
+                con.execute("UPDATE upsells SET target_catalog_id = upsell_item_id")
+            con.commit()
+            print("[SAAS] migrated upsells → source_catalog_id/target_catalog_id/priority")
+
+        # catalog_options: old schema had option_key/option_val
+        _opt_cols = [r[1] for r in con.execute("PRAGMA table_info(catalog_options)").fetchall()]
+        if "option_type" not in _opt_cols:
+            con.execute("ALTER TABLE catalog_options ADD COLUMN option_type  TEXT DEFAULT ''")
+            con.execute("ALTER TABLE catalog_options ADD COLUMN option_value TEXT DEFAULT ''")
+            con.execute("ALTER TABLE catalog_options ADD COLUMN extra_price  REAL DEFAULT 0")
+            con.commit()
+            print("[SAAS] migrated catalog_options → option_type/option_value/extra_price")
+
+        # catalog_aliases: old schema had (catalog_id, alias, lang) — add lang index if needed
+        _alias_cols = [r[1] for r in con.execute("PRAGMA table_info(catalog_aliases)").fetchall()]
+        if "lang" not in _alias_cols:
+            con.execute("ALTER TABLE catalog_aliases ADD COLUMN lang TEXT DEFAULT 'ar'")
+            con.commit()
+            print("[SAAS] migrated catalog_aliases → added lang column")
+
+        # ── STEP 8: Seed demo client ──────────────────────────────────────
         exists = con.execute("SELECT id FROM clients WHERE id = 1").fetchone()
         if not exists:
             con.execute("""
                 INSERT INTO clients (id, name, business_type, default_language,
                     currency, timezone, admin_whatsapp, is_active)
                 VALUES (1, 'Veltrix Dental Clinic', 'clinic', 'ar',
-                    'MAD', 'Africa/Casablanca', ?, 1)
+                    'SAR', 'Africa/Nouakchott', ?, 1)
             """, (ADMIN_WHATSAPP_NUMBER,))
             con.commit()
             print("[SAAS] seeded client id=1")
 
-        # ── Seed catalog items ────────────────────────────────────────────
-        cat_count = con.execute(
-            "SELECT COUNT(*) FROM catalogs WHERE client_id=1"
-        ).fetchone()[0]
+        # ── STEP 8–9: Seed catalog items + multilingual aliases ───────────
+        cat_count = con.execute("SELECT COUNT(*) FROM catalogs WHERE client_id=1").fetchone()[0]
         if cat_count == 0:
-            _seed_services = [
-                ("تنظيف الأسنان", "service", 200, None,
+            _seed = [
+                ("تنظيف أسنان", "service", 100, None,
                  "تنظيف احترافي للأسنان يزيل الجير واللويحات الجرثومية", 30, None),
-                ("تبييض الأسنان", "service", 350, 300,
+                ("تبييض الأسنان", "service", 250, None,
                  "تبييض متقدم بتقنية LED لابتسامة أكثر إشراقاً", 60, None),
-                ("فحص الأسنان", "service", 100, None,
+                ("فحص الأسنان", "service", 50, None,
                  "فحص شامل مع تقرير صحة الأسنان", 20, None),
             ]
             cat_ids = []
-            for title, typ, price, sale, desc, dur, stock in _seed_services:
+            for title, typ, price, sale, desc, dur, stock in _seed:
                 cur = con.execute("""
                     INSERT INTO catalogs (client_id, title, type, price, sale_price,
                         description, duration_min, stock_qty)
@@ -252,47 +325,44 @@ def _migrate_saas():
                 cat_ids.append(cur.lastrowid)
             con.commit()
 
-            # catalog_aliases per language
+            # STEP 9 — multilingual aliases per spec (catalog_id, lang, alias)
             _aliases = [
-                # teeth_cleaning (cat_ids[0])
-                (cat_ids[0], "تنظيف", "ar"),
-                (cat_ids[0], "تنظيف أسنان", "ar"),
-                (cat_ids[0], "تنظيف الأسنان", "ar"),
-                (cat_ids[0], "teeth cleaning", "en"),
-                (cat_ids[0], "cleaning", "en"),
-                (cat_ids[0], "nettoyage", "fr"),
-                (cat_ids[0], "nettoyage des dents", "fr"),
-                # teeth_whitening (cat_ids[1])
-                (cat_ids[1], "تبييض", "ar"),
-                (cat_ids[1], "تبييض أسنان", "ar"),
-                (cat_ids[1], "تبييض الأسنان", "ar"),
-                (cat_ids[1], "teeth whitening", "en"),
-                (cat_ids[1], "whitening", "en"),
-                (cat_ids[1], "blanchiment", "fr"),
-                (cat_ids[1], "blanchiment des dents", "fr"),
-                # dental_checkup (cat_ids[2])
-                (cat_ids[2], "فحص", "ar"),
-                (cat_ids[2], "فحص الأسنان", "ar"),
-                (cat_ids[2], "فحص أسنان", "ar"),
-                (cat_ids[2], "checkup", "en"),
-                (cat_ids[2], "dental checkup", "en"),
-                (cat_ids[2], "consultation", "fr"),
-                (cat_ids[2], "contrôle", "fr"),
+                (cat_ids[0], "ar", "تنظيف"),
+                (cat_ids[0], "ar", "تنظيف أسنان"),
+                (cat_ids[0], "en", "cleaning"),
+                (cat_ids[0], "en", "teeth cleaning"),
+                (cat_ids[0], "fr", "nettoyage"),
+                (cat_ids[0], "fr", "nettoyage des dents"),
+
+                (cat_ids[1], "ar", "تبييض"),
+                (cat_ids[1], "ar", "تبييض أسنان"),
+                (cat_ids[1], "ar", "تبييض الأسنان"),
+                (cat_ids[1], "en", "whitening"),
+                (cat_ids[1], "en", "teeth whitening"),
+                (cat_ids[1], "fr", "blanchiment"),
+                (cat_ids[1], "fr", "blanchiment des dents"),
+
+                (cat_ids[2], "ar", "فحص"),
+                (cat_ids[2], "ar", "فحص أسنان"),
+                (cat_ids[2], "ar", "فحص الأسنان"),
+                (cat_ids[2], "en", "checkup"),
+                (cat_ids[2], "en", "dental checkup"),
+                (cat_ids[2], "fr", "controle"),
+                (cat_ids[2], "fr", "consultation"),
             ]
             con.executemany(
-                "INSERT INTO catalog_aliases (catalog_id, alias, lang) VALUES (?, ?, ?)",
+                "INSERT INTO catalog_aliases (catalog_id, lang, alias) VALUES (?, ?, ?)",
                 _aliases,
             )
 
             # upsell: cleaning → whitening, checkup → cleaning
-            con.execute("""
-                INSERT INTO upsells (client_id, trigger_item_id, upsell_item_id, is_active)
-                VALUES (1, ?, ?, 1)
-            """, (cat_ids[0], cat_ids[1]))
-            con.execute("""
-                INSERT INTO upsells (client_id, trigger_item_id, upsell_item_id, is_active)
-                VALUES (1, ?, ?, 1)
-            """, (cat_ids[2], cat_ids[0]))
+            con.executemany(
+                "INSERT INTO upsells (client_id, source_catalog_id, target_catalog_id, priority) VALUES (?,?,?,?)",
+                [
+                    (1, cat_ids[0], cat_ids[1], 1),
+                    (1, cat_ids[2], cat_ids[0], 1),
+                ]
+            )
             con.commit()
             print(f"[SAAS] seeded catalog ids={cat_ids} + aliases + upsells")
 
@@ -314,27 +384,64 @@ def get_client(client_id=CLIENT_ID):
     return dict(row) if row else {}
 
 def find_catalog_match(client_id, msg, lang="ar"):
-    """Return catalog row dict for the first alias that appears in msg, or None."""
+    """
+    STEP 10 — Matching engine:
+    1. Query catalog items for this client filtered by lang
+    2. For each item, fetch ALL its aliases (any lang) and check against msg
+    3. Return first match as dict, or None
+    """
     if not msg:
         return None
-    msg_lower = msg.lower()
+    text = (msg or "").lower()
     con = get_db_connection()
     try:
-        rows = con.execute("""
-            SELECT ca.alias, ca.lang, c.*
-            FROM catalog_aliases ca
-            JOIN catalogs c ON c.id = ca.catalog_id
-            WHERE c.client_id = ? AND c.is_active = 1
-            ORDER BY LENGTH(ca.alias) DESC
-        """, (client_id,)).fetchall()
+        # Get distinct catalog items that have at least one alias in the detected lang
+        cur = con.execute("""
+            SELECT DISTINCT c.id, c.title, c.price, c.sale_price, c.type,
+                            c.description, c.duration_min, c.is_active, c.client_id
+            FROM catalogs c
+            JOIN catalog_aliases a ON a.catalog_id = c.id
+            WHERE c.client_id = ? AND a.lang = ? AND c.is_active = 1
+        """, (client_id, lang))
+        rows = cur.fetchall()
+        for row in rows:
+            cid = row["id"]
+            # Fetch ALL aliases for this catalog item (any lang) — longest first
+            alias_rows = con.execute(
+                "SELECT alias FROM catalog_aliases WHERE catalog_id = ? ORDER BY LENGTH(alias) DESC",
+                (cid,)
+            ).fetchall()
+            aliases = [r["alias"].lower() for r in alias_rows]
+            for alias in aliases:
+                if alias and alias in text:
+                    result = dict(row)
+                    print(f"[CATALOG_MATCH] lang={lang!r} alias={alias!r} → id={cid} title={row['title']!r}")
+                    return result
     finally:
         con.close()
-    for row in rows:
-        alias = (row["alias"] or "").lower()
-        if alias and alias in msg_lower:
-            print(f"[CATALOG_MATCH] alias={alias!r} → id={row['id']} title={row['title']!r}")
-            return dict(row)
-    print(f"[CATALOG_MATCH] no match for msg={msg!r}")
+    # Fallback: try without lang filter (catches cross-language messages)
+    con = get_db_connection()
+    try:
+        all_rows = con.execute("""
+            SELECT DISTINCT c.id, c.title, c.price, c.sale_price, c.type,
+                            c.description, c.duration_min, c.is_active, c.client_id
+            FROM catalogs c
+            JOIN catalog_aliases a ON a.catalog_id = c.id
+            WHERE c.client_id = ? AND c.is_active = 1
+            ORDER BY LENGTH(a.alias) DESC
+        """, (client_id,)).fetchall()
+        for row in all_rows:
+            alias_rows = con.execute(
+                "SELECT alias FROM catalog_aliases WHERE catalog_id = ? ORDER BY LENGTH(alias) DESC",
+                (row["id"],)
+            ).fetchall()
+            for ar in alias_rows:
+                if ar["alias"].lower() in text:
+                    print(f"[CATALOG_MATCH] fallback alias={ar['alias']!r} → id={row['id']}")
+                    return dict(row)
+    finally:
+        con.close()
+    print(f"[CATALOG_MATCH] no match for msg={msg!r} lang={lang!r}")
     return None
 
 def get_catalog_item(catalog_id):
@@ -346,19 +453,45 @@ def get_catalog_item(catalog_id):
     return dict(row) if row else {}
 
 def get_upsell_for_item(client_id, catalog_id):
-    """Return upsell catalog row dict, or None."""
+    """Return upsell catalog row dict using spec columns (source/target), or None."""
     con = get_db_connection()
     try:
         row = con.execute("""
             SELECT c.*
             FROM upsells u
-            JOIN catalogs c ON c.id = u.upsell_item_id
-            WHERE u.client_id=? AND u.trigger_item_id=? AND u.is_active=1 AND c.is_active=1
+            JOIN catalogs c ON c.id = u.target_catalog_id
+            WHERE u.client_id=? AND u.source_catalog_id=? AND c.is_active=1
+            ORDER BY u.priority ASC
             LIMIT 1
         """, (client_id, catalog_id)).fetchone()
     finally:
         con.close()
     return dict(row) if row else None
+
+def save_booking_or_order(client_id, phone, name, catalog_ids, day, time, total_price=0):
+    """Write to bookings_or_orders (spec table) and legacy orders in one call."""
+    # Resolve catalog titles from IDs
+    items = []
+    for cid in (catalog_ids or []):
+        item = get_catalog_item(cid)
+        if item:
+            items.append(item.get("title", str(cid)))
+    items_json = json.dumps(items, ensure_ascii=False)
+    con = get_db_connection()
+    try:
+        con.execute("""
+            INSERT INTO bookings_or_orders
+                (client_id, phone, customer_name, items_json, day, time, total_price, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'confirmed')
+        """, (client_id, phone, name, items_json, day, time, total_price))
+        con.execute("""
+            INSERT INTO orders (client_id, phone, name, items, scheduled, status)
+            VALUES (?, ?, ?, ?, ?, 'confirmed')
+        """, (client_id, phone, name, items_json, f"{day or ''} {time or ''}".strip()))
+        con.commit()
+    finally:
+        con.close()
+    print(f"[ORDER_SAVED] bookings_or_orders + orders client={client_id} name={name!r} items={items_json!r}")
 
 def save_order(client_id, phone, name, items, scheduled, status="confirmed"):
     items_json = json.dumps(items, ensure_ascii=False) if isinstance(items, list) else items
@@ -413,7 +546,9 @@ def wa_load(phone):
     con = get_db_connection()
     try:
         row = con.execute(
-            "SELECT known_service, known_day, known_time, known_name, current_step, lang, upsell_offered, upsell_rejected FROM whatsapp_state WHERE phone = ?",
+            """SELECT known_service, known_day, known_time, known_name,
+                      current_step, lang, upsell_offered, upsell_rejected
+               FROM whatsapp_state WHERE phone = ?""",
             (phone,)
         ).fetchone()
     finally:
@@ -429,18 +564,34 @@ def wa_load(phone):
         else:
             _svc_val = []
         state = {
-            "known_service":  _svc_val,
-            "known_day":      row["known_day"],
-            "known_time":     row["known_time"],
-            "known_name":     row["known_name"],
-            "current_step":   row["current_step"] or "service",
-            "lang":           row["lang"] or "",
-            "upsell_offered": bool(row["upsell_offered"]),
-            "upsell_rejected": bool(row["upsell_rejected"]),
+            "known_service":          _svc_val,
+            "known_catalog_ids_json": "[]",     # loaded from conversations below
+            "known_day":              row["known_day"],
+            "known_time":             row["known_time"],
+            "known_name":             row["known_name"],
+            "current_step":           row["current_step"] or "service",
+            "lang":                   row["lang"] or "",
+            "upsell_offered":         bool(row["upsell_offered"]),
+            "upsell_rejected":        bool(row["upsell_rejected"]),
         }
     else:
-        state = {"known_service": [], "known_day": None, "known_time": None, "known_name": None,
-                 "current_step": "service", "lang": "", "upsell_offered": False, "upsell_rejected": False}
+        state = {
+            "known_service": [], "known_catalog_ids_json": "[]",
+            "known_day": None, "known_time": None, "known_name": None,
+            "current_step": "service", "lang": "",
+            "upsell_offered": False, "upsell_rejected": False,
+        }
+    # ── Load known_catalog_ids_json from conversations table ──────────────
+    con2 = get_db_connection()
+    try:
+        conv = con2.execute(
+            "SELECT known_catalog_ids_json FROM conversations WHERE client_id=? AND phone=?",
+            (CLIENT_ID, phone)
+        ).fetchone()
+        if conv and conv["known_catalog_ids_json"]:
+            state["known_catalog_ids_json"] = conv["known_catalog_ids_json"]
+    finally:
+        con2.close()
     print(f"[STATE_LOAD] sender={phone} state={state}")
     return state
 
@@ -451,17 +602,18 @@ def wa_save(phone, state):
         _svc_to_save = state.get("known_service")
         if isinstance(_svc_to_save, list):
             _svc_to_save = json.dumps(_svc_to_save, ensure_ascii=False) if _svc_to_save else None
+        # ── whatsapp_state (legacy) ───────────────────────────────────────
         con.execute(
             """INSERT INTO whatsapp_state (phone, known_service, known_day, known_time, known_name, current_step, lang, upsell_offered, upsell_rejected)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(phone) DO UPDATE SET
-                   known_service  = excluded.known_service,
-                   known_day      = excluded.known_day,
-                   known_time     = excluded.known_time,
-                   known_name     = excluded.known_name,
-                   current_step   = excluded.current_step,
-                   lang           = CASE WHEN excluded.lang != '' THEN excluded.lang ELSE whatsapp_state.lang END,
-                   upsell_offered = excluded.upsell_offered,
+                   known_service   = excluded.known_service,
+                   known_day       = excluded.known_day,
+                   known_time      = excluded.known_time,
+                   known_name      = excluded.known_name,
+                   current_step    = excluded.current_step,
+                   lang            = CASE WHEN excluded.lang != '' THEN excluded.lang ELSE whatsapp_state.lang END,
+                   upsell_offered  = excluded.upsell_offered,
                    upsell_rejected = excluded.upsell_rejected""",
             (phone,
              _svc_to_save,
@@ -473,8 +625,35 @@ def wa_save(phone, state):
              1 if state.get("upsell_offered") else 0,
              1 if state.get("upsell_rejected") else 0)
         )
+        # ── conversations (spec table) ────────────────────────────────────
+        _cat_ids_json = state.get("known_catalog_ids_json", "[]")
+        con.execute(
+            """INSERT INTO conversations
+                   (client_id, phone, lang, current_step, known_catalog_ids_json,
+                    known_day, known_time, known_name, upsell_offered, upsell_rejected)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(client_id, phone) DO UPDATE SET
+                   lang                   = CASE WHEN excluded.lang != '' THEN excluded.lang ELSE conversations.lang END,
+                   current_step           = excluded.current_step,
+                   known_catalog_ids_json = excluded.known_catalog_ids_json,
+                   known_day              = excluded.known_day,
+                   known_time             = excluded.known_time,
+                   known_name             = excluded.known_name,
+                   upsell_offered         = excluded.upsell_offered,
+                   upsell_rejected        = excluded.upsell_rejected,
+                   updated_at             = CURRENT_TIMESTAMP""",
+            (CLIENT_ID, phone,
+             state.get("lang", ""),
+             state.get("current_step", "service"),
+             _cat_ids_json,
+             state.get("known_day"),
+             state.get("known_time"),
+             state.get("known_name"),
+             1 if state.get("upsell_offered") else 0,
+             1 if state.get("upsell_rejected") else 0)
+        )
         con.commit()
-        print(f"[STATE_SAVE] committed lang={state.get('lang')!r}")
+        print(f"[STATE_SAVE] committed lang={state.get('lang')!r} catalog_ids={_cat_ids_json!r}")
     except Exception as db_err:
         print(f"[DB] wa_save ERROR: {repr(db_err)}")
         raise
@@ -1341,6 +1520,9 @@ def wa_save_booking(phone, state, name):
     finally:
         con.close()
     save_order(CLIENT_ID, phone, name, _svcs, slot, status="confirmed")
+    # ── Also write to bookings_or_orders (spec table) ─────────────────────
+    _ids = json.loads(state.get("known_catalog_ids_json") or "[]")
+    save_booking_or_order(CLIENT_ID, phone, name, _ids, day, time)
 
 _SERVICE_MAP = {
     "تنظيف": "تنظيف أسنان",
@@ -1437,6 +1619,19 @@ def whatsapp():
         if is_noise_message(incoming_msg) and _step_early != "service":
             print(f"[NOISE] ignored mid-booking greeting at step={_step_early!r}")
             return "", 200
+
+        # ── STEP 11: CATALOG MATCH → known_catalog_ids_json ───────────────
+        # Run this before the LLM parse so IDs are always up-to-date
+        _early_lang = state.get("lang") or detect_lang(incoming_msg) or "ar"
+        _cat_match  = find_catalog_match(CLIENT_ID, incoming_msg, lang=_early_lang)
+        if _cat_match:
+            print(f"[CATALOG_MATCH] {_cat_match}")
+            _ids = json.loads(state.get("known_catalog_ids_json") or "[]")
+            if _cat_match["id"] not in _ids:
+                _ids.append(_cat_match["id"])
+                state["known_catalog_ids_json"] = json.dumps(_ids)
+                wa_save(sender, state)
+                print(f"[CATALOG_IDS] updated ids={_ids}")
 
         # ── LLM PARSE ─────────────────────────────────────────────────────
         _parsed = parse_user_message(incoming_msg, lang=state.get("lang") or "ar")
