@@ -541,17 +541,19 @@ def ensure_svc_list(val):
         return val
     return [val]
 
+def format_services(services, lang="ar"):
+    if not services:
+        return ""
+    if isinstance(services, str):
+        services = [services]
+    _lang  = lang if lang in ("ar", "en", "fr") else "ar"
+    _label = {"ar": "الخدمات", "en": "Services", "fr": "Services"}
+    names  = [svc_name(s, lang) for s in services]
+    lines  = "\n".join(f"• {n}" for n in names)
+    return f"{_label[_lang]}:\n{lines}"
+
 def format_svcs(svcs, lang):
-    _lang = lang if lang in ("ar", "en", "fr") else "ar"
-    _bullet = {
-        "ar": lambda items: "الخدمات:\n" + "\n".join(f"• {i}" for i in items),
-        "en": lambda items: "Services:\n" + "\n".join(f"• {i}" for i in items),
-        "fr": lambda items: "Services:\n" + "\n".join(f"• {i}" for i in items),
-    }
-    names = [svc_name(s, lang) for s in svcs]
-    if len(names) == 1:
-        return names[0]
-    return _bullet[_lang](names)
+    return format_services(svcs, lang)
 
 _NOISE_MESSAGES = {
     "سلام", "السلام", "السلام عليكم", "وعليكم السلام",
@@ -647,7 +649,7 @@ def sanitize_booking_field(text, max_len=40):
 
 def confirmation_message(state, name, lang):
     _svcs = ensure_svc_list(state.get("known_service"))
-    svc   = format_svcs(_svcs, lang) if _svcs else "-"
+    svc   = format_services(_svcs, lang) if _svcs else "-"
     day   = sanitize_booking_field(state.get("known_day"))
     time  = sanitize_booking_field(state.get("known_time"))
     return t("booking_confirmed", lang).format(
@@ -760,7 +762,7 @@ def notify_admin_booking(phone, state, name):
         f"📥 حجز جديد\n"
         f"الاسم: {name}\n"
         f"الرقم: {phone}\n"
-        f"الخدمة: {' + '.join(ensure_svc_list(state.get('known_service'))) or 'غير محدد'}\n"
+        f"{format_services(ensure_svc_list(state.get('known_service'))) or 'الخدمة: غير محدد'}\n"
         f"الموعد: {state.get('known_day')} {state.get('known_time')}"
     )
     print("[ADMIN_NOTIFY] sending notification...")
@@ -862,7 +864,7 @@ def is_time_slot_taken(service, day, time_val):
 
 def wa_save_booking(phone, state, name):
     _svcs = ensure_svc_list(state.get("known_service"))
-    svc   = " + ".join(_svcs) if _svcs else "غير محدد"
+    svc   = " / ".join(_svcs) if _svcs else "غير محدد"
     day  = state.get("known_day")  or ""
     time = state.get("known_time") or ""
     slot = f"{day} {time}".strip()
