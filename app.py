@@ -131,6 +131,12 @@ def _migrate_whatsapp_state():
         if "lang" not in cols:
             con.execute("ALTER TABLE whatsapp_state ADD COLUMN lang TEXT DEFAULT ''")
             print("[DB] migration: added lang")
+        if "upsell_offered" not in cols:
+            con.execute("ALTER TABLE whatsapp_state ADD COLUMN upsell_offered INTEGER DEFAULT 0")
+            print("[DB] migration: added upsell_offered")
+        if "upsell_rejected" not in cols:
+            con.execute("ALTER TABLE whatsapp_state ADD COLUMN upsell_rejected INTEGER DEFAULT 0")
+            print("[DB] migration: added upsell_rejected")
         con.commit()
     finally:
         con.close()
@@ -177,7 +183,7 @@ def wa_load(phone):
     con = get_db_connection()
     try:
         row = con.execute(
-            "SELECT known_service, known_day, known_time, known_name, current_step, lang FROM whatsapp_state WHERE phone = ?",
+            "SELECT known_service, known_day, known_time, known_name, current_step, lang, upsell_offered, upsell_rejected FROM whatsapp_state WHERE phone = ?",
             (phone,)
         ).fetchone()
     finally:
@@ -193,15 +199,18 @@ def wa_load(phone):
         else:
             _svc_val = []
         state = {
-            "known_service": _svc_val,
-            "known_day":     row["known_day"],
-            "known_time":    row["known_time"],
-            "known_name":    row["known_name"],
-            "current_step":  row["current_step"] or "service",
-            "lang":          row["lang"] or "",
+            "known_service":  _svc_val,
+            "known_day":      row["known_day"],
+            "known_time":     row["known_time"],
+            "known_name":     row["known_name"],
+            "current_step":   row["current_step"] or "service",
+            "lang":           row["lang"] or "",
+            "upsell_offered": bool(row["upsell_offered"]),
+            "upsell_rejected": bool(row["upsell_rejected"]),
         }
     else:
-        state = {"known_service": [], "known_day": None, "known_time": None, "known_name": None, "current_step": "service", "lang": ""}
+        state = {"known_service": [], "known_day": None, "known_time": None, "known_name": None,
+                 "current_step": "service", "lang": "", "upsell_offered": False, "upsell_rejected": False}
     print(f"[STATE_LOAD] sender={phone} state={state}")
     return state
 
@@ -213,22 +222,26 @@ def wa_save(phone, state):
         if isinstance(_svc_to_save, list):
             _svc_to_save = json.dumps(_svc_to_save, ensure_ascii=False) if _svc_to_save else None
         con.execute(
-            """INSERT INTO whatsapp_state (phone, known_service, known_day, known_time, known_name, current_step, lang)
-               VALUES (?, ?, ?, ?, ?, ?, ?)
+            """INSERT INTO whatsapp_state (phone, known_service, known_day, known_time, known_name, current_step, lang, upsell_offered, upsell_rejected)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(phone) DO UPDATE SET
-                   known_service = excluded.known_service,
-                   known_day     = excluded.known_day,
-                   known_time    = excluded.known_time,
-                   known_name    = excluded.known_name,
-                   current_step  = excluded.current_step,
-                   lang          = CASE WHEN excluded.lang != '' THEN excluded.lang ELSE whatsapp_state.lang END""",
+                   known_service  = excluded.known_service,
+                   known_day      = excluded.known_day,
+                   known_time     = excluded.known_time,
+                   known_name     = excluded.known_name,
+                   current_step   = excluded.current_step,
+                   lang           = CASE WHEN excluded.lang != '' THEN excluded.lang ELSE whatsapp_state.lang END,
+                   upsell_offered = excluded.upsell_offered,
+                   upsell_rejected = excluded.upsell_rejected""",
             (phone,
              _svc_to_save,
              state.get("known_day"),
              state.get("known_time"),
              state.get("known_name"),
              state.get("current_step", "service"),
-             state.get("lang", ""))
+             state.get("lang", ""),
+             1 if state.get("upsell_offered") else 0,
+             1 if state.get("upsell_rejected") else 0)
         )
         con.commit()
         print(f"[STATE_SAVE] committed lang={state.get('lang')!r}")
@@ -732,6 +745,46 @@ def build_upsell(svc, lang):
     }
     return _upsell[_lang]
 
+_UPSELL_CANONICAL_MAP = {
+    "تنظيف أسنان":   "تبييض الأسنان",
+    "فحص الأسنان":   "تنظيف أسنان",
+    "تبييض الأسنان": "فحص الأسنان",
+}
+
+def can_show_upsell(state):
+    step          = state.get("current_step", "service")
+    svcs          = ensure_svc_list(state.get("known_service"))
+    offered       = state.get("upsell_offered", False)
+    rejected      = state.get("upsell_rejected", False)
+
+    if offered:
+        print("[UPSELL_CHECK] allowed=False (already offered)")
+        return False
+    if rejected:
+        print("[UPSELL_CHECK] allowed=False (user rejected)")
+        return False
+    if step not in ("service", "day"):
+        print(f"[UPSELL_CHECK] allowed=False (step={step!r} too late)")
+        return False
+    if not svcs:
+        print("[UPSELL_CHECK] allowed=False (no service yet)")
+        return False
+    primary     = svcs[-1]
+    upsell_svc  = _UPSELL_CANONICAL_MAP.get(primary)
+    if not upsell_svc:
+        print("[UPSELL_CHECK] allowed=False (no upsell mapping)")
+        return False
+    if upsell_svc in svcs:
+        print("[UPSELL_CHECK] allowed=False (upsell already in cart)")
+        return False
+    print(f"[UPSELL_CHECK] allowed=True primary={primary!r} suggested={upsell_svc!r}")
+    return True
+
+_REJECTION_WORDS = {"لا", "no", "non", "لأ", "la", "nope", "ما أبي", "ما أريد", "not interested"}
+
+def is_rejection(msg):
+    return (msg or "").strip().lower() in _REJECTION_WORDS
+
 _WA_SERVICE_ALIASES = {
     "تنظيف أسنان": [
         "تنظيف", "تنظيف أسنان",
@@ -1106,6 +1159,20 @@ def whatsapp():
                 print(f"[FLOW] asking_for={step!r} (after mid-booking greeting)")
                 return wa_reply(sender, openai_chat(_ask, lang=lang))
 
+        # ── UPSELL REJECTION DETECTION ────────────────────────────────────
+        if state.get("upsell_offered") and not state.get("upsell_rejected") and is_rejection(incoming_msg):
+            state["upsell_rejected"] = True
+            wa_save(sender, state)
+            print(f"[UPSELL_REJECTED] sender={sender!r}")
+            _ask_map = {
+                "day":     "Ask the user for the appointment day (today or tomorrow only).",
+                "time":    "Ask the user for the appointment time (example: 16:00).",
+                "name":    "Ask the user for their name to complete the booking.",
+                "confirm": "Ask the user to confirm their booking (yes or no).",
+            }
+            _ask = _ask_map.get(step, "Ask the user what service they need.")
+            return wa_reply(sender, openai_chat(_ask, lang=lang))
+
         # ── STEP: service ─────────────────────────────────────────────────
         if step == "service":
             svc = detect_wa_service(incoming_msg)
@@ -1136,9 +1203,13 @@ def whatsapp():
                 )
                 if not _has_day:
                     reply += "\n" + build_times_hint(_primary, lang, day=state.get("known_day"))
-                upsell = build_upsell(_primary, lang)
-                if upsell:
-                    reply += "\n" + upsell
+                if can_show_upsell(state):
+                    upsell = build_upsell(_primary, lang)
+                    if upsell:
+                        reply += "\n" + upsell
+                        state["upsell_offered"] = True
+                        wa_save(sender, state)
+                        print(f"[UPSELL_OFFER] service={_primary!r} suggested={_UPSELL_CANONICAL_MAP.get(_primary)!r}")
             elif is_price_question(incoming_msg):
                 reply = t("price_list", lang)
             elif is_recommendation_request(incoming_msg):
