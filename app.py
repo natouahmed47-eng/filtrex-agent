@@ -183,8 +183,17 @@ def wa_load(phone):
     finally:
         con.close()
     if row:
+        _svc_raw = row["known_service"]
+        if _svc_raw:
+            try:
+                _parsed = json.loads(_svc_raw)
+                _svc_val = _parsed if isinstance(_parsed, list) else [_svc_raw]
+            except Exception:
+                _svc_val = [_svc_raw]
+        else:
+            _svc_val = []
         state = {
-            "known_service": row["known_service"],
+            "known_service": _svc_val,
             "known_day":     row["known_day"],
             "known_time":    row["known_time"],
             "known_name":    row["known_name"],
@@ -192,7 +201,7 @@ def wa_load(phone):
             "lang":          row["lang"] or "",
         }
     else:
-        state = {"known_service": None, "known_day": None, "known_time": None, "known_name": None, "current_step": "service", "lang": ""}
+        state = {"known_service": [], "known_day": None, "known_time": None, "known_name": None, "current_step": "service", "lang": ""}
     print(f"[STATE_LOAD] sender={phone} state={state}")
     return state
 
@@ -200,6 +209,9 @@ def wa_save(phone, state):
     print(f"[STATE_SAVE] sender={phone} state={state}")
     con = get_db_connection()
     try:
+        _svc_to_save = state.get("known_service")
+        if isinstance(_svc_to_save, list):
+            _svc_to_save = json.dumps(_svc_to_save, ensure_ascii=False) if _svc_to_save else None
         con.execute(
             """INSERT INTO whatsapp_state (phone, known_service, known_day, known_time, known_name, current_step, lang)
                VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -211,7 +223,7 @@ def wa_save(phone, state):
                    current_step  = excluded.current_step,
                    lang          = CASE WHEN excluded.lang != '' THEN excluded.lang ELSE whatsapp_state.lang END""",
             (phone,
-             state.get("known_service"),
+             _svc_to_save,
              state.get("known_day"),
              state.get("known_time"),
              state.get("known_name"),
@@ -516,6 +528,31 @@ def is_affirmation(msg):
     msg = (msg or "").strip().lower()
     return msg in {"yes", "oui", "نعم", "ok", "okay", "يعم", "ايه", "اوك"}
 
+_ADD_INTENT_KEYWORDS = ["أضيف", "اضف", "أضف", "add", "ajoute", "ajouter"]
+
+def is_add_intent(msg):
+    text = (msg or "").lower()
+    return any(kw in text for kw in _ADD_INTENT_KEYWORDS)
+
+def ensure_svc_list(val):
+    if val is None:
+        return []
+    if isinstance(val, list):
+        return val
+    return [val]
+
+def format_svcs(svcs, lang):
+    _lang = lang if lang in ("ar", "en", "fr") else "ar"
+    _bullet = {
+        "ar": lambda items: "الخدمات:\n" + "\n".join(f"• {i}" for i in items),
+        "en": lambda items: "Services:\n" + "\n".join(f"• {i}" for i in items),
+        "fr": lambda items: "Services:\n" + "\n".join(f"• {i}" for i in items),
+    }
+    names = [svc_name(s, lang) for s in svcs]
+    if len(names) == 1:
+        return names[0]
+    return _bullet[_lang](names)
+
 _NOISE_MESSAGES = {
     "سلام", "السلام", "السلام عليكم", "وعليكم السلام",
     "hi", "hello", "hey",
@@ -609,11 +646,12 @@ def sanitize_booking_field(text, max_len=40):
     return text[:max_len]
 
 def confirmation_message(state, name, lang):
-    svc  = sanitize_booking_field(state.get("known_service")) or "-"
-    day  = sanitize_booking_field(state.get("known_day"))
-    time = sanitize_booking_field(state.get("known_time"))
+    _svcs = ensure_svc_list(state.get("known_service"))
+    svc   = format_svcs(_svcs, lang) if _svcs else "-"
+    day   = sanitize_booking_field(state.get("known_day"))
+    time  = sanitize_booking_field(state.get("known_time"))
     return t("booking_confirmed", lang).format(
-        svc=svc_name(svc, lang),
+        svc=svc,
         day=day,
         time=time,
         name=name,
@@ -722,7 +760,7 @@ def notify_admin_booking(phone, state, name):
         f"📥 حجز جديد\n"
         f"الاسم: {name}\n"
         f"الرقم: {phone}\n"
-        f"الخدمة: {state.get('known_service')}\n"
+        f"الخدمة: {' + '.join(ensure_svc_list(state.get('known_service'))) or 'غير محدد'}\n"
         f"الموعد: {state.get('known_day')} {state.get('known_time')}"
     )
     print("[ADMIN_NOTIFY] sending notification...")
@@ -823,7 +861,8 @@ def is_time_slot_taken(service, day, time_val):
     return taken
 
 def wa_save_booking(phone, state, name):
-    svc  = state.get("known_service") or "غير محدد"
+    _svcs = ensure_svc_list(state.get("known_service"))
+    svc   = " + ".join(_svcs) if _svcs else "غير محدد"
     day  = state.get("known_day")  or ""
     time = state.get("known_time") or ""
     slot = f"{day} {time}".strip()
@@ -940,17 +979,28 @@ def whatsapp():
 
         _e_svc, _e_day, _e_time = extract_entities(incoming_msg)
         _DAY_NORM = {"today": "اليوم", "tomorrow": "غدا"}
+        state["known_service"] = ensure_svc_list(state.get("known_service"))
         _changed = False
-        if _e_svc and not state.get("known_service"):
-            state["known_service"] = _CANONICAL_SERVICE_MAP.get(_e_svc, _e_svc)
-            _changed = True
+        if _e_svc:
+            _arabic_svc = _CANONICAL_SERVICE_MAP.get(_e_svc, _e_svc)
+            _cur_svcs   = state["known_service"]
+            if is_add_intent(incoming_msg):
+                if _arabic_svc not in _cur_svcs:
+                    _cur_svcs.append(_arabic_svc)
+                    state["known_service"] = _cur_svcs
+                    _changed = True
+                    print(f"[ENTITY_EXTRACT] appended svc={_arabic_svc!r} list={_cur_svcs!r}")
+            elif not _cur_svcs:
+                state["known_service"] = [_arabic_svc]
+                _changed = True
+                print(f"[ENTITY_EXTRACT] set svc={_arabic_svc!r}")
         if _e_day and not state.get("known_day"):
             state["known_day"]  = _DAY_NORM.get(_e_day, _e_day);  _changed = True
         if _e_time and not state.get("known_time"):
             state["known_time"] = _e_time;  _changed = True
         if _changed:
             wa_save(sender, state)
-            print(f"[ENTITY_EXTRACT] merged svc={_e_svc!r} day={_e_day!r} time={_e_time!r}")
+            print(f"[ENTITY_EXTRACT] merged day={_e_day!r} time={_e_time!r}")
 
         step  = state["current_step"]
 
@@ -994,7 +1044,14 @@ def whatsapp():
         if step == "service":
             svc = detect_wa_service(incoming_msg)
             if svc:
-                state["known_service"] = svc
+                _cur_svcs = ensure_svc_list(state.get("known_service"))
+                if is_add_intent(incoming_msg):
+                    if svc not in _cur_svcs:
+                        _cur_svcs.append(svc)
+                else:
+                    _cur_svcs = [svc]
+                state["known_service"] = _cur_svcs
+                print(f"[ENTITY_EXTRACT] service list={_cur_svcs!r}")
                 _has_day  = bool(state.get("known_day"))
                 _has_time = bool(state.get("known_time"))
                 if _has_day and _has_time:
@@ -1005,14 +1062,15 @@ def whatsapp():
                     state["current_step"] = "day"
                 print(f"[FLOW] asking_for={state['current_step']!r}")
                 wa_save(sender, state)
+                _primary = _cur_svcs[-1]
                 reply = t("service_confirmed", lang).format(
-                    svc=svc_name(svc, lang),
-                    price=svc_price(svc, lang),
-                    benefit=svc_benefit(svc, lang),
+                    svc=format_svcs(_cur_svcs, lang),
+                    price=svc_price(_primary, lang),
+                    benefit=svc_benefit(_primary, lang),
                 )
                 if not _has_day:
-                    reply += "\n" + build_times_hint(svc, lang)
-                upsell = build_upsell(svc, lang)
+                    reply += "\n" + build_times_hint(_primary, lang)
+                upsell = build_upsell(_primary, lang)
                 if upsell:
                     reply += "\n" + upsell
             elif is_price_question(incoming_msg):
@@ -1037,8 +1095,8 @@ def whatsapp():
                     lang=lang,
                 ))
             svc = detect_wa_service(incoming_msg)
-            if svc and not state["known_service"]:
-                state["known_service"] = svc
+            if svc and not ensure_svc_list(state.get("known_service")):
+                state["known_service"] = [svc]
             state["known_day"] = incoming_msg.strip()
             if state.get("known_time"):
                 state["current_step"] = "name"
@@ -1083,8 +1141,9 @@ def whatsapp():
                         "Ask the user to provide a valid time (example: 16:00).",
                         lang=lang,
                     ))
-                svc = state.get("known_service") or ""
-                day = state.get("known_day")     or ""
+                _svcs_t = ensure_svc_list(state.get("known_service"))
+                svc = _svcs_t[0] if _svcs_t else ""
+                day = state.get("known_day") or ""
                 if is_time_slot_taken(svc, day, time_val):
                     available = get_available_times(svc, day)
                     print(f"[SMART_SUGGEST] full={available}")
