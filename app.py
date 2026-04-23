@@ -452,6 +452,29 @@ def get_catalog_item(catalog_id):
         con.close()
     return dict(row) if row else {}
 
+def get_catalog_items(client_id, ids):
+    """Return list of active catalog row dicts for given IDs belonging to client_id."""
+    if not ids:
+        return []
+    con = get_db_connection()
+    try:
+        placeholders = ",".join("?" * len(ids))
+        rows = con.execute(
+            f"SELECT * FROM catalogs WHERE id IN ({placeholders}) AND client_id=? AND is_active=1",
+            (*ids, client_id)
+        ).fetchall()
+    finally:
+        con.close()
+    return [dict(r) for r in rows]
+
+def calculate_total(client_id, ids):
+    """Sum sale_price (if set and > 0) or price for each catalog item."""
+    total = 0.0
+    for item in get_catalog_items(client_id, ids):
+        p = item.get("sale_price") or item.get("price") or 0
+        total += float(p)
+    return total
+
 def get_upsell_for_item(client_id, catalog_id):
     """Return upsell catalog row dict using spec columns (source/target), or None."""
     con = get_db_connection()
@@ -850,6 +873,56 @@ def t(key, lang):
     lang = lang if lang in ("ar", "en", "fr") else "ar"
     return _STRINGS.get(key, {}).get(lang) or _STRINGS.get(key, {}).get("ar", "")
 
+def build_ask_service(client_id, lang):
+    """Build 'choose a service' prompt dynamically from the catalog."""
+    l = lang if lang in ("ar", "en", "fr") else "ar"
+    con = get_db_connection()
+    try:
+        rows = con.execute(
+            "SELECT title, price, sale_price FROM catalogs WHERE client_id=? AND is_active=1 ORDER BY id",
+            (client_id,)
+        ).fetchall()
+    finally:
+        con.close()
+    cur = get_client(client_id).get("currency", "SAR")
+    if not rows:
+        return t("ask_service", l)
+    bullets = ""
+    for r in rows:
+        p = r["sale_price"] or r["price"] or 0
+        bullets += f"\n• {r['title']} — {int(p)} {cur}"
+    _headers = {
+        "ar": f"أهلاً! 😊 كيف يمكنني مساعدتك؟ يمكنك الاختيار من:{bullets}",
+        "en": f"Hello! 😊 How can I help you? Choose from:{bullets}",
+        "fr": f"Bonjour! 😊 Comment puis-je vous aider? Choisissez parmi:{bullets}",
+    }
+    return _headers[l]
+
+def build_price_list(client_id, lang):
+    """Build price list dynamically from the catalog."""
+    l = lang if lang in ("ar", "en", "fr") else "ar"
+    con = get_db_connection()
+    try:
+        rows = con.execute(
+            "SELECT title, price, sale_price FROM catalogs WHERE client_id=? AND is_active=1 ORDER BY id",
+            (client_id,)
+        ).fetchall()
+    finally:
+        con.close()
+    cur = get_client(client_id).get("currency", "SAR")
+    if not rows:
+        return t("price_list", l)
+    bullets = ""
+    for r in rows:
+        p = r["sale_price"] or r["price"] or 0
+        bullets += f"\n• {r['title']} — {int(p)} {cur}"
+    _headers = {
+        "ar": f"يسعدنا خدمتك! 😊 أسعارنا:{bullets}\nأي خدمة تناسبك؟",
+        "en": f"Happy to help! 😊 Our prices:{bullets}\nWhich service suits you?",
+        "fr": f"Avec plaisir! 😊 Nos tarifs:{bullets}\nQuel service vous convient?",
+    }
+    return _headers[l]
+
 _SVC_DISPLAY = {
     "تنظيف أسنان": {
         "ar": "تنظيف أسنان",
@@ -1152,17 +1225,50 @@ def sanitize_booking_field(text, max_len=40):
     text = str(text).strip()
     return text[:max_len]
 
-def confirmation_message(state, name, lang):
-    _svcs = ensure_svc_list(state.get("known_service"))
-    svc   = format_services(_svcs, lang) if _svcs else "-"
-    day   = sanitize_booking_field(state.get("known_day"))
-    time  = sanitize_booking_field(state.get("known_time"))
-    return t("booking_confirmed", lang).format(
-        svc=svc,
-        day=day,
-        time=time,
-        name=name,
-    )
+def confirmation_message(state, name, lang, phone=None):
+    """Build confirmation message from catalog IDs in state — no hardcoded prices."""
+    l    = lang if lang in ("ar", "en", "fr") else "ar"
+    _ids = json.loads(state.get("known_catalog_ids_json") or "[]")
+    _cur = get_client(CLIENT_ID).get("currency", "SAR")
+    day  = sanitize_booking_field(state.get("known_day"))
+    time = sanitize_booking_field(state.get("known_time"))
+
+    items = get_catalog_items(CLIENT_ID, _ids)
+    if items:
+        item_lines = "\n".join(
+            f"• {it['title']} — {int(it.get('sale_price') or it.get('price') or 0)} {_cur}"
+            for it in items
+        )
+        total = calculate_total(CLIENT_ID, _ids)
+        total_str = f"{int(total)} {_cur}"
+    else:
+        _svcs = ensure_svc_list(state.get("known_service"))
+        item_lines = "\n".join(f"• {s}" for s in _svcs) if _svcs else "-"
+        total_str = "-"
+
+    _hdr   = {"ar": "تم تأكيد طلبك بنجاح ✅",     "en": "Your order is confirmed ✅",         "fr": "Votre commande est confirmée ✅"}
+    _items = {"ar": "العناصر:",                     "en": "Items:",                             "fr": "Éléments:"}
+    _tot   = {"ar": "الإجمالي:",                    "en": "Total:",                             "fr": "Total:"}
+    _appt  = {"ar": "الموعد:",                      "en": "Appointment:",                       "fr": "Rendez-vous:"}
+    _nm    = {"ar": "الاسم:",                       "en": "Name:",                              "fr": "Nom:"}
+    _ph    = {"ar": "الهاتف:",                      "en": "Phone:",                             "fr": "Téléphone:"}
+    _close = {"ar": "نحن بانتظارك 🌟",              "en": "We look forward to seeing you 🌟",   "fr": "Nous avons hâte de vous accueillir 🌟"}
+
+    parts = [
+        _hdr[l],
+        "",
+        _items[l],
+        item_lines,
+        "",
+        f"{_tot[l]} {total_str}",
+    ]
+    if day or time:
+        parts.append(f"{_appt[l]} {day} {time}".strip())
+    parts.append(f"{_nm[l]} {name}")
+    if phone:
+        parts.append(f"{_ph[l]} {phone}")
+    parts.append(_close[l])
+    return "\n".join(parts)
 
 _RECOMMENDED_SERVICE = "تنظيف أسنان"
 
@@ -1371,12 +1477,27 @@ def is_price_question(msg):
     return any(kw in msg for kw in _WA_PRICE_KEYWORDS)
 
 def notify_admin_booking(phone, state, name):
+    """Admin WhatsApp notification — uses catalog titles and real prices."""
+    _ids   = json.loads(state.get("known_catalog_ids_json") or "[]")
+    items  = get_catalog_items(CLIENT_ID, _ids)
+    _cur   = get_client(CLIENT_ID).get("currency", "SAR")
+    if items:
+        item_lines = "\n".join(
+            f"  • {it['title']} — {int(it.get('sale_price') or it.get('price') or 0)} {_cur}"
+            for it in items
+        )
+        total_str = f"{int(calculate_total(CLIENT_ID, _ids))} {_cur}"
+    else:
+        _svcs = ensure_svc_list(state.get("known_service"))
+        item_lines = "\n".join(f"  • {s}" for s in _svcs) if _svcs else "  غير محدد"
+        total_str = "-"
     msg = (
         f"📥 حجز جديد\n"
         f"الاسم: {name}\n"
         f"الرقم: {phone}\n"
-        f"{format_services(ensure_svc_list(state.get('known_service'))) or 'الخدمة: غير محدد'}\n"
-        f"الموعد: {state.get('known_day')} {state.get('known_time')}"
+        f"العناصر:\n{item_lines}\n"
+        f"الإجمالي: {total_str}\n"
+        f"الموعد: {state.get('known_day', '')} {state.get('known_time', '')}"
     )
     print("[ADMIN_NOTIFY] sending notification...")
     print(f"[ADMIN_NOTIFY] TO={ADMIN_WHATSAPP_NUMBER!r}")
@@ -1520,9 +1641,10 @@ def wa_save_booking(phone, state, name):
     finally:
         con.close()
     save_order(CLIENT_ID, phone, name, _svcs, slot, status="confirmed")
-    # ── Also write to bookings_or_orders (spec table) ─────────────────────
-    _ids = json.loads(state.get("known_catalog_ids_json") or "[]")
-    save_booking_or_order(CLIENT_ID, phone, name, _ids, day, time)
+    # ── Write to bookings_or_orders with real catalog pricing ──────────────
+    _ids   = json.loads(state.get("known_catalog_ids_json") or "[]")
+    _total = calculate_total(CLIENT_ID, _ids) if _ids else 0.0
+    save_booking_or_order(CLIENT_ID, phone, name, _ids, day, time, total_price=_total)
 
 _SERVICE_MAP = {
     "تنظيف": "تنظيف أسنان",
@@ -1740,11 +1862,7 @@ def whatsapp():
             if step == "service":
                 print(f"[GREETING] resetting state for sender={sender!r}")
                 wa_clear(sender)
-                reply = openai_chat(
-                    "User greeted you. Reply politely and ask how you can help.",
-                    lang=lang,
-                )
-                return wa_reply(sender, reply)
+                return wa_reply(sender, build_ask_service(CLIENT_ID, lang))
             else:
                 _ask_map = {
                     "day":     "Ask the user for the appointment day (today or tomorrow only).",
@@ -1772,7 +1890,10 @@ def whatsapp():
 
         # ── STEP: service ─────────────────────────────────────────────────
         if step == "service":
-            svc = detect_wa_service(incoming_msg)
+            # Prefer catalog match from STEP 11 over hardcoded detect_wa_service
+            _cat_item = _cat_match  # set by STEP 11 block above (or None)
+            svc = _cat_item["title"] if _cat_item else detect_wa_service(incoming_msg)
+
             if svc:
                 _cur_svcs = ensure_svc_list(state.get("known_service"))
                 if is_add_intent(incoming_msg):
@@ -1781,7 +1902,16 @@ def whatsapp():
                 else:
                     _cur_svcs = [svc]
                 state["known_service"] = _cur_svcs
-                print(f"[ENTITY_EXTRACT] service list={_cur_svcs!r}")
+                print(f"[ENTITY_EXTRACT] service list={_cur_svcs!r} (from_catalog={bool(_cat_item)})")
+
+                # ── Merge catalog IDs from all svcs in cart ────────────────
+                _ids_set = json.loads(state.get("known_catalog_ids_json") or "[]")
+                for _sv in _cur_svcs:
+                    _sv_id = _catalog_id_for_title(_sv)
+                    if _sv_id and _sv_id not in _ids_set:
+                        _ids_set.append(_sv_id)
+                state["known_catalog_ids_json"] = json.dumps(_ids_set)
+
                 _has_day  = bool(state.get("known_day"))
                 _has_time = bool(state.get("known_time"))
                 if _has_day and _has_time:
@@ -1792,31 +1922,94 @@ def whatsapp():
                     state["current_step"] = "day"
                 print(f"[FLOW] asking_for={state['current_step']!r}")
                 wa_save(sender, state)
+
+                # ── Build service-confirmed reply using catalog data ────────
                 _primary = _cur_svcs[-1]
-                reply = t("service_confirmed", lang).format(
-                    svc=format_svcs(_cur_svcs, lang),
-                    price=svc_price(_primary, lang),
-                    benefit=svc_benefit(_primary, lang),
-                )
+                _cur     = get_client(CLIENT_ID).get("currency", "SAR")
+                if _cat_item:
+                    _p_raw   = _cat_item.get("sale_price") or _cat_item.get("price") or 0
+                    _price   = f"{int(_p_raw)} {_cur}"
+                    _benefit = _cat_item.get("description") or svc_benefit(_primary, lang)
+                else:
+                    _price   = svc_price(_primary, lang)
+                    _benefit = svc_benefit(_primary, lang)
+
+                # Multi-item: show all items + total when cart has >1 item
+                if len(_cur_svcs) > 1:
+                    _all_items = get_catalog_items(CLIENT_ID, _ids_set)
+                    if _all_items:
+                        _list_lines = "\n".join(
+                            f"• {it['title']} — {int(it.get('sale_price') or it.get('price') or 0)} {_cur}"
+                            for it in _all_items
+                        )
+                        _total = calculate_total(CLIENT_ID, _ids_set)
+                        _cart_hdrs = {
+                            "ar": f"تم إضافة {svc} ✨\nسلة طلباتك:\n{_list_lines}\n\nالإجمالي: {int(_total)} {_cur}",
+                            "en": f"Added {svc} ✨\nYour cart:\n{_list_lines}\n\nTotal: {int(_total)} {_cur}",
+                            "fr": f"{svc} ajouté ✨\nVotre panier:\n{_list_lines}\n\nTotal: {int(_total)} {_cur}",
+                        }
+                        reply = _cart_hdrs[lang if lang in ("ar","en","fr") else "ar"]
+                    else:
+                        reply = t("service_confirmed", lang).format(
+                            svc=format_svcs(_cur_svcs, lang),
+                            price=_price,
+                            benefit=_benefit,
+                        )
+                else:
+                    reply = t("service_confirmed", lang).format(
+                        svc=svc,
+                        price=_price,
+                        benefit=_benefit,
+                    )
+
                 if not _has_day:
                     reply += "\n" + build_times_hint(_primary, lang, day=state.get("known_day"))
+
+                # ── Upsell from catalog (DB-first, no hardcoded map) ───────
                 if can_show_upsell(state):
-                    upsell = build_upsell(_primary, lang)
-                    if upsell:
+                    _pid     = _cat_item["id"] if _cat_item else _catalog_id_for_title(_primary)
+                    _upsell_item = get_upsell_for_item(CLIENT_ID, _pid) if _pid else None
+                    if _upsell_item:
+                        _uname    = _upsell_item["title"]
+                        _up_price = _upsell_item.get("sale_price") or _upsell_item.get("price") or 0
+                        _up_hdrs  = {
+                            "ar": f"وإذا رغبت، يمكن إضافة {_uname} ({int(_up_price)} {_cur}) لنتيجة أجمل 🌟",
+                            "en": f"If you'd like, you can add {_uname} ({int(_up_price)} {_cur}) for an even better result 🌟",
+                            "fr": f"Si vous le souhaitez, ajoutez {_uname} ({int(_up_price)} {_cur}) pour un résultat encore meilleur 🌟",
+                        }
+                        upsell = _up_hdrs[lang if lang in ("ar","en","fr") else "ar"]
                         reply += "\n" + upsell
                         state["upsell_offered"] = True
                         wa_save(sender, state)
-                        print(f"[UPSELL_OFFER] service={_primary!r} suggested={_UPSELL_CANONICAL_MAP.get(_primary)!r}")
+                        print(f"[UPSELL_OFFER] catalog source={_pid} target={_upsell_item['id']} ({_uname!r})")
+
             elif is_price_question(incoming_msg):
-                reply = t("price_list", lang)
+                reply = build_price_list(CLIENT_ID, lang)
+
             elif is_recommendation_request(incoming_msg):
-                rec = _RECOMMENDED_SERVICE
-                _rec_lang = lang if lang in ("ar", "en", "fr") else "ar"
-                reply = _RECOMMENDATION[_rec_lang].format(
-                    svc=svc_name(rec, lang),
-                    benefit=svc_benefit(rec, lang),
-                    price=svc_price(rec, lang),
-                )
+                # Recommend first active catalog item dynamically
+                _rec_con = get_db_connection()
+                try:
+                    _rec_ids = [r["id"] for r in _rec_con.execute(
+                        "SELECT id FROM catalogs WHERE client_id=? AND is_active=1 ORDER BY id LIMIT 1",
+                        (CLIENT_ID,)
+                    ).fetchall()]
+                finally:
+                    _rec_con.close()
+                _all_cat = get_catalog_items(CLIENT_ID, _rec_ids)
+                if _all_cat:
+                    _rec     = _all_cat[0]
+                    _cur     = get_client(CLIENT_ID).get("currency", "SAR")
+                    _rp      = _rec.get("sale_price") or _rec.get("price") or 0
+                    _rec_lang = lang if lang in ("ar", "en", "fr") else "ar"
+                    reply = _RECOMMENDATION[_rec_lang].format(
+                        svc=_rec["title"],
+                        benefit=_rec.get("description") or svc_benefit(_rec["title"], lang),
+                        price=f"{int(_rp)} {_cur}",
+                    )
+                else:
+                    reply = openai_chat(incoming_msg, lang=lang)
+
             else:
                 reply = openai_chat(incoming_msg, lang=lang)
 
@@ -1919,7 +2112,7 @@ def whatsapp():
 
             wa_clear(sender)
 
-            return wa_reply(sender, confirmation_message(state, name, lang))
+            return wa_reply(sender, confirmation_message(state, name, lang, phone=sender))
 
         else:
             _reprompts = {
