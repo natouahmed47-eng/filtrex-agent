@@ -618,6 +618,67 @@ def extract_entities(msg):
     print(f"[ENTITY_EXTRACT] service={service!r} day={day!r} time={time!r}")
     return service, day, time
 
+_PARSE_SYSTEM_PROMPT = (
+    "You are a dental clinic booking parser. "
+    "Parse the user message and return ONLY a valid JSON object with exactly these keys:\n"
+    "  intent        — one of: book_service | add_service | cancel | query | affirm | reject | other\n"
+    "  service       — one of: teeth_cleaning | teeth_whitening | dental_checkup | null\n"
+    "  add_on_service— one of: teeth_cleaning | teeth_whitening | dental_checkup | null\n"
+    "  day           — one of: today | tomorrow | null\n"
+    "  time          — 24-hour string HH:MM or null\n"
+    "  name          — person name string (1-2 words) or null\n"
+    "  affirmation   — true if message means yes/ok/confirm, else false\n"
+    "  rejection     — true if message means no/refuse, else false\n\n"
+    "Rules:\n"
+    "- service = main service the user wants to book\n"
+    "- add_on_service = service mentioned with add-intent words (أضيف/add/ajoute); if set, service=null\n"
+    "- day: اليوم/today/aujourd'hui → today; غدا/غداً/tomorrow/demain → tomorrow\n"
+    "- time: normalize to 24-hour HH:MM; 'الساعة 5' or '5 مساء' → '17:00' (assume PM for 1-9)\n"
+    "- name: only a person's first name, never a service or sentence\n"
+    "- affirmation: نعم/yes/oui/ok/تمام/أكيد/بالتأكيد\n"
+    "- rejection: لا/no/non/لأ/ما أبي/ما أريد\n"
+    "- Return ONLY the JSON object. No markdown, no explanation."
+)
+
+def parse_user_message(msg, lang="ar"):
+    _empty = {
+        "intent": "other", "service": None, "add_on_service": None,
+        "day": None, "time": None, "name": None,
+        "affirmation": False, "rejection": False,
+    }
+    print(f"[PARSE] raw={msg!r}")
+    try:
+        resp = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {"role": "system", "content": _PARSE_SYSTEM_PROMPT},
+                    {"role": "user",   "content": msg},
+                ],
+                "temperature": 0,
+            },
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            print(f"[PARSE] OpenAI error status={resp.status_code}")
+            return _empty
+        import json as _json
+        raw_content = resp.json()["choices"][0]["message"]["content"].strip()
+        parsed = _json.loads(raw_content)
+        for k, v in _empty.items():
+            if k not in parsed:
+                parsed[k] = v
+        print(f"[PARSE] result={parsed}")
+        return parsed
+    except Exception as _pe:
+        print(f"[PARSE] failed={repr(_pe)} — falling back to regex")
+        return _empty
+
 def is_valid_time(text):
     import re
     text = (text or "").strip().lower()
@@ -1096,30 +1157,84 @@ def whatsapp():
             print(f"[NOISE] ignored mid-booking greeting at step={_step_early!r}")
             return "", 200
 
-        _e_svc, _e_day, _e_time = extract_entities(incoming_msg)
-        _DAY_NORM = {"today": "اليوم", "tomorrow": "غدا"}
+        # ── LLM PARSE ─────────────────────────────────────────────────────
+        _parsed = parse_user_message(incoming_msg, lang=state.get("lang") or "ar")
+        _DAY_NORM   = {"today": "اليوم", "tomorrow": "غدا"}
+        _VALID_SVCS = {"teeth_cleaning", "teeth_whitening", "dental_checkup"}
         state["known_service"] = ensure_svc_list(state.get("known_service"))
         _changed = False
-        if _e_svc:
-            _arabic_svc = _CANONICAL_SERVICE_MAP.get(_e_svc, _e_svc)
-            _cur_svcs   = state["known_service"]
-            if is_add_intent(incoming_msg):
-                if _arabic_svc not in _cur_svcs:
-                    _cur_svcs.append(_arabic_svc)
-                    state["known_service"] = _cur_svcs
-                    _changed = True
-                    print(f"[ENTITY_EXTRACT] appended svc={_arabic_svc!r} list={_cur_svcs!r}")
-            elif not _cur_svcs:
+
+        _p_svc   = _parsed.get("service")
+        _p_addon = _parsed.get("add_on_service")
+        _p_day   = _parsed.get("day")
+        _p_time  = _parsed.get("time")
+        _p_name  = _parsed.get("name")
+        _parsed_affirmation = bool(_parsed.get("affirmation"))
+        _parsed_rejection   = bool(_parsed.get("rejection"))
+
+        if _p_svc in _VALID_SVCS:
+            _arabic_svc = _CANONICAL_SERVICE_MAP.get(_p_svc, _p_svc)
+            if not state["known_service"]:
                 state["known_service"] = [_arabic_svc]
                 _changed = True
-                print(f"[ENTITY_EXTRACT] set svc={_arabic_svc!r}")
-        if _e_day and not state.get("known_day"):
-            state["known_day"]  = _DAY_NORM.get(_e_day, _e_day);  _changed = True
-        if _e_time and not state.get("known_time"):
-            state["known_time"] = _e_time;  _changed = True
+                print(f"[STATE_MERGE] set service={_arabic_svc!r}")
+
+        if _p_addon in _VALID_SVCS:
+            _arabic_addon = _CANONICAL_SERVICE_MAP.get(_p_addon, _p_addon)
+            if _arabic_addon not in state["known_service"]:
+                state["known_service"].append(_arabic_addon)
+                _changed = True
+                print(f"[STATE_MERGE] appended add_on={_arabic_addon!r}")
+
+        if _p_day in ("today", "tomorrow") and not state.get("known_day"):
+            state["known_day"] = _DAY_NORM[_p_day]
+            _changed = True
+            print(f"[STATE_MERGE] set day={state['known_day']!r}")
+
+        if _p_time and not state.get("known_time"):
+            _norm_t = normalize_time_input(_p_time)
+            if is_valid_time(_norm_t):
+                state["known_time"] = _norm_t
+                _changed = True
+                print(f"[STATE_MERGE] set time={_norm_t!r}")
+
+        if _p_name and not state.get("known_name") and step in ("name", "confirm"):
+            if is_valid_name(_p_name):
+                state["known_name"] = _p_name
+                _changed = True
+                print(f"[STATE_MERGE] set name={_p_name!r}")
+
         if _changed:
             wa_save(sender, state)
-            print(f"[ENTITY_EXTRACT] merged day={_e_day!r} time={_e_time!r}")
+            print(f"[STATE_MERGE] updated_state={state}")
+
+        # ── REGEX FALLBACK (only when LLM found nothing) ──────────────────
+        _parser_found = any([_p_svc, _p_addon, _p_day, _p_time])
+        if not _parser_found:
+            _e_svc, _e_day, _e_time = extract_entities(incoming_msg)
+            _re_changed = False
+            if _e_svc:
+                _arabic_svc = _CANONICAL_SERVICE_MAP.get(_e_svc, _e_svc)
+                _cur_svcs   = state["known_service"]
+                if is_add_intent(incoming_msg):
+                    if _arabic_svc not in _cur_svcs:
+                        _cur_svcs.append(_arabic_svc)
+                        state["known_service"] = _cur_svcs
+                        _re_changed = True
+                        print(f"[ENTITY_EXTRACT] appended svc={_arabic_svc!r} list={_cur_svcs!r}")
+                elif not _cur_svcs:
+                    state["known_service"] = [_arabic_svc]
+                    _re_changed = True
+                    print(f"[ENTITY_EXTRACT] set svc={_arabic_svc!r}")
+            if _e_day and not state.get("known_day"):
+                state["known_day"] = _DAY_NORM.get(_e_day, _e_day)
+                _re_changed = True
+            if _e_time and not state.get("known_time"):
+                state["known_time"] = _e_time
+                _re_changed = True
+            if _re_changed:
+                wa_save(sender, state)
+                print(f"[ENTITY_EXTRACT] merged day={_e_day!r} time={_e_time!r}")
 
         step  = state["current_step"]
 
@@ -1160,7 +1275,7 @@ def whatsapp():
                 return wa_reply(sender, openai_chat(_ask, lang=lang))
 
         # ── UPSELL REJECTION DETECTION ────────────────────────────────────
-        if state.get("upsell_offered") and not state.get("upsell_rejected") and is_rejection(incoming_msg):
+        if state.get("upsell_offered") and not state.get("upsell_rejected") and (is_rejection(incoming_msg) or _parsed_rejection):
             state["upsell_rejected"] = True
             wa_save(sender, state)
             print(f"[UPSELL_REJECTED] sender={sender!r}")
@@ -1254,7 +1369,7 @@ def whatsapp():
 
         # ── STEP: time ────────────────────────────────────────────────────
         elif step == "time":
-            if is_affirmation(incoming_msg):
+            if is_affirmation(incoming_msg) or _parsed_affirmation:
                 svc_tmp = state.get("known_service") or ""
                 day_tmp = state.get("known_day") or ""
                 avail   = get_available_times(svc_tmp, day_tmp)
@@ -1299,9 +1414,8 @@ def whatsapp():
 
         # ── STEP: name → confirm + save ───────────────────────────────────
         elif step == "name":
-            name = (incoming_msg or "").strip()
-
-            print(f"[DEBUG] validating name={name!r}")
+            name = (_p_name or (incoming_msg or "")).strip()
+            print(f"[DEBUG] validating name={name!r} (parser={_p_name!r})")
 
             if not is_valid_name(name):
                 print("[DEBUG] invalid name detected — rejecting")
