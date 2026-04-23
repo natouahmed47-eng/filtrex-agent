@@ -538,15 +538,15 @@ def extract_entities(msg):
         day = "اليوم"
     elif any(w in text for w in ["غد", "غدا", "غدًا", "tomorrow", "demain"]):
         day = "غدا"
-    m = re.search(r"\b\d{1,2}:\d{2}\b", text)
+    m = re.search(r"(?<!\d)\d{1,2}:\d{2}(?!\d)", text)
     if m:
         time = normalize_time_input(m.group())
     else:
-        m = re.search(r"\b\d{1,2}(am|pm)\b", text)
+        m = re.search(r"(?<!\d)\d{1,2}(am|pm)(?!\w)", text)
         if m:
             time = normalize_time_input(m.group())
         else:
-            m = re.search(r"\b\d{1,2}\b", text)
+            m = re.search(r"(?<!\d)\d{1,2}(?!\d)", text)
             if m:
                 candidate = normalize_time_input(m.group())
                 if is_valid_time(candidate):
@@ -948,15 +948,19 @@ def whatsapp():
         print(f"[LANG_FINAL] using={lang!r}")
         print(f"[WHATSAPP] step={step!r} lang={lang!r}")
 
-        # ── GREETING — reset state and return immediately ──────────────────
+        # ── GREETING — only reset at entry step, ignore mid-booking ──────────
         if is_greeting(incoming_msg):
-            print(f"[GREETING] resetting state for sender={sender!r}")
-            wa_clear(sender)
-            reply = openai_chat(
-                "User greeted you. Reply politely and ask how you can help.",
-                lang=lang,
-            )
-            return wa_reply(sender, reply)
+            if step == "service":
+                print(f"[GREETING] resetting state for sender={sender!r}")
+                wa_clear(sender)
+                reply = openai_chat(
+                    "User greeted you. Reply politely and ask how you can help.",
+                    lang=lang,
+                )
+                return wa_reply(sender, reply)
+            else:
+                print(f"[GREETING] mid-booking greeting ignored at step={step!r}")
+                return "", 200
 
         # ── STEP: service ─────────────────────────────────────────────────
         if step == "service":
@@ -1095,9 +1099,14 @@ def whatsapp():
             return wa_reply(sender, confirmation_message(state, name, lang))
 
         else:
-            state["current_step"] = "service"
-            wa_save(sender, state)
-            reply = openai_chat(incoming_msg, lang=lang)
+            _reprompts = {
+                "day":     "Ask the user for the appointment day (today or tomorrow only).",
+                "time":    "Ask the user for the appointment time (example: 16:00).",
+                "name":    "Ask the user for their name to complete the booking.",
+                "confirm": "Ask the user to confirm their booking (yes or no).",
+            }
+            _prompt = _reprompts.get(step, "Ask the user what service they need.")
+            reply = openai_chat(_prompt, lang=lang)
 
         print(f"[WHATSAPP] reply={reply!r}")
         return wa_reply(sender, reply)
