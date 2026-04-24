@@ -1183,6 +1183,76 @@ def parse_user_message(msg, lang="ar"):
         print(f"[PARSE] failed={repr(_pe)} — falling back to regex")
         return _empty
 
+_FULL_INTENT_PROMPT = (
+    "You are a booking intent extractor for any business type.\n"
+    "The user may mention multiple services, a day, a time, and their name all in ONE message.\n\n"
+    "Return ONLY a single valid JSON object — no markdown, no explanation, no extra keys:\n"
+    "{\n"
+    '  "services": ["<service text 1>", "<service text 2>"],\n'
+    '  "day": "today" | "tomorrow" | null,\n'
+    '  "time": "HH:MM" | null,\n'
+    '  "name": "<first name>" | null\n'
+    "}\n\n"
+    "Rules:\n"
+    "- services: list every service the user mentions (book, add, request). Return exact phrasing. Empty list [] if none.\n"
+    "- day: اليوم/today/aujourd'hui → \"today\"; غدا/غدً/غداً/tomorrow/demain → \"tomorrow\"; null if absent.\n"
+    "- time: normalize any format to 24-hour HH:MM string.\n"
+    "  Examples: '5 مساء' → '17:00', '5pm' → '17:00', '9 صباح' → '09:00', '14:30' → '14:30'.\n"
+    "  Assume PM (add 12) for 1–9 without explicit AM/morning indicator. null if absent.\n"
+    "- name: extract only after words like اسمي/اسم/my name is/je m'appelle/أنا. null if absent.\n"
+    "  Must be 1-3 words, a real person name, NOT a service or sentence.\n"
+    "- Return ONLY the JSON object. No markdown fences, no explanations."
+)
+
+def extract_full_intent(message):
+    """
+    Use OpenAI to extract structured data from a single message.
+    Returns dict: {services: [...], day: str|None, time: str|None, name: str|None}
+    Never raises — returns empty structure on any error.
+    """
+    _empty = {"services": [], "day": None, "time": None, "name": None}
+    if not message or len(message.strip()) < 3:
+        return _empty
+    try:
+        resp = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type":  "application/json",
+            },
+            json={
+                "model":    "gpt-4o-mini",
+                "messages": [
+                    {"role": "system", "content": _FULL_INTENT_PROMPT},
+                    {"role": "user",   "content": message},
+                ],
+                "temperature": 0,
+            },
+            timeout=12,
+        )
+        if resp.status_code != 200:
+            print(f"[INTENT] OpenAI error status={resp.status_code}")
+            return _empty
+        raw = resp.json()["choices"][0]["message"]["content"].strip()
+        # Strip markdown code fences if model wraps in them
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
+        result = json.loads(raw)
+        out = {
+            "services": result.get("services") or [],
+            "day":      result.get("day"),
+            "time":     result.get("time"),
+            "name":     result.get("name"),
+        }
+        print(f"[INTENT] {out}")
+        return out
+    except Exception as _e:
+        print(f"[INTENT] failed={repr(_e)}")
+        return _empty
+
 def is_valid_time(text):
     import re
     text = (text or "").strip().lower()
@@ -1755,6 +1825,81 @@ def whatsapp():
                 wa_save(sender, state)
                 print(f"[CATALOG_IDS] updated ids={_ids}")
 
+        # ── FULL INTENT EXTRACTION (multi-field, any language) ─────────────
+        # Runs on every message — merges services, day, time, name into state
+        # regardless of current step. Enables one-shot booking.
+        _DAY_NORM = {"today": "اليوم", "tomorrow": "غدا"}
+        state["known_service"] = ensure_svc_list(state.get("known_service"))
+        _intent = extract_full_intent(incoming_msg)
+        _intent_changed = False
+
+        # Merge services: match each extracted phrase against catalog
+        for _svc_phrase in (_intent.get("services") or []):
+            _svc_match = find_catalog_match(CLIENT_ID, _svc_phrase, lang=_early_lang)
+            if not _svc_match:
+                # Retry with full message to handle phrase variation
+                _svc_match = find_catalog_match(CLIENT_ID, incoming_msg, lang=_early_lang)
+            if not _svc_match:
+                # Last resort: reverse LIKE — find alias that CONTAINS any word from phrase
+                _con_r = get_db_connection()
+                try:
+                    for _word in sorted(_svc_phrase.split(), key=len, reverse=True):
+                        if len(_word) >= 3:
+                            _row_r = _con_r.execute("""
+                                SELECT DISTINCT c.* FROM catalogs c
+                                JOIN catalog_aliases a ON a.catalog_id=c.id
+                                WHERE c.client_id=? AND a.lang=? AND c.is_active=1
+                                  AND a.alias LIKE ?
+                                ORDER BY LENGTH(a.alias) DESC LIMIT 1
+                            """, (CLIENT_ID, _early_lang, f"%{_word}%")).fetchone()
+                            if _row_r:
+                                _svc_match = dict(_row_r)
+                                print(f"[INTENT_MERGE] reverse-LIKE matched {_word!r} → {_svc_match['title']!r}")
+                                break
+                finally:
+                    _con_r.close()
+            if _svc_match:
+                _svc_title = _svc_match["title"]
+                if _svc_title not in state["known_service"]:
+                    state["known_service"].append(_svc_title)
+                    _intent_changed = True
+                    print(f"[INTENT_MERGE] service added={_svc_title!r}")
+                _i_ids = json.loads(state.get("known_catalog_ids_json") or "[]")
+                if _svc_match["id"] not in _i_ids:
+                    _i_ids.append(_svc_match["id"])
+                    state["known_catalog_ids_json"] = json.dumps(_i_ids)
+                    _intent_changed = True
+
+        # Merge day
+        _i_day = _intent.get("day")
+        if _i_day and _i_day in _DAY_NORM and not state.get("known_day"):
+            state["known_day"] = _DAY_NORM[_i_day]
+            _intent_changed = True
+            print(f"[INTENT_MERGE] day={state['known_day']!r}")
+
+        # Merge time
+        _i_time = _intent.get("time")
+        if _i_time and not state.get("known_time"):
+            _i_time_norm = normalize_time_input(str(_i_time))
+            if is_valid_time(_i_time_norm):
+                state["known_time"] = _i_time_norm
+                _intent_changed = True
+                print(f"[INTENT_MERGE] time={_i_time_norm!r}")
+
+        # Merge name — unconditional (no step restriction)
+        _i_name = (_intent.get("name") or "").strip()
+        if _i_name and not state.get("known_name") and is_valid_name(_i_name):
+            state["known_name"] = _i_name
+            _intent_changed = True
+            print(f"[INTENT_MERGE] name={_i_name!r}")
+
+        if _intent_changed:
+            wa_save(sender, state)
+        print(f"[STATE AFTER MERGE] step={state.get('current_step')!r} "
+              f"services={state.get('known_service')} day={state.get('known_day')!r} "
+              f"time={state.get('known_time')!r} name={state.get('known_name')!r} "
+              f"ids={state.get('known_catalog_ids_json')}")
+
         # ── LLM PARSE ─────────────────────────────────────────────────────
         _parsed = parse_user_message(incoming_msg, lang=state.get("lang") or "ar")
         _DAY_NORM   = {"today": "اليوم", "tomorrow": "غدا"}
@@ -1796,7 +1941,7 @@ def whatsapp():
                 _changed = True
                 print(f"[STATE_MERGE] set time={_norm_t!r}")
 
-        if _p_name and not state.get("known_name") and step in ("name", "confirm"):
+        if _p_name and not state.get("known_name"):
             if is_valid_name(_p_name):
                 state["known_name"] = _p_name
                 _changed = True
@@ -1857,10 +2002,17 @@ def whatsapp():
 
         print(f"[FLOW] current_step={step!r}")
 
-        # ── GREETING — only reset at entry step, re-ask mid-booking ──────────
+        # ── GREETING — only reset if message is PURELY a greeting ──────────
         if is_greeting(incoming_msg):
-            if step == "service":
-                print(f"[GREETING] resetting state for sender={sender!r}")
+            _intent_has_data = bool(
+                _intent.get("services") or _intent.get("day") or
+                _intent.get("time")     or _intent.get("name")
+            )
+            if _intent_has_data:
+                # Message is a greeting + booking data — don't reset, fall through
+                print(f"[GREETING] skipping reset — intent has data={_intent}")
+            elif step == "service":
+                print(f"[GREETING] pure greeting — resetting state for sender={sender!r}")
                 wa_clear(sender)
                 return wa_reply(sender, build_ask_service(CLIENT_ID, lang))
             else:
@@ -1887,6 +2039,32 @@ def whatsapp():
             }
             _ask = _ask_map.get(step, "Ask the user what service they need.")
             return wa_reply(sender, openai_chat(_ask, lang=lang))
+
+        # ── ONE-SHOT SHORTCUT — all fields present → go directly to confirmation
+        _sc_svcs = ensure_svc_list(state.get("known_service"))
+        _sc_day  = state.get("known_day")
+        _sc_time = state.get("known_time")
+        _sc_name = state.get("known_name")
+        if _sc_svcs and _sc_day and _sc_time and _sc_name:
+            print(f"[SHORTCUT] all fields complete — skipping step flow")
+            print(f"[SHORTCUT] services={_sc_svcs} day={_sc_day!r} time={_sc_time!r} name={_sc_name!r}")
+            # Ensure catalog IDs are merged for all services in cart
+            _sc_ids = json.loads(state.get("known_catalog_ids_json") or "[]")
+            for _sv in _sc_svcs:
+                _sv_id = _catalog_id_for_title(_sv)
+                if _sv_id and _sv_id not in _sc_ids:
+                    _sc_ids.append(_sv_id)
+            state["known_catalog_ids_json"] = json.dumps(_sc_ids)
+            state["current_step"] = "done"
+            wa_save(sender, state)
+            wa_save_booking(sender, state, _sc_name)
+            try:
+                notify_admin_booking(sender, state, _sc_name)
+            except Exception as _ne:
+                print(f"[SHORTCUT_ADMIN_ERROR] {repr(_ne)}")
+            _confirm = confirmation_message(state, _sc_name, lang, phone=sender)
+            wa_clear(sender)
+            return wa_reply(sender, _confirm)
 
         # ── STEP: service ─────────────────────────────────────────────────
         if step == "service":
