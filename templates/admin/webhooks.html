@@ -1,0 +1,120 @@
+{% extends "admin/layout.html" %}
+{% block title %}Webhooks{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="page-title">Webhooks</div>
+    <div class="page-sub">Receive real-time event notifications to your server</div>
+  </div>
+  <a href="/admin/integrations" class="btn btn-ghost btn-sm">← Integrations</a>
+</div>
+
+<!-- Register form -->
+<div class="form-card" style="margin-bottom:24px;max-width:640px;">
+  <div style="font-size:14px;font-weight:700;margin-bottom:16px;">Register a webhook endpoint</div>
+  <form method="POST">
+    <input type="hidden" name="action" value="add">
+    <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end;flex-wrap:wrap;">
+      <div class="form-row" style="margin-bottom:0">
+        <label>Endpoint URL</label>
+        <input type="url" name="url" required placeholder="https://yourserver.com/hook" />
+      </div>
+      <div class="form-row" style="margin-bottom:0">
+        <label>Event</label>
+        <select name="event_type" required>
+          {% for ev in valid_events %}
+          <option value="{{ ev }}">{{ ev }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="form-actions" style="margin-top:14px;">
+      <button class="btn btn-primary" type="submit">Add Webhook</button>
+    </div>
+  </form>
+  <div class="form-hint" style="margin-top:4px;">
+    Your endpoint must accept <strong>POST</strong> requests with JSON body and return <strong>2xx</strong>.
+    Deliveries time out after 10 s.
+  </div>
+</div>
+
+<!-- Registered webhooks -->
+<div class="card">
+  {% if webhooks %}
+  <table>
+    <thead>
+      <tr><th>Event</th><th>URL</th><th>Status</th><th>Created</th><th></th></tr>
+    </thead>
+    <tbody>
+    {% for wh in webhooks %}
+    <tr>
+      <td><span class="badge badge-purple">{{ wh['event_type'] }}</span></td>
+      <td style="font-size:12px;word-break:break-all;max-width:280px;">{{ wh['url'] }}</td>
+      <td>
+        <span class="badge {{ 'badge-green' if wh['is_active'] else 'badge-gray' }}">
+          {{ 'Active' if wh['is_active'] else 'Inactive' }}
+        </span>
+      </td>
+      <td style="color:#9ca3af;font-size:12px;">{{ wh['created_at'][:16] }}</td>
+      <td>
+        <form method="POST" style="display:inline"
+              onsubmit="return confirm('Delete this webhook?')">
+          <input type="hidden" name="action" value="delete">
+          <input type="hidden" name="wh_id"  value="{{ wh['id'] }}">
+          <button class="btn btn-danger btn-sm" type="submit">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">
+    <div class="empty-icon">🔔</div>
+    <div class="empty-text">No webhooks registered</div>
+    <div class="empty-sub">Add your first endpoint above.</div>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Payload reference -->
+<div style="margin-top:32px;">
+  <div style="font-size:15px;font-weight:700;margin-bottom:14px;">Sample Payloads</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;flex-wrap:wrap;">
+    <div style="background:#1e1e2e;border-radius:10px;padding:18px;">
+      <div style="font-size:11px;font-weight:700;color:#a78bfa;margin-bottom:10px;
+                  text-transform:uppercase;letter-spacing:.08em;">order_created</div>
+      <pre style="font-size:11px;color:#e2e8f0;margin:0;white-space:pre-wrap;">{
+  "event":     "order_created",
+  "client_id": 42,
+  "data": {
+    "id":         1001,
+    "name":       "Sara Ahmed",
+    "phone":      "212600001234",
+    "items":      "Burger x2, Cola x1",
+    "scheduled":  null,
+    "status":     "pending",
+    "created_at": "2026-04-24T18:00:00"
+  }
+}</pre>
+    </div>
+    <div style="background:#1e1e2e;border-radius:10px;padding:18px;">
+      <div style="font-size:11px;font-weight:700;color:#a78bfa;margin-bottom:10px;
+                  text-transform:uppercase;letter-spacing:.08em;">booking_created</div>
+      <pre style="font-size:11px;color:#e2e8f0;margin:0;white-space:pre-wrap;">{
+  "event":     "booking_created",
+  "client_id": 42,
+  "data": {
+    "id":        202,
+    "name":      "Karim Benali",
+    "phone":     "212611112222",
+    "service":   "Dental Cleaning",
+    "time":      "2026-04-30 10:00",
+    "status":    "pending",
+    "created_at":"2026-04-24T18:00:00"
+  }
+}</pre>
+    </div>
+  </div>
+</div>
+{% endblock %}

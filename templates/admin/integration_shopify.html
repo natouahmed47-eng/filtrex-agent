@@ -1,0 +1,92 @@
+{% extends "admin/layout.html" %}
+{% block title %}Shopify Integration{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="page-title">🛍️ Shopify Integration</div>
+    <div class="page-sub">Sync products and manage orders via WhatsApp</div>
+  </div>
+  <a href="/admin/integrations" class="btn btn-ghost btn-sm">← Integrations</a>
+</div>
+
+{% if error %}
+<div class="alert alert-error">{{ error }}</div>
+{% endif %}
+{% if sync_result %}
+<div class="alert alert-success">{{ sync_result }}</div>
+{% endif %}
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start;">
+
+  <!-- Credentials -->
+  <div class="form-card" style="max-width:100%">
+    <div style="font-size:14px;font-weight:700;margin-bottom:16px;">Shopify Credentials</div>
+    <form method="POST">
+      <input type="hidden" name="action" value="save">
+      <div class="form-row">
+        <label>Shop Domain</label>
+        <input type="text" name="shop_domain"
+               value="{{ cfg.shop_domain or '' }}"
+               placeholder="your-store.myshopify.com" required />
+        <div class="form-hint">Without https:// — e.g. <code>acme.myshopify.com</code></div>
+      </div>
+      <div class="form-row">
+        <label>Admin API Access Token</label>
+        <input type="password" name="access_token"
+               value="{{ cfg.access_token or '' }}"
+               placeholder="shpat_…" required />
+        <div class="form-hint">
+          In Shopify Admin → Settings → Apps → Develop apps → Create an app.
+          Grant <strong>read_products</strong> and <strong>write_orders</strong> scopes.
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-primary" type="submit">Save Credentials</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Sync products -->
+  <div>
+    <div class="form-card" style="max-width:100%;margin-bottom:16px;">
+      <div style="font-size:14px;font-weight:700;margin-bottom:8px;">Sync Products → Catalog</div>
+      <div style="font-size:13px;color:#6b7280;margin-bottom:16px;">
+        Fetches up to 50 products from your Shopify store and imports them
+        as catalog items. Already-imported products (by title) are skipped.
+      </div>
+      <form method="POST">
+        <input type="hidden" name="action" value="sync">
+        <button class="btn btn-primary"
+                {% if not cfg.shop_domain %}disabled title="Save credentials first"{% endif %}>
+          Sync Products Now
+        </button>
+      </form>
+    </div>
+
+    <!-- Status -->
+    <div class="form-card" style="max-width:100%;">
+      <div style="font-size:14px;font-weight:700;margin-bottom:12px;">Status</div>
+      {% if cfg.shop_domain %}
+      <div style="display:flex;align-items:center;gap:8px;font-size:13px;">
+        <span style="width:10px;height:10px;border-radius:50%;background:#16a34a;display:inline-block;"></span>
+        Connected to <strong>{{ cfg.shop_domain }}</strong>
+      </div>
+      {% else %}
+      <div style="font-size:13px;color:#9ca3af;">Not configured</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- How it works -->
+<div style="background:#f9fafb;border:1.5px solid #e5e7eb;border-radius:12px;
+            padding:20px 24px;margin-top:24px;">
+  <div style="font-size:14px;font-weight:700;margin-bottom:10px;">How it works</div>
+  <ol style="font-size:13px;color:#6b7280;padding-left:20px;line-height:2;">
+    <li>Customer messages on WhatsApp → AI assistant identifies products from your Shopify catalog</li>
+    <li>Order is confirmed on WhatsApp → order record created internally</li>
+    <li><code>order_created</code> webhook fires to any registered endpoint</li>
+    <li>You can create the order in Shopify manually or via your own integration</li>
+  </ol>
+</div>
+{% endblock %}

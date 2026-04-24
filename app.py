@@ -456,6 +456,43 @@ def _migrate_saas():
             con.commit()
             print("[REFERRAL_CREATED] migrated client_subscriptions → added bonus_messages")
 
+        # ── STEP 7d: api_keys ─────────────────────────────────────────────
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS api_keys (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id  INTEGER NOT NULL,
+                api_key    TEXT NOT NULL UNIQUE,
+                label      TEXT DEFAULT 'Default',
+                is_active  INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # ── STEP 7e: webhooks ─────────────────────────────────────────────
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS webhooks (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id  INTEGER NOT NULL,
+                url        TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                is_active  INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # ── STEP 7f: client_integrations ─────────────────────────────────
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS client_integrations (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id   INTEGER NOT NULL,
+                provider    TEXT NOT NULL,
+                config_json TEXT DEFAULT '{}',
+                is_active   INTEGER DEFAULT 1,
+                updated_at  TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        con.commit()
+
         # ── Seed default plans ────────────────────────────────────────────
         plan_count = con.execute("SELECT COUNT(*) FROM subscription_plans").fetchone()[0]
         if plan_count == 0:
@@ -709,6 +746,123 @@ def _build_branding(row):
     return brand
 
 
+# ═══════════════════════════════════════════════════════════════
+# API PLATFORM HELPERS
+# ═══════════════════════════════════════════════════════════════
+
+import secrets as _api_secrets
+import threading as _threading
+
+
+def _generate_api_key():
+    """Return a crypto-random API key prefixed with 'fax_'."""
+    return "fax_" + _api_secrets.token_hex(24)
+
+
+def _api_guard():
+    """
+    Validate Authorization: Bearer <key> header.
+    Returns (client_id, None) on success or (None, JSON error response) on failure.
+    Logs [API_REQUEST].
+    """
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return None, (jsonify({"error": "Missing or invalid Authorization header. "
+                               "Use: Authorization: Bearer <api_key>"}), 401)
+    key = auth[7:].strip()
+    con = get_db_connection()
+    try:
+        row = con.execute(
+            "SELECT client_id FROM api_keys WHERE api_key=? AND is_active=1",
+            (key,)
+        ).fetchone()
+    finally:
+        con.close()
+    if not row:
+        return None, (jsonify({"error": "Invalid or revoked API key."}), 401)
+    cid = row["client_id"]
+    print(f"[API_REQUEST] key=...{key[-6:]!r} client_id={cid} "
+          f"method={request.method} path={request.path}")
+    return cid, None
+
+
+def fire_webhook(client_id, event_type, payload):
+    """
+    Fire all active webhooks for (client_id, event_type) asynchronously.
+    Logs [WEBHOOK_SENT].
+    """
+    con = get_db_connection()
+    try:
+        rows = con.execute(
+            "SELECT url FROM webhooks WHERE client_id=? AND event_type=? AND is_active=1",
+            (client_id, event_type)
+        ).fetchall()
+    finally:
+        con.close()
+
+    if not rows:
+        return
+
+    data = {"event": event_type, "client_id": client_id, "data": payload}
+
+    def _send(url, body):
+        try:
+            resp = requests.post(url, json=body, timeout=10,
+                                 headers={"Content-Type": "application/json",
+                                          "X-Filtrex-Event": event_type})
+            print(f"[WEBHOOK_SENT] event={event_type!r} url={url!r} "
+                  f"status={resp.status_code}")
+        except Exception as exc:
+            print(f"[WEBHOOK_SENT] event={event_type!r} url={url!r} error={exc!r}")
+
+    for row in rows:
+        _threading.Thread(target=_send, args=(row["url"], data), daemon=True).start()
+
+
+def _get_integration(client_id, provider):
+    """Return config dict for a provider or {} if not configured."""
+    con = get_db_connection()
+    try:
+        row = con.execute(
+            "SELECT config_json FROM client_integrations WHERE client_id=? AND provider=?",
+            (client_id, provider)
+        ).fetchone()
+    finally:
+        con.close()
+    if not row:
+        return {}
+    try:
+        return json.loads(row["config_json"] or "{}")
+    except Exception:
+        return {}
+
+
+def _save_integration(client_id, provider, config):
+    """Upsert integration config for a provider."""
+    con = get_db_connection()
+    try:
+        existing = con.execute(
+            "SELECT id FROM client_integrations WHERE client_id=? AND provider=?",
+            (client_id, provider)
+        ).fetchone()
+        cfg_str = json.dumps(config)
+        now = datetime.datetime.utcnow().isoformat()
+        if existing:
+            con.execute(
+                "UPDATE client_integrations SET config_json=?, updated_at=? WHERE id=?",
+                (cfg_str, now, existing["id"])
+            )
+        else:
+            con.execute(
+                "INSERT INTO client_integrations (client_id, provider, config_json, updated_at) VALUES (?,?,?,?)",
+                (client_id, provider, cfg_str, now)
+            )
+        con.commit()
+    finally:
+        con.close()
+    print(f"[INTEGRATION_TRIGGER] client={client_id} provider={provider!r} saved")
+
+
 def _apply_referral_reward(referrer_id, new_count):
     """
     Grant 500 bonus messages for every 3 successful referrals.
@@ -929,6 +1083,10 @@ def save_booking_or_order(client_id, phone, name, catalog_ids, day, time, total_
     finally:
         con.close()
     print(f"[ORDER_SAVED] bookings_or_orders + orders client={client_id} name={name!r} items={items_json!r}")
+    _wh_payload = {"name": name, "phone": phone, "items": items_json,
+                   "scheduled": f"{day or ''} {time or ''}".strip(), "status": "confirmed"}
+    fire_webhook(client_id, "order_created",   _wh_payload)
+    fire_webhook(client_id, "booking_created", _wh_payload)
 
 def save_order(client_id, phone, name, items, scheduled, status="confirmed"):
     items_json = json.dumps(items, ensure_ascii=False) if isinstance(items, list) else items
@@ -942,6 +1100,9 @@ def save_order(client_id, phone, name, items, scheduled, status="confirmed"):
     finally:
         con.close()
     print(f"[ORDER_SAVED] client={client_id} phone={phone!r} name={name!r} items={items_json!r}")
+    fire_webhook(client_id, "order_created",
+                 {"name": name, "phone": phone, "items": items_json,
+                  "scheduled": scheduled, "status": status})
 
 bookings = []
 
@@ -3629,6 +3790,422 @@ def admin_branding():
         con.close()
     return render_template("admin/branding.html", client=client,
                            error=error, active="branding")
+
+
+# ═══════════════════════════════════════════════════════════════
+# PUBLIC REST API  (/api/*)
+# ═══════════════════════════════════════════════════════════════
+
+def _order_row_to_dict(r):
+    return {
+        "id":         r["id"],
+        "client_id":  r["client_id"],
+        "name":       r["name"],
+        "phone":      r["phone"],
+        "items":      r["items"],
+        "scheduled":  r["scheduled"],
+        "status":     r["status"],
+        "created_at": r["created_at"],
+    }
+
+def _catalog_row_to_dict(r):
+    return {
+        "id":          r["id"],
+        "title":       r["title"],
+        "type":        r["type"],
+        "price":       r["price"],
+        "sale_price":  r["sale_price"],
+        "description": r["description"],
+        "stock_qty":   r["stock_qty"],
+        "is_active":   r["is_active"],
+    }
+
+
+@app.route("/api/orders", methods=["GET"])
+def api_get_orders():
+    cid, err = _api_guard()
+    if err:
+        return err
+    status_filter = request.args.get("status")
+    limit  = min(int(request.args.get("limit",  50)), 200)
+    offset = int(request.args.get("offset", 0))
+    con = get_db_connection()
+    try:
+        if status_filter:
+            rows = con.execute(
+                "SELECT * FROM orders WHERE client_id=? AND status=? "
+                "ORDER BY id DESC LIMIT ? OFFSET ?",
+                (cid, status_filter, limit, offset)
+            ).fetchall()
+        else:
+            rows = con.execute(
+                "SELECT * FROM orders WHERE client_id=? ORDER BY id DESC LIMIT ? OFFSET ?",
+                (cid, limit, offset)
+            ).fetchall()
+    finally:
+        con.close()
+    return jsonify({"orders": [_order_row_to_dict(r) for r in rows],
+                    "count": len(rows), "limit": limit, "offset": offset})
+
+
+@app.route("/api/orders", methods=["POST"])
+def api_post_orders():
+    cid, err = _api_guard()
+    if err:
+        return err
+    body = request.get_json(force=True, silent=True) or {}
+    name      = str(body.get("name",      "")).strip()
+    phone     = str(body.get("phone",     "")).strip()
+    items     = str(body.get("items",     "")).strip()
+    scheduled = str(body.get("scheduled", "")).strip()
+    status    = body.get("status", "pending")
+    if not phone or not items:
+        return jsonify({"error": "phone and items are required"}), 400
+    con = get_db_connection()
+    try:
+        cur = con.execute(
+            "INSERT INTO orders (client_id, name, phone, items, scheduled, status) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (cid, name, phone, items, scheduled, status)
+        )
+        new_id = cur.lastrowid
+        row = con.execute("SELECT * FROM orders WHERE id=?", (new_id,)).fetchone()
+        con.commit()
+    finally:
+        con.close()
+    payload = _order_row_to_dict(row)
+    fire_webhook(cid, "order_created", payload)
+    return jsonify({"order": payload}), 201
+
+
+@app.route("/api/catalog", methods=["GET"])
+def api_get_catalog():
+    cid, err = _api_guard()
+    if err:
+        return err
+    limit  = min(int(request.args.get("limit",  50)), 200)
+    offset = int(request.args.get("offset", 0))
+    con = get_db_connection()
+    try:
+        rows = con.execute(
+            "SELECT * FROM catalogs WHERE client_id=? AND is_active=1 "
+            "ORDER BY id DESC LIMIT ? OFFSET ?",
+            (cid, limit, offset)
+        ).fetchall()
+    finally:
+        con.close()
+    return jsonify({"catalog": [_catalog_row_to_dict(r) for r in rows],
+                    "count": len(rows), "limit": limit, "offset": offset})
+
+
+@app.route("/api/catalog", methods=["POST"])
+def api_post_catalog():
+    cid, err = _api_guard()
+    if err:
+        return err
+    # Check plan limit
+    allowed, msg = check_usage_limit(cid, "catalog_items")
+    if not allowed:
+        return jsonify({"error": msg}), 402
+    body = request.get_json(force=True, silent=True) or {}
+    title = str(body.get("title", "")).strip()
+    if not title:
+        return jsonify({"error": "title is required"}), 400
+    item_type = body.get("type",        "product")
+    price     = float(body.get("price", 0))
+    sale_p    = body.get("sale_price")
+    desc      = str(body.get("description", "")).strip()
+    stock     = body.get("stock_qty")
+    con = get_db_connection()
+    try:
+        cur = con.execute(
+            "INSERT INTO catalogs (client_id, title, type, price, sale_price, description, stock_qty) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (cid, title, item_type, price, sale_p, desc, stock)
+        )
+        new_id = cur.lastrowid
+        row = con.execute("SELECT * FROM catalogs WHERE id=?", (new_id,)).fetchone()
+        con.commit()
+    finally:
+        con.close()
+    return jsonify({"item": _catalog_row_to_dict(row)}), 201
+
+
+# ═══════════════════════════════════════════════════════════════
+# ADMIN: API KEYS  (/admin/api-keys)
+# ═══════════════════════════════════════════════════════════════
+
+@app.route("/admin/api-keys", methods=["GET", "POST"])
+def admin_api_keys():
+    guard = _admin_guard()
+    if guard:
+        return guard
+    cid = _session_client_id()
+
+    if request.method == "POST":
+        action = request.form.get("action")
+        con = get_db_connection()
+        try:
+            if action == "generate":
+                label   = request.form.get("label", "Default").strip() or "Default"
+                new_key = _generate_api_key()
+                con.execute(
+                    "INSERT INTO api_keys (client_id, api_key, label) VALUES (?, ?, ?)",
+                    (cid, new_key, label)
+                )
+                con.commit()
+                flash(f"API key generated: {new_key}", "success")
+            elif action == "revoke":
+                key_id = int(request.form.get("key_id", 0))
+                # security: only revoke keys owned by this client
+                con.execute(
+                    "UPDATE api_keys SET is_active=0 WHERE id=? AND client_id=?",
+                    (key_id, cid)
+                )
+                con.commit()
+                flash("API key revoked.", "success")
+        finally:
+            con.close()
+        return redirect(url_for("admin_api_keys"))
+
+    con = get_db_connection()
+    try:
+        keys = con.execute(
+            "SELECT * FROM api_keys WHERE client_id=? ORDER BY id DESC",
+            (cid,)
+        ).fetchall()
+    finally:
+        con.close()
+    return render_template("admin/api_keys.html", keys=keys, active="integrations")
+
+
+# ═══════════════════════════════════════════════════════════════
+# ADMIN: WEBHOOKS  (/admin/webhooks)
+# ═══════════════════════════════════════════════════════════════
+
+_VALID_EVENTS = ["order_created", "booking_created"]
+
+@app.route("/admin/webhooks", methods=["GET", "POST"])
+def admin_webhooks():
+    guard = _admin_guard()
+    if guard:
+        return guard
+    cid = _session_client_id()
+
+    if request.method == "POST":
+        action = request.form.get("action")
+        con = get_db_connection()
+        try:
+            if action == "add":
+                url        = request.form.get("url", "").strip()
+                event_type = request.form.get("event_type", "").strip()
+                if not url.startswith("http"):
+                    flash("URL must start with http:// or https://", "error")
+                elif event_type not in _VALID_EVENTS:
+                    flash(f"Unknown event type. Choose from: {', '.join(_VALID_EVENTS)}", "error")
+                else:
+                    con.execute(
+                        "INSERT INTO webhooks (client_id, url, event_type) VALUES (?, ?, ?)",
+                        (cid, url, event_type)
+                    )
+                    con.commit()
+                    flash("Webhook registered.", "success")
+            elif action == "delete":
+                wh_id = int(request.form.get("wh_id", 0))
+                con.execute(
+                    "DELETE FROM webhooks WHERE id=? AND client_id=?",
+                    (wh_id, cid)
+                )
+                con.commit()
+                flash("Webhook removed.", "success")
+        finally:
+            con.close()
+        return redirect(url_for("admin_webhooks"))
+
+    con = get_db_connection()
+    try:
+        whs = con.execute(
+            "SELECT * FROM webhooks WHERE client_id=? ORDER BY id DESC",
+            (cid,)
+        ).fetchall()
+    finally:
+        con.close()
+    return render_template("admin/webhooks.html", webhooks=whs,
+                           valid_events=_VALID_EVENTS, active="integrations")
+
+
+# ═══════════════════════════════════════════════════════════════
+# ADMIN: INTEGRATIONS HUB  (/admin/integrations)
+# ═══════════════════════════════════════════════════════════════
+
+@app.route("/admin/integrations")
+def admin_integrations():
+    guard = _admin_guard()
+    if guard:
+        return guard
+    cid = _session_client_id()
+    shopify_cfg = _get_integration(cid, "shopify")
+    stripe_cfg  = _get_integration(cid, "stripe")
+    return render_template("admin/integrations.html",
+                           shopify_cfg=shopify_cfg, stripe_cfg=stripe_cfg,
+                           active="integrations")
+
+
+# ═══════════════════════════════════════════════════════════════
+# ADMIN: SHOPIFY INTEGRATION
+# ═══════════════════════════════════════════════════════════════
+
+@app.route("/admin/integrations/shopify", methods=["GET", "POST"])
+def admin_integration_shopify():
+    guard = _admin_guard()
+    if guard:
+        return guard
+    cid = _session_client_id()
+    cfg   = _get_integration(cid, "shopify")
+    error = None
+    sync_result = None
+
+    if request.method == "POST":
+        action = request.form.get("action", "save")
+
+        if action == "save":
+            shop_domain    = request.form.get("shop_domain", "").strip().strip("/")
+            access_token   = request.form.get("access_token", "").strip()
+            if not shop_domain or not access_token:
+                error = "Shop domain and access token are required."
+            else:
+                cfg = {"shop_domain": shop_domain, "access_token": access_token}
+                _save_integration(cid, "shopify", cfg)
+                flash("Shopify credentials saved.", "success")
+                return redirect(url_for("admin_integration_shopify"))
+
+        elif action == "sync":
+            cfg = _get_integration(cid, "shopify")
+            shop_domain  = cfg.get("shop_domain", "")
+            access_token = cfg.get("access_token", "")
+            if not shop_domain or not access_token:
+                error = "Save your Shopify credentials before syncing."
+            else:
+                try:
+                    api_url = f"https://{shop_domain}/admin/api/2024-01/products.json?limit=50"
+                    resp = requests.get(api_url,
+                                        headers={"X-Shopify-Access-Token": access_token},
+                                        timeout=15)
+                    if resp.status_code != 200:
+                        error = f"Shopify API error {resp.status_code}: {resp.text[:200]}"
+                    else:
+                        products = resp.json().get("products", [])
+                        imported = 0
+                        con = get_db_connection()
+                        try:
+                            for p in products:
+                                title  = p.get("title", "")
+                                desc   = p.get("body_html", "") or ""
+                                variant = (p.get("variants") or [{}])[0]
+                                price  = float(variant.get("price") or 0)
+                                stock  = variant.get("inventory_quantity")
+                                # Skip if already exists (same title same client)
+                                exists = con.execute(
+                                    "SELECT id FROM catalogs WHERE client_id=? AND title=?",
+                                    (cid, title)
+                                ).fetchone()
+                                if not exists:
+                                    con.execute(
+                                        "INSERT INTO catalogs "
+                                        "(client_id, title, type, price, description, stock_qty) "
+                                        "VALUES (?, ?, 'product', ?, ?, ?)",
+                                        (cid, title, price, desc[:500], stock)
+                                    )
+                                    imported += 1
+                            con.commit()
+                        finally:
+                            con.close()
+                        print(f"[INTEGRATION_TRIGGER] client={cid} shopify sync "
+                              f"fetched={len(products)} imported={imported}")
+                        sync_result = f"Synced {len(products)} products — {imported} new items added to catalog."
+                except Exception as exc:
+                    error = f"Sync failed: {exc!r}"
+
+    cfg = _get_integration(cid, "shopify")
+    return render_template("admin/integration_shopify.html",
+                           cfg=cfg, error=error, sync_result=sync_result,
+                           active="integrations")
+
+
+# ═══════════════════════════════════════════════════════════════
+# ADMIN: STRIPE INTEGRATION
+# ═══════════════════════════════════════════════════════════════
+
+@app.route("/admin/integrations/stripe", methods=["GET", "POST"])
+def admin_integration_stripe():
+    guard = _admin_guard()
+    if guard:
+        return guard
+    cid   = _session_client_id()
+    cfg   = _get_integration(cid, "stripe")
+    error = None
+    payment_link = None
+
+    if request.method == "POST":
+        action = request.form.get("action", "save")
+
+        if action == "save":
+            secret_key = request.form.get("secret_key", "").strip()
+            if not secret_key.startswith("sk_"):
+                error = "Stripe secret key must start with sk_live_ or sk_test_"
+            else:
+                _save_integration(cid, "stripe", {"secret_key": secret_key})
+                flash("Stripe credentials saved.", "success")
+                return redirect(url_for("admin_integration_stripe"))
+
+        elif action == "create_link":
+            cfg        = _get_integration(cid, "stripe")
+            secret_key = cfg.get("secret_key", "")
+            amount     = request.form.get("amount", "").strip()
+            currency   = request.form.get("currency", "usd").strip().lower()
+            name       = request.form.get("name", "Order Payment").strip()
+            if not secret_key:
+                error = "Save your Stripe secret key first."
+            elif not amount or not amount.replace(".", "").isdigit():
+                error = "Enter a valid amount."
+            else:
+                try:
+                    amount_cents = int(float(amount) * 100)
+                    # Create a Price then a Payment Link
+                    price_resp = requests.post(
+                        "https://api.stripe.com/v1/prices",
+                        auth=(secret_key, ""),
+                        data={
+                            "unit_amount": amount_cents,
+                            "currency":    currency,
+                            "product_data[name]": name,
+                        },
+                        timeout=15
+                    )
+                    if price_resp.status_code != 200:
+                        error = f"Stripe error: {price_resp.json().get('error', {}).get('message', price_resp.text[:200])}"
+                    else:
+                        price_id = price_resp.json()["id"]
+                        link_resp = requests.post(
+                            "https://api.stripe.com/v1/payment_links",
+                            auth=(secret_key, ""),
+                            data={"line_items[0][price]": price_id,
+                                  "line_items[0][quantity]": 1},
+                            timeout=15
+                        )
+                        if link_resp.status_code != 200:
+                            error = f"Stripe error: {link_resp.json().get('error', {}).get('message', link_resp.text[:200])}"
+                        else:
+                            payment_link = link_resp.json().get("url", "")
+                            print(f"[INTEGRATION_TRIGGER] client={cid} stripe "
+                                  f"payment_link={payment_link!r} amount={amount} {currency}")
+                except Exception as exc:
+                    error = f"Stripe request failed: {exc!r}"
+
+    cfg = _get_integration(cid, "stripe")
+    return render_template("admin/integration_stripe.html",
+                           cfg=cfg, error=error, payment_link=payment_link,
+                           active="integrations")
 
 
 # ── /admin/bookings ──────────────────────────────────────────────────────────── (legacy)

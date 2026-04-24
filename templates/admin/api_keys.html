@@ -1,0 +1,112 @@
+{% extends "admin/layout.html" %}
+{% block title %}API Keys{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="page-title">API Keys</div>
+    <div class="page-sub">Authenticate external apps with Bearer token headers</div>
+  </div>
+  <a href="/admin/integrations" class="btn btn-ghost btn-sm">← Integrations</a>
+</div>
+
+<!-- Generate new key -->
+<div class="form-card" style="margin-bottom:24px;max-width:540px;">
+  <div style="font-size:14px;font-weight:700;margin-bottom:16px;">Generate a new API key</div>
+  <form method="POST" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+    <input type="hidden" name="action" value="generate">
+    <div style="flex:1;min-width:160px;">
+      <label>Key label (optional)</label>
+      <input type="text" name="label" placeholder="e.g. Production App" maxlength="60"/>
+    </div>
+    <button class="btn btn-primary" type="submit">Generate</button>
+  </form>
+  <div class="form-hint" style="margin-top:10px;">
+    Use the key in request headers:
+    <code style="background:#f3f4f6;padding:2px 6px;border-radius:4px;font-size:12px;">
+      Authorization: Bearer fax_…
+    </code>
+  </div>
+</div>
+
+<!-- Flash -->
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% for cat, msg in messages %}
+    {% if 'fax_' in msg %}
+    <div class="alert alert-success" style="word-break:break-all;">
+      <strong>Copy this key now — it won't be shown again:</strong><br/>
+      <code style="font-size:13px;letter-spacing:.04em;">{{ msg.replace('API key generated: ', '') }}</code>
+    </div>
+    {% else %}
+    <div class="alert alert-{{ 'success' if cat=='success' else 'error' }}">{{ msg }}</div>
+    {% endif %}
+  {% endfor %}
+{% endwith %}
+
+<!-- Key list -->
+<div class="card">
+  {% if keys %}
+  <table>
+    <thead>
+      <tr><th>Label</th><th>Key (last 8)</th><th>Status</th><th>Created</th><th></th></tr>
+    </thead>
+    <tbody>
+    {% for k in keys %}
+    <tr>
+      <td>{{ k['label'] or '—' }}</td>
+      <td><code style="font-size:12px;color:#6b7280;">…{{ k['api_key'][-8:] }}</code></td>
+      <td>
+        {% if k['is_active'] %}
+          <span class="badge badge-green">Active</span>
+        {% else %}
+          <span class="badge badge-gray">Revoked</span>
+        {% endif %}
+      </td>
+      <td style="color:#9ca3af;font-size:12px;">{{ k['created_at'][:16] }}</td>
+      <td>
+        {% if k['is_active'] %}
+        <form method="POST" style="display:inline"
+              onsubmit="return confirm('Revoke this key? All apps using it will stop working.')">
+          <input type="hidden" name="action"  value="revoke">
+          <input type="hidden" name="key_id"  value="{{ k['id'] }}">
+          <button class="btn btn-danger btn-sm" type="submit">Revoke</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">
+    <div class="empty-icon">🔑</div>
+    <div class="empty-text">No API keys yet</div>
+    <div class="empty-sub">Generate your first key above.</div>
+  </div>
+  {% endif %}
+</div>
+
+<!-- API Reference -->
+<div style="margin-top:32px;">
+  <div style="font-size:15px;font-weight:700;margin-bottom:14px;">Quick API Reference</div>
+  <div style="display:grid;gap:12px;">
+    {% set endpoints = [
+      ("GET",  "/api/orders",  "List orders. Optional ?status=pending&limit=50&offset=0", '{"orders":[…],"count":N}'),
+      ("POST", "/api/orders",  'Create order. Body: {"name":"…","phone":"…","items":"…"}', '{"order":{…}}'),
+      ("GET",  "/api/catalog", "List catalog items. Optional ?limit=50&offset=0", '{"catalog":[…],"count":N}'),
+      ("POST", "/api/catalog", 'Add catalog item. Body: {"title":"…","price":9.99,"type":"product"}', '{"item":{…}}'),
+    ] %}
+    {% for method, path, desc, resp in endpoints %}
+    <div style="background:#fff;border:1.5px solid #e5e7eb;border-radius:10px;padding:14px 18px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+        <span style="font-size:11px;font-weight:700;padding:3px 8px;border-radius:5px;
+                     background:{{ '#dcfce7' if method=='GET' else '#ede9fe' }};
+                     color:{{ '#15803d' if method=='GET' else '#4f46e5' }};">{{ method }}</span>
+        <code style="font-size:13px;font-weight:600;">{{ path }}</code>
+      </div>
+      <div style="font-size:12px;color:#6b7280;margin-bottom:4px;">{{ desc }}</div>
+      <div style="font-size:11px;color:#9ca3af;">Response: <code>{{ resp }}</code></div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,119 @@
+{% extends "admin/layout.html" %}
+{% block title %}Stripe Integration{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="page-title">💳 Stripe Integration</div>
+    <div class="page-sub">Generate payment links and share them via WhatsApp</div>
+  </div>
+  <a href="/admin/integrations" class="btn btn-ghost btn-sm">← Integrations</a>
+</div>
+
+{% if error %}
+<div class="alert alert-error">{{ error }}</div>
+{% endif %}
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start;">
+
+  <!-- Credentials -->
+  <div class="form-card" style="max-width:100%">
+    <div style="font-size:14px;font-weight:700;margin-bottom:16px;">Stripe Secret Key</div>
+    <form method="POST">
+      <input type="hidden" name="action" value="save">
+      <div class="form-row">
+        <label>Secret Key</label>
+        <input type="password" name="secret_key"
+               value="{{ cfg.secret_key or '' }}"
+               placeholder="sk_live_… or sk_test_…" required />
+        <div class="form-hint">
+          Found in Stripe Dashboard → Developers → API Keys.<br/>
+          Use <code>sk_test_</code> keys for testing.
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-primary" type="submit">Save Key</button>
+      </div>
+    </form>
+    <!-- Status -->
+    {% if cfg.secret_key %}
+    <div style="display:flex;align-items:center;gap:8px;font-size:13px;margin-top:14px;
+                padding-top:14px;border-top:1px solid #f3f4f6;">
+      <span style="width:10px;height:10px;border-radius:50%;background:#16a34a;display:inline-block;"></span>
+      Key saved ({{ 'live' if 'live' in cfg.secret_key else 'test' }} mode)
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Create payment link -->
+  <div class="form-card" style="max-width:100%">
+    <div style="font-size:14px;font-weight:700;margin-bottom:16px;">Generate a Payment Link</div>
+    <form method="POST">
+      <input type="hidden" name="action" value="create_link">
+      <div class="form-row">
+        <label>Product / Description</label>
+        <input type="text" name="name" placeholder="Order #1042 — Burger x2" value="Order Payment" required />
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div class="form-row">
+          <label>Amount</label>
+          <input type="number" name="amount" step="0.01" min="0.5" placeholder="29.99" required />
+        </div>
+        <div class="form-row">
+          <label>Currency</label>
+          <select name="currency">
+            <option value="usd">USD</option>
+            <option value="eur">EUR</option>
+            <option value="mad">MAD</option>
+            <option value="sar">SAR</option>
+            <option value="aed">AED</option>
+            <option value="gbp">GBP</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-primary"
+                {% if not cfg.secret_key %}disabled title="Save your Stripe key first"{% endif %}>
+          Create Payment Link
+        </button>
+      </div>
+    </form>
+
+    {% if payment_link %}
+    <div style="margin-top:16px;background:#dcfce7;border:1px solid #bbf7d0;
+                border-radius:10px;padding:14px 16px;">
+      <div style="font-size:12px;font-weight:700;color:#15803d;margin-bottom:8px;">
+        ✅ Payment link created
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <input id="stripe-link" type="text" value="{{ payment_link }}" readonly
+               style="flex:1;font-size:12px;background:#fff;border:1px solid #bbf7d0;
+                      border-radius:6px;padding:7px 10px;min-width:200px;" />
+        <button onclick="
+          var el=document.getElementById('stripe-link');el.select();
+          document.execCommand('copy');
+          this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);"
+          style="padding:7px 14px;background:#15803d;color:#fff;border:none;
+                 border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;
+                 white-space:nowrap;">Copy</button>
+      </div>
+      <div style="font-size:12px;color:#15803d;margin-top:8px;">
+        Share this link with your customer on WhatsApp. It expires once paid.
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- WhatsApp tip -->
+<div style="background:#f0fdf4;border:1.5px solid #bbf7d0;border-radius:12px;
+            padding:18px 22px;margin-top:24px;">
+  <div style="font-size:13px;font-weight:700;color:#15803d;margin-bottom:6px;">
+    💡 Attaching payment links to WhatsApp replies
+  </div>
+  <div style="font-size:13px;color:#166534;">
+    Generate a payment link here, then paste it into your AI system prompt or
+    include it manually in an order confirmation message sent from the WhatsApp panel.
+    Future versions will auto-attach the link when a customer confirms an order.
+  </div>
+</div>
+{% endblock %}
