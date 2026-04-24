@@ -482,6 +482,20 @@ def calculate_total(client_id, ids):
         total += float(p)
     return total
 
+def determine_flow_type(items):
+    """Return 'booking', 'order', or 'mixed' based on catalog item types.
+    'service' items → booking flow (day/time/name required, slot check applies)
+    'product' items → order flow (quantity/address/name required, no slot check)
+    mixed → both sets of fields required"""
+    if not items:
+        return "booking"          # safe default
+    types = {(it.get("type") or "service").lower() for it in items}
+    if types <= {"service"}:
+        return "booking"
+    if types <= {"product"}:
+        return "order"
+    return "mixed"
+
 def get_upsell_for_item(client_id, catalog_id):
     """Return upsell catalog row dict using spec columns (source/target), or None."""
     con = get_db_connection()
@@ -1326,7 +1340,8 @@ def sanitize_booking_field(text, max_len=40):
     return text[:max_len]
 
 def confirmation_message(state, name, lang, phone=None):
-    """Build confirmation message from catalog IDs in state — no hardcoded prices."""
+    """Build confirmation message from catalog IDs in state.
+    Branches on flow type: 'booking' shows appointment, 'order' shows address."""
     l    = lang if lang in ("ar", "en", "fr") else "ar"
     _ids = json.loads(state.get("known_catalog_ids_json") or "[]")
     _cur = get_client(CLIENT_ID).get("currency", "SAR")
@@ -1334,6 +1349,9 @@ def confirmation_message(state, name, lang, phone=None):
     time = sanitize_booking_field(state.get("known_time"))
 
     items = get_catalog_items(CLIENT_ID, _ids)
+    flow  = determine_flow_type(items)
+    print(f"[FLOW_TYPE] confirmation_message flow={flow!r}")
+
     if items:
         item_lines = "\n".join(
             f"• {it['title']} — {int(it.get('sale_price') or it.get('price') or 0)} {_cur}"
@@ -1346,26 +1364,35 @@ def confirmation_message(state, name, lang, phone=None):
         item_lines = "\n".join(f"• {s}" for s in _svcs) if _svcs else "-"
         total_str = "-"
 
-    _hdr   = {"ar": "تم تأكيد حجزك بنجاح ✅",      "en": "Your booking is confirmed ✅",        "fr": "Votre réservation est confirmée ✅"}
-    _items = {"ar": "الخدمات:",                     "en": "Services:",                          "fr": "Services:"}
-    _tot   = {"ar": "الإجمالي:",                    "en": "Total:",                             "fr": "Total:"}
-    _appt  = {"ar": "الموعد:",                      "en": "Appointment:",                       "fr": "Rendez-vous:"}
-    _nm    = {"ar": "الاسم:",                       "en": "Name:",                              "fr": "Nom:"}
-    _close = {"ar": "نحن بانتظارك ⭐",              "en": "We look forward to seeing you ⭐",   "fr": "Nous avons hâte de vous accueillir ⭐"}
-
-    parts = [
-        _hdr[l],
-        "",
-        _items[l],
-        item_lines,
-        "",
-        f"{_tot[l]} {total_str}",
-    ]
-    if day or time:
-        parts.append(f"{_appt[l]} {day or ''} {time or ''}".strip())
-    parts.append(f"{_nm[l]} {name}")
-    parts.append("")
-    parts.append(_close[l])
+    if flow == "order":
+        # ── Product order confirmation ────────────────────────────────────
+        _hdr   = {"ar": "تم تأكيد طلبك بنجاح ✅",       "en": "Your order is confirmed ✅",          "fr": "Votre commande est confirmée ✅"}
+        _items = {"ar": "المنتجات:",                     "en": "Products:",                           "fr": "Produits:"}
+        _tot   = {"ar": "الإجمالي:",                     "en": "Total:",                              "fr": "Total:"}
+        _addr  = {"ar": "عنوان التوصيل:",                "en": "Delivery address:",                   "fr": "Adresse de livraison:"}
+        _nm    = {"ar": "الاسم:",                        "en": "Name:",                               "fr": "Nom:"}
+        _close = {"ar": "شكرًا على طلبك 🚀",            "en": "Thank you for your order 🚀",         "fr": "Merci pour votre commande 🚀"}
+        parts = [_hdr[l], "", _items[l], item_lines, "", f"{_tot[l]} {total_str}"]
+        _address = state.get("known_address", "")
+        if _address:
+            parts.append(f"{_addr[l]} {_address}")
+        parts.append(f"{_nm[l]} {name}")
+        parts.append("")
+        parts.append(_close[l])
+    else:
+        # ── Service booking confirmation (default, also used for mixed) ───
+        _hdr   = {"ar": "تم تأكيد حجزك بنجاح ✅",      "en": "Your booking is confirmed ✅",        "fr": "Votre réservation est confirmée ✅"}
+        _items = {"ar": "الخدمات:",                     "en": "Services:",                          "fr": "Services:"}
+        _tot   = {"ar": "الإجمالي:",                    "en": "Total:",                             "fr": "Total:"}
+        _appt  = {"ar": "الموعد:",                      "en": "Appointment:",                       "fr": "Rendez-vous:"}
+        _nm    = {"ar": "الاسم:",                       "en": "Name:",                              "fr": "Nom:"}
+        _close = {"ar": "نحن بانتظارك ⭐",              "en": "We look forward to seeing you ⭐",   "fr": "Nous avons hâte de vous accueillir ⭐"}
+        parts = [_hdr[l], "", _items[l], item_lines, "", f"{_tot[l]} {total_str}"]
+        if day or time:
+            parts.append(f"{_appt[l]} {day or ''} {time or ''}".strip())
+        parts.append(f"{_nm[l]} {name}")
+        parts.append("")
+        parts.append(_close[l])
     return "\n".join(parts)
 
 _RECOMMENDED_SERVICE = "تنظيف أسنان"
@@ -1575,14 +1602,20 @@ def is_price_question(msg):
     return any(kw in msg for kw in _WA_PRICE_KEYWORDS)
 
 def send_booking_messages(sender, state, name, lang):
-    """SINGLE SEND POINT for all post-booking messages.
+    """SINGLE SEND POINT for all post-completion messages (WhatsApp Sales Engine).
     Sends exactly ONE message to the customer and ONE to the admin.
-    This is the ONLY function allowed to send booking-related messages."""
+    This is the ONLY function allowed to send completion messages."""
 
     print(f"[TRACE] sending from send_booking_messages ONLY")
     print(f"[DEBUG_SEND_CHECK] sender={sender!r} name={name!r}")
 
-    # ── 1. Build customer confirmation ───────────────────────────────────────
+    # ── Determine flow type from cart ────────────────────────────────────────
+    _ids   = json.loads(state.get("known_catalog_ids_json") or "[]")
+    items  = get_catalog_items(CLIENT_ID, _ids)
+    flow   = determine_flow_type(items)
+    print(f"[FLOW_TYPE] send_booking_messages flow={flow!r}")
+
+    # ── 1. Build customer confirmation (flow-aware) ──────────────────────────
     customer_message = confirmation_message(state, name, lang, phone=None)
 
     # ── 2. Send to customer (sender) — ONLY the confirmation ────────────────
@@ -1590,9 +1623,7 @@ def send_booking_messages(sender, state, name, lang):
     print(f"[SEND_CUSTOMER] body={customer_message!r}")
     wa_reply(sender, customer_message)
 
-    # ── 3. Build admin notification ──────────────────────────────────────────
-    _ids      = json.loads(state.get("known_catalog_ids_json") or "[]")
-    items     = get_catalog_items(CLIENT_ID, _ids)
+    # ── 3. Build admin notification (flow-aware label) ───────────────────────
     _cur      = get_client(CLIENT_ID).get("currency", "SAR")
     if items:
         item_lines = "\n".join(
@@ -1605,13 +1636,23 @@ def send_booking_messages(sender, state, name, lang):
         item_lines = "\n".join(f"  • {s}" for s in _svcs) if _svcs else "  غير محدد"
         total_str = "-"
 
+    if flow == "order":
+        _admin_label = "📦 طلب جديد"
+        _extra = f"العنوان: {state.get('known_address', '-')}"
+    elif flow == "mixed":
+        _admin_label = "🛒 طلب مختلط (خدمات + منتجات)"
+        _extra = f"الموعد: {state.get('known_day', '')} {state.get('known_time', '')}".strip()
+    else:
+        _admin_label = "📥 حجز جديد"
+        _extra = f"الموعد: {state.get('known_day', '')} {state.get('known_time', '')}".strip()
+
     admin_message = (
-        f"📥 حجز جديد\n"
+        f"{_admin_label}\n"
         f"الاسم: {name}\n"
         f"الرقم: {sender}\n"
         f"العناصر:\n{item_lines}\n"
         f"الإجمالي: {total_str}\n"
-        f"الموعد: {state.get('known_day', '')} {state.get('known_time', '')}"
+        f"{_extra}"
     ).strip()
 
     # ── 4. Send to admin — ONLY if admin number is different from sender ─────
@@ -2130,10 +2171,21 @@ def whatsapp():
         _sc_day  = state.get("known_day")
         _sc_time = state.get("known_time")
         _sc_name = state.get("known_name")
-        if _sc_svcs and _sc_day and _sc_time and _sc_name:
-            print(f"[SHORTCUT] all fields complete — skipping step flow")
-            print(f"[SHORTCUT] services={_sc_svcs} day={_sc_day!r} time={_sc_time!r} name={_sc_name!r}")
-            # Ensure catalog IDs are merged for all services in cart
+        # Resolve current cart items + flow type for shortcut decision
+        _sc_ids_pre  = json.loads(state.get("known_catalog_ids_json") or "[]")
+        _sc_items    = get_catalog_items(CLIENT_ID, _sc_ids_pre) if _sc_ids_pre else []
+        _sc_flow     = determine_flow_type(_sc_items)
+        print(f"[FLOW_TYPE] shortcut check flow={_sc_flow!r}")
+        # Services/mixed require day+time; products require only name
+        _sc_needs_appt = _sc_flow in ("booking", "mixed")
+        _sc_ready = bool(
+            _sc_svcs and _sc_name and
+            (not _sc_needs_appt or (_sc_day and _sc_time))
+        )
+        if _sc_ready:
+            print(f"[SHORTCUT] all required fields complete — skipping step flow")
+            print(f"[SHORTCUT] flow={_sc_flow!r} services={_sc_svcs} day={_sc_day!r} time={_sc_time!r} name={_sc_name!r}")
+            # Ensure catalog IDs are merged for all items in cart
             _sc_ids = json.loads(state.get("known_catalog_ids_json") or "[]")
             for _sv in _sc_svcs:
                 _sv_id = _catalog_id_for_title(_sv)
@@ -2332,7 +2384,12 @@ def whatsapp():
                 _svcs_t = ensure_svc_list(state.get("known_service"))
                 svc = _svcs_t[0] if _svcs_t else ""
                 day = state.get("known_day") or ""
-                if is_time_slot_taken(svc, day, time_val):
+                # Resolve flow type — slot check applies ONLY to service bookings
+                _t_ids   = json.loads(state.get("known_catalog_ids_json") or "[]")
+                _t_items = get_catalog_items(CLIENT_ID, _t_ids) if _t_ids else []
+                _t_flow  = determine_flow_type(_t_items)
+                print(f"[FLOW_TYPE] time-step slot check flow={_t_flow!r}")
+                if _t_flow != "order" and is_time_slot_taken(svc, day, time_val):
                     available = get_available_times(svc, day)
                     print(f"[SMART_SUGGEST] full={available}")
                     top = get_top_times(available)
