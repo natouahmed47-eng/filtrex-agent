@@ -181,7 +181,11 @@ TRANSLATIONS = {
         "ob_step2_label":     "Add Catalog",
         "ob_step3_label":     "Launch",
         "ob_step1_title":     "Connect WhatsApp",
-        "ob_step1_desc":      "Link your UltraMsg account so your AI bot can send and receive messages.",
+        "ob_step1_desc":      "Connect your business WhatsApp number to start receiving and replying to messages automatically.",
+        "ob_preview_title":   "Conversation Preview",
+        "ob_preview_note":    "This is a preview of how your AI bot will talk to customers on WhatsApp.",
+        "ob_customer_label":  "Customer",
+        "ob_bot_label":       "Bot",
         "ob_step2_title":     "Add your first catalog item",
         "ob_step2_desc":      "Add a service or product so the bot knows what to sell.",
         "ob_step3_title":     "You're ready to launch! 🎉",
@@ -252,7 +256,11 @@ TRANSLATIONS = {
         "ob_step2_label":     "إضافة كتالوج",
         "ob_step3_label":     "الإطلاق",
         "ob_step1_title":     "ربط واتساب",
-        "ob_step1_desc":      "اربط حساب UltraMsg حتى يتمكن البوت من إرسال واستقبال الرسائل.",
+        "ob_step1_desc":      "اربط رقم واتساب الخاص بنشاطك لبدء استقبال الرسائل والرد عليها تلقائيًا.",
+        "ob_preview_title":   "معاينة المحادثة",
+        "ob_preview_note":    "هذه معاينة لطريقة تواصل البوت مع عملائك عبر واتساب.",
+        "ob_customer_label":  "العميل",
+        "ob_bot_label":       "البوت",
         "ob_step2_title":     "أضف أول عنصر في كتالوجك",
         "ob_step2_desc":      "أضف خدمة أو منتجاً ليعرف البوت ما يبيعه.",
         "ob_step3_title":     "أنت جاهز للإطلاق! 🎉",
@@ -1642,7 +1650,7 @@ _STRINGS = {
     },
 }
 
-def t(key, lang):
+def _bot_str(key, lang):
     lang = lang if lang in ("ar", "en", "fr") else "ar"
     return _STRINGS.get(key, {}).get(lang) or _STRINGS.get(key, {}).get("ar", "")
 
@@ -1659,7 +1667,7 @@ def build_ask_service(client_id, lang):
         con.close()
     cur = get_client(client_id).get("currency", "SAR")
     if not rows:
-        return t("ask_service", l)
+        return _bot_str("ask_service", l)
     bullets = ""
     for r in rows:
         p = r["sale_price"] or r["price"] or 0
@@ -1684,7 +1692,7 @@ def build_price_list(client_id, lang):
         con.close()
     cur = get_client(client_id).get("currency", "SAR")
     if not rows:
-        return t("price_list", l)
+        return _bot_str("price_list", l)
     bullets = ""
     for r in rows:
         p = r["sale_price"] or r["price"] or 0
@@ -3136,13 +3144,13 @@ def whatsapp():
                         }
                         reply = _cart_hdrs[lang if lang in ("ar","en","fr") else "ar"]
                     else:
-                        reply = t("service_confirmed", lang).format(
+                        reply = _bot_str("service_confirmed", lang).format(
                             svc=format_svcs(_cur_svcs, lang),
                             price=_price,
                             benefit=_benefit,
                         )
                 else:
-                    reply = t("service_confirmed", lang).format(
+                    reply = _bot_str("service_confirmed", lang).format(
                         svc=svc,
                         price=_price,
                         benefit=_benefit,
@@ -3270,14 +3278,14 @@ def whatsapp():
                     print(f"[SMART_SUGGEST] top={top}")
                     if top:
                         slots = "\n".join(f"- {slot}" for slot in top)
-                        reply = t("slot_taken_header", lang) + slots + t("slot_taken_footer", lang)
+                        reply = _bot_str("slot_taken_header", lang) + slots + _bot_str("slot_taken_footer", lang)
                     else:
-                        reply = t("no_slots", lang)
+                        reply = _bot_str("no_slots", lang)
                 else:
                     state["known_time"]   = time_val
                     state["current_step"] = "name"
                     wa_save(sender, state)
-                    reply = t("ask_name", lang)
+                    reply = _bot_str("ask_name", lang)
 
         # ── STEP: name → confirm + save ───────────────────────────────────
         elif step == "name":

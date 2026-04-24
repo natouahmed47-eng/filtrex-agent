@@ -1,156 +1,454 @@
 {% extends "admin/layout.html" %}
 {% block title %}{{ t("ob_step1_label", lang) }}{% endblock %}
+
 {% block content %}
+{% set dir = "rtl" if lang == "ar" else "ltr" %}
+{% set is_rtl = (lang == "ar") %}
+
 <style>
-  .ob-wrap   { max-width: 720px; margin: 0 auto; padding: 0 4px 60px; }
-  .ob-header { text-align: center; margin-bottom: 40px; }
-  .ob-header h1 { font-size: 26px; font-weight: 800; color: #111; margin-bottom: 8px; }
-  .ob-header p  { font-size: 15px; color: #6b7280; }
-
-  .ob-progress { display: flex; align-items: center; gap: 0; margin-bottom: 40px; }
-  .ob-step-dot {
-    width: 32px; height: 32px; border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 13px; font-weight: 700; flex-shrink: 0; transition: all .2s;
+  /* ── Page wrapper ───────────────────────────────── */
+  .ob-page {
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 8px 0 80px;
+    font-family: inherit;
   }
-  .ob-step-dot.done    { background: {{ branding.primary_color }}; color: #fff; }
-  .ob-step-dot.active  { background: #fff; color: {{ branding.primary_color }}; border: 2.5px solid {{ branding.primary_color }}; }
-  .ob-step-dot.pending { background: #f3f4f6; color: #9ca3af; border: 2px solid #e5e7eb; }
-  .ob-step-line { flex: 1; height: 2px; background: #e5e7eb; }
-  .ob-step-line.done { background: {{ branding.primary_color }}; }
-  .ob-step-labels { display: flex; justify-content: space-between; margin-top: 8px; margin-bottom: 32px; }
-  .ob-step-lbl { font-size: 11px; font-weight: 600; color: #9ca3af; text-align: center; width: 100px; }
-  .ob-step-lbl.active { color: {{ branding.primary_color }}; }
-  .ob-step-lbl.done   { color: {{ branding.primary_color }}; }
 
+  /* ── Header ─────────────────────────────────────── */
+  .ob-hero {
+    text-align: center;
+    padding: 40px 20px 36px;
+  }
+  .ob-hero-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #f0f0ff;
+    color: #4f46e5;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 4px 14px;
+    border-radius: 999px;
+    margin-bottom: 18px;
+    letter-spacing: .03em;
+    text-transform: uppercase;
+  }
+  .ob-hero h1 {
+    font-size: 28px;
+    font-weight: 800;
+    color: #0f172a;
+    margin: 0 0 10px;
+    line-height: 1.25;
+  }
+  .ob-hero p {
+    font-size: 15px;
+    color: #64748b;
+    margin: 0;
+    line-height: 1.6;
+  }
+
+  /* ── Progress stepper ───────────────────────────── */
+  .ob-stepper {
+    display: flex;
+    align-items: center;
+    margin-bottom: 36px;
+    padding: 0 4px;
+  }
+  .ob-st-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .ob-st-circle {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    font-weight: 800;
+    transition: all .25s;
+    position: relative;
+    z-index: 1;
+  }
+  .ob-st-circle.done    { background: {{ branding.primary_color }}; color: #fff; box-shadow: 0 0 0 3px rgba(79,70,229,.18); }
+  .ob-st-circle.active  { background: #fff; color: {{ branding.primary_color }}; border: 2.5px solid {{ branding.primary_color }}; box-shadow: 0 0 0 4px rgba(79,70,229,.10); }
+  .ob-st-circle.pending { background: #f1f5f9; color: #94a3b8; border: 2px solid #e2e8f0; }
+  .ob-st-label {
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+    line-height: 1;
+  }
+  .ob-st-label.done    { color: {{ branding.primary_color }}; }
+  .ob-st-label.active  { color: {{ branding.primary_color }}; }
+  .ob-st-label.pending { color: #94a3b8; }
+  .ob-st-line {
+    flex: 1;
+    height: 2px;
+    background: #e2e8f0;
+    margin-bottom: 20px;
+    transition: background .25s;
+  }
+  .ob-st-line.done { background: {{ branding.primary_color }}; }
+
+  /* ── Flash messages ─────────────────────────────── */
+  .ob-flash {
+    padding: 12px 16px;
+    border-radius: 10px;
+    font-size: 14px;
+    margin-bottom: 20px;
+  }
+  .ob-flash.success { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+  .ob-flash.error   { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+
+  /* ── Step cards ─────────────────────────────────── */
   .ob-card {
-    background: #fff; border: 2px solid #e5e7eb; border-radius: 14px;
-    padding: 28px; margin-bottom: 20px; transition: border-color .2s;
+    background: #fff;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 16px;
+    padding: 24px;
+    margin-bottom: 16px;
+    transition: border-color .2s, box-shadow .2s;
   }
-  .ob-card.active-card { border-color: {{ branding.primary_color }}; box-shadow: 0 0 0 3px rgba(79,70,229,.08); }
-  .ob-card.done-card   { border-color: #d1fae5; background: #f0fdf4; }
-  .ob-card.pending-card{ opacity: 0.55; pointer-events: none; }
+  .ob-card.active {
+    border-color: {{ branding.primary_color }};
+    box-shadow: 0 0 0 4px rgba(79,70,229,.07), 0 4px 20px rgba(79,70,229,.08);
+  }
+  .ob-card.done-card {
+    border-color: #86efac;
+    background: linear-gradient(to bottom right, #f0fdf4, #fff);
+  }
+  .ob-card.locked {
+    opacity: .45;
+    pointer-events: none;
+  }
 
-  .ob-card-head { display: flex; align-items: flex-start; gap: 14px; }
-  .ob-step-num  {
-    width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+  /* card header row */
+  .ob-card-hd {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+  }
+  .ob-card-num {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+    font-weight: 800;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .ob-card-num.done    { background: {{ branding.primary_color }}; color: #fff; }
+  .ob-card-num.active  { background: #ede9fe; color: {{ branding.primary_color }}; }
+  .ob-card-num.pending { background: #f1f5f9; color: #94a3b8; }
+
+  .ob-card-meta { flex: 1; min-width: 0; }
+  .ob-card-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #0f172a;
+    margin-bottom: 4px;
+  }
+  .ob-card-desc {
+    font-size: 13.5px;
+    color: #64748b;
+    line-height: 1.55;
+  }
+  .ob-done-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: #dcfce7;
+    color: #166534;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 4px 12px;
+    border-radius: 999px;
+    flex-shrink: 0;
+  }
+
+  /* card body */
+  .ob-card-body {
+    margin-top: 20px;
+    padding-{{ "right" if is_rtl else "left" }}: 52px;
+  }
+
+  /* ── WhatsApp phone mockup ───────────────────────── */
+  .wa-mockup {
+    background: #e5ddd5;
+    background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23d4ccc6' fill-opacity='0.4'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+    border-radius: 14px;
+    overflow: hidden;
+    max-width: 340px;
+    border: 1px solid #d4ccc6;
+    box-shadow: 0 4px 20px rgba(0,0,0,.10);
+    margin-bottom: 16px;
+  }
+  .wa-header {
+    background: #075e54;
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .wa-avatar {
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    background: #25d366;
     display: flex; align-items: center; justify-content: center;
-    font-weight: 700; font-size: 14px;
+    font-size: 16px;
+    flex-shrink: 0;
   }
-  .ob-step-num.done    { background: {{ branding.primary_color }}; color: #fff; }
-  .ob-step-num.active  { background: #ede9fe; color: {{ branding.primary_color }}; }
-  .ob-step-num.pending { background: #f3f4f6; color: #9ca3af; }
+  .wa-header-info { flex: 1; min-width: 0; }
+  .wa-header-name  { font-size: 13px; font-weight: 700; color: #fff; }
+  .wa-header-status { font-size: 11px; color: #a8d5b3; }
 
-  .ob-card-title { font-size: 16px; font-weight: 700; color: #111; margin-bottom: 4px; }
-  .ob-card-desc  { font-size: 13px; color: #6b7280; line-height: 1.5; }
-  .ob-card-body  { margin-top: 18px; padding-left: 50px; }
+  .wa-body {
+    padding: 12px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 180px;
+    direction: {{ dir }};
+  }
+  .wa-msg-wrap { display: flex; flex-direction: column; }
+  .wa-msg-wrap.bot      { align-items: flex-start; }
+  .wa-msg-wrap.customer { align-items: flex-end; }
+  .wa-sender {
+    font-size: 10px;
+    font-weight: 600;
+    color: #667781;
+    margin-bottom: 2px;
+    padding: 0 4px;
+  }
+  .wa-bubble {
+    max-width: 78%;
+    padding: 8px 12px;
+    border-radius: 10px;
+    font-size: 13px;
+    line-height: 1.45;
+    color: #111827;
+    white-space: pre-wrap;
+    position: relative;
+  }
+  .wa-bubble.bot      { background: #fff; border-bottom-left-radius: 2px; box-shadow: 0 1px 2px rgba(0,0,0,.10); }
+  .wa-bubble.customer { background: #dcf8c6; border-bottom-right-radius: 2px; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+  .wa-bubble.bot[dir="rtl"]      { border-bottom-left-radius: 10px; border-bottom-right-radius: 2px; }
+  .wa-bubble.customer[dir="rtl"] { border-bottom-right-radius: 10px; border-bottom-left-radius: 2px; }
+  .wa-time { font-size: 10px; color: #667781; text-align: end; margin-top: 2px; padding: 0 2px; }
 
-  .btn-primary {
-    display: inline-block; padding: 10px 22px; background: {{ branding.primary_color }};
-    color: #fff; border-radius: 8px; font-size: 14px; font-weight: 600;
-    text-decoration: none; border: none; cursor: pointer; transition: opacity .15s;
+  .wa-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 10px;
+    padding: 12px 16px;
+    font-size: 13px;
+    color: #92400e;
+    max-width: 340px;
+    line-height: 1.5;
   }
-  .btn-primary:hover { opacity: .88; }
-  .btn-ghost-sm {
-    display: inline-block; padding: 8px 16px; color: #9ca3af; font-size: 13px;
-    border: 1px solid #e5e7eb; border-radius: 8px; background: #fff;
-    cursor: pointer; text-decoration: none; transition: all .15s; margin-left: 8px;
+  .wa-note-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+
+  /* ── Buttons ─────────────────────────────────────── */
+  .ob-btn-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 20px;
   }
-  .btn-ghost-sm:hover { color: #374151; border-color: #d1d5db; }
-  .done-pill {
-    display: inline-flex; align-items: center; gap: 6px;
-    background: #d1fae5; color: #065f46; font-size: 13px; font-weight: 700;
-    padding: 4px 12px; border-radius: 999px;
+  .btn-ob-primary {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 11px 24px;
+    background: {{ branding.primary_color }};
+    color: #fff;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 700;
+    text-decoration: none;
+    border: none;
+    cursor: pointer;
+    transition: opacity .15s, transform .1s;
+    box-shadow: 0 2px 8px rgba(79,70,229,.25);
   }
-  .demo-chat {
-    background: #f0f2f5; border-radius: 12px; padding: 16px; max-width: 360px;
-    font-size: 13px; display: flex; flex-direction: column; gap: 8px; margin-top: 16px;
+  .btn-ob-primary:hover  { opacity: .88; transform: translateY(-1px); }
+  .btn-ob-primary:active { transform: translateY(0); }
+
+  .btn-ob-ghost {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 20px;
+    color: #64748b;
+    font-size: 13.5px;
+    font-weight: 600;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 10px;
+    background: #fff;
+    cursor: pointer;
+    text-decoration: none;
+    transition: all .15s;
   }
-  .demo-bubble {
-    padding: 8px 12px; border-radius: 10px; max-width: 80%; line-height: 1.45; white-space: pre-wrap;
+  .btn-ob-ghost:hover { color: #334155; border-color: #cbd5e1; background: #f8fafc; }
+
+  .already-conn-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #dcfce7;
+    color: #166534;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 6px 14px;
+    border-radius: 999px;
+    margin-bottom: 14px;
   }
-  .demo-bubble.bot      { background: #fff; color: #111; align-self: flex-start; border-bottom-left-radius: 2px; }
-  .demo-bubble.customer { background: #d9fdd3; color: #111; align-self: flex-end; border-bottom-right-radius: 2px; }
-  .demo-label { font-size: 11px; color: #9ca3af; font-weight: 600; margin-bottom: 2px; }
-  .demo-badge {
-    background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px;
-    padding: 10px 14px; font-size: 12px; color: #92400e; margin-top: 8px;
+
+  /* ── Step 3 what-next box ───────────────────────── */
+  .ob-what-next {
+    background: #f5f3ff;
+    border: 1px solid #ddd6fe;
+    border-radius: 12px;
+    padding: 16px 18px;
+    font-size: 13.5px;
+    color: #4c1d95;
+    line-height: 1.6;
+    margin-bottom: 16px;
+  }
+  .ob-what-next strong { display: block; margin-bottom: 6px; font-weight: 700; color: #3730a3; }
+
+  /* ── Responsive ─────────────────────────────────── */
+  @media (max-width: 600px) {
+    .ob-hero h1 { font-size: 22px; }
+    .ob-card-body { padding-left: 0; padding-right: 0; }
+    .wa-mockup { max-width: 100%; }
   }
 </style>
 
-<div class="ob-wrap">
-  <div class="ob-header">
+<div class="ob-page" dir="{{ dir }}">
+
+  <!-- Hero -->
+  <div class="ob-hero">
+    <div class="ob-hero-badge">✦ {{ branding.brand_name }}</div>
     <h1>{{ t("ob_welcome", lang).replace("{brand}", branding.brand_name) }}</h1>
     <p>{{ t("ob_subtitle", lang) }}</p>
   </div>
 
+  <!-- Flash messages -->
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% for category, message in messages %}
-      <div style="margin-bottom:20px;padding:12px 16px;border-radius:8px;
-           background:{% if category=='success' %}#d1fae5{% else %}#fee2e2{% endif %};
-           color:{% if category=='success' %}#065f46{% else %}#991b1b{% endif %};font-size:14px;">
-        {{ message }}
-      </div>
+      <div class="ob-flash {{ 'success' if category == 'success' else 'error' }}">{{ message }}</div>
     {% endfor %}
   {% endwith %}
 
-  <!-- Progress -->
-  <div class="ob-progress">
-    <div class="ob-step-dot {% if step >= 1 %}done{% elif step == 0 %}active{% else %}pending{% endif %}">
-      {% if step >= 1 %}✓{% else %}1{% endif %}
-    </div>
-    <div class="ob-step-line {% if step >= 1 %}done{% endif %}"></div>
-    <div class="ob-step-dot {% if step >= 2 %}done{% elif step == 1 %}active{% else %}pending{% endif %}">
-      {% if step >= 2 %}✓{% else %}2{% endif %}
-    </div>
-    <div class="ob-step-line {% if step >= 2 %}done{% endif %}"></div>
-    <div class="ob-step-dot {% if step >= 3 %}done{% elif step == 2 %}active{% else %}pending{% endif %}">
-      {% if step >= 3 %}✓{% else %}3{% endif %}
-    </div>
-  </div>
-  <div class="ob-step-labels">
-    <span class="ob-step-lbl {% if step >= 1 %}done{% elif step == 0 %}active{% endif %}">{{ t("ob_step1_label", lang) }}</span>
-    <span class="ob-step-lbl {% if step >= 2 %}done{% elif step == 1 %}active{% endif %}">{{ t("ob_step2_label", lang) }}</span>
-    <span class="ob-step-lbl {% if step >= 3 %}done{% elif step == 2 %}active{% endif %}">{{ t("ob_step3_label", lang) }}</span>
-  </div>
-
-  <!-- STEP 1 -->
-  <div class="ob-card {% if step == 0 %}active-card{% elif step >= 1 %}done-card{% else %}pending-card{% endif %}">
-    <div class="ob-card-head">
-      <div class="ob-step-num {% if step >= 1 %}done{% elif step == 0 %}active{% else %}pending{% endif %}">
+  <!-- Stepper -->
+  <div class="ob-stepper">
+    <div class="ob-st-item">
+      <div class="ob-st-circle {% if step >= 1 %}done{% elif step == 0 %}active{% else %}pending{% endif %}">
         {% if step >= 1 %}✓{% else %}1{% endif %}
       </div>
-      <div>
+      <span class="ob-st-label {% if step >= 1 %}done{% elif step == 0 %}active{% else %}pending{% endif %}">
+        {{ t("ob_step1_label", lang) }}
+      </span>
+    </div>
+    <div class="ob-st-line {% if step >= 1 %}done{% endif %}"></div>
+    <div class="ob-st-item">
+      <div class="ob-st-circle {% if step >= 2 %}done{% elif step == 1 %}active{% else %}pending{% endif %}">
+        {% if step >= 2 %}✓{% else %}2{% endif %}
+      </div>
+      <span class="ob-st-label {% if step >= 2 %}done{% elif step == 1 %}active{% else %}pending{% endif %}">
+        {{ t("ob_step2_label", lang) }}
+      </span>
+    </div>
+    <div class="ob-st-line {% if step >= 2 %}done{% endif %}"></div>
+    <div class="ob-st-item">
+      <div class="ob-st-circle {% if step >= 3 %}done{% elif step == 2 %}active{% else %}pending{% endif %}">
+        {% if step >= 3 %}✓{% else %}3{% endif %}
+      </div>
+      <span class="ob-st-label {% if step >= 3 %}done{% elif step == 2 %}active{% else %}pending{% endif %}">
+        {{ t("ob_step3_label", lang) }}
+      </span>
+    </div>
+  </div>
+
+  <!-- ═══ STEP 1: Connect WhatsApp ═══════════════════════════════════════ -->
+  <div class="ob-card {% if step == 0 %}active{% elif step >= 1 %}done-card{% else %}locked{% endif %}">
+    <div class="ob-card-hd">
+      <div class="ob-card-num {% if step >= 1 %}done{% elif step == 0 %}active{% else %}pending{% endif %}">
+        {% if step >= 1 %}✓{% else %}1{% endif %}
+      </div>
+      <div class="ob-card-meta">
         <div class="ob-card-title">{{ t("ob_step1_title", lang) }}</div>
         <div class="ob-card-desc">{{ t("ob_step1_desc", lang) }}</div>
       </div>
       {% if step >= 1 %}
-        <div style="margin-left:auto"><span class="done-pill">{{ t("ob_done", lang) }}</span></div>
+        <div class="ob-done-badge">✓ {{ t("ob_done", lang) }}</div>
       {% endif %}
     </div>
+
     {% if step == 0 %}
     <div class="ob-card-body">
       {% if client.whatsapp_connected %}
-        <span class="done-pill">{{ t("ob_already_conn", lang) }}</span>
-        <form method="POST" style="display:inline;margin-left:12px;">
+        <div class="already-conn-pill">✅ {{ t("ob_already_conn", lang) }}</div>
+        <form method="POST">
           <input type="hidden" name="action" value="skip_whatsapp">
-          <button type="submit" class="btn-primary">{{ t("ob_continue", lang) }}</button>
+          <button type="submit" class="btn-ob-primary">{{ t("ob_continue", lang) }}</button>
         </form>
       {% else %}
-        <div class="demo-chat">
-          {% for m in demo_messages %}
-            <div>
-              <div class="demo-label">{% if m.from == 'bot' %}🤖 Bot{% else %}👤{% endif %}</div>
-              <div class="demo-bubble {{ m.from }}">{{ m.text }}</div>
+        <!-- WhatsApp phone mockup -->
+        <div class="wa-mockup">
+          <div class="wa-header">
+            <div class="wa-avatar">🤖</div>
+            <div class="wa-header-info">
+              <div class="wa-header-name">{{ branding.brand_name }}</div>
+              <div class="wa-header-status">● online</div>
             </div>
-          {% endfor %}
+          </div>
+          <div class="wa-body">
+            {% for m in demo_messages %}
+              <div class="wa-msg-wrap {{ m.from }}">
+                <div class="wa-sender">
+                  {% if m.from == 'bot' %}🤖 {{ t("ob_bot_label", lang) }}{% else %}👤 {{ t("ob_customer_label", lang) }}{% endif %}
+                </div>
+                <div class="wa-bubble {{ m.from }}" dir="{{ dir }}">{{ m.text }}</div>
+                <div class="wa-time">{{ "12:01" if loop.index == 1 else ("12:0" ~ loop.index) }}</div>
+              </div>
+            {% endfor %}
+          </div>
         </div>
-        <div class="demo-badge">{{ t("ob_chat_preview", lang) }}</div>
-        <div style="margin-top:16px;display:flex;align-items:center;flex-wrap:wrap;gap:8px;">
-          <a href="/admin/connect-whatsapp" class="btn-primary">{{ t("ob_connect_btn", lang) }}</a>
-          <form method="POST" style="display:inline;">
+
+        <!-- Preview note -->
+        <div class="wa-note">
+          <span class="wa-note-icon">💬</span>
+          <div>
+            <strong style="display:block;margin-bottom:3px;font-weight:700;">
+              {{ t("ob_preview_title", lang) }}
+            </strong>
+            {{ t("ob_preview_note", lang) }}
+          </div>
+        </div>
+
+        <!-- Action buttons -->
+        <div class="ob-btn-row">
+          <a href="/admin/connect-whatsapp" class="btn-ob-primary">
+            <span>{% if lang == "ar" %}📲{% else %}📲{% endif %}</span>
+            {{ t("ob_connect_btn", lang) }}
+          </a>
+          <form method="POST">
             <input type="hidden" name="action" value="skip_whatsapp">
-            <button type="submit" class="btn-ghost-sm">{{ t("ob_skip", lang) }}</button>
+            <button type="submit" class="btn-ob-ghost">{{ t("ob_skip", lang) }}</button>
           </form>
         </div>
       {% endif %}
@@ -158,78 +456,83 @@
     {% endif %}
   </div>
 
-  <!-- STEP 2 -->
-  <div class="ob-card {% if step == 1 %}active-card{% elif step >= 2 %}done-card{% elif step < 1 %}pending-card{% endif %}">
-    <div class="ob-card-head">
-      <div class="ob-step-num {% if step >= 2 %}done{% elif step == 1 %}active{% else %}pending{% endif %}">
+  <!-- ═══ STEP 2: Add Catalog ════════════════════════════════════════════ -->
+  <div class="ob-card {% if step == 1 %}active{% elif step >= 2 %}done-card{% elif step < 1 %}locked{% endif %}">
+    <div class="ob-card-hd">
+      <div class="ob-card-num {% if step >= 2 %}done{% elif step == 1 %}active{% else %}pending{% endif %}">
         {% if step >= 2 %}✓{% else %}2{% endif %}
       </div>
-      <div>
+      <div class="ob-card-meta">
         <div class="ob-card-title">{{ t("ob_step2_title", lang) }}</div>
         <div class="ob-card-desc">
           {{ t("ob_step2_desc", lang) }}
           {% if catalog_count > 0 %}
-            {{ t("ob_already_have", lang) }} <strong>{{ catalog_count }}</strong> {{ t("ob_in_catalog", lang) }}
+            &nbsp;{{ t("ob_already_have", lang) }} <strong>{{ catalog_count }}</strong> {{ t("ob_in_catalog", lang) }}
           {% endif %}
         </div>
       </div>
       {% if step >= 2 %}
-        <div style="margin-left:auto"><span class="done-pill">{{ t("ob_done", lang) }}</span></div>
+        <div class="ob-done-badge">✓ {{ t("ob_done", lang) }}</div>
       {% endif %}
     </div>
+
     {% if step == 1 %}
     <div class="ob-card-body">
       {% if catalog_count > 0 %}
-        <div style="margin-bottom:14px;">
-          <span class="done-pill">✅ {{ catalog_count }} {{ t("ob_items_added", lang) }}</span>
+        <div style="margin-bottom:16px;">
+          <span class="ob-done-badge">✅ {{ catalog_count }} {{ t("ob_items_added", lang) }}</span>
         </div>
-        <form method="POST" style="display:inline;">
-          <input type="hidden" name="action" value="skip_catalog">
-          <button type="submit" class="btn-primary">{{ t("ob_continue", lang) }}</button>
-        </form>
-        <a href="/admin/catalog/new" class="btn-ghost-sm">{{ t("ob_add_another", lang) }}</a>
-      {% else %}
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-          <a href="/admin/catalog/new" class="btn-primary">{{ t("ob_add_item", lang) }}</a>
-          <form method="POST" style="display:inline;">
+        <div class="ob-btn-row">
+          <form method="POST">
             <input type="hidden" name="action" value="skip_catalog">
-            <button type="submit" class="btn-ghost-sm">{{ t("ob_skip", lang) }}</button>
+            <button type="submit" class="btn-ob-primary">{{ t("ob_continue", lang) }}</button>
+          </form>
+          <a href="/admin/catalog/new" class="btn-ob-ghost">{{ t("ob_add_another", lang) }}</a>
+        </div>
+      {% else %}
+        <div class="ob-btn-row">
+          <a href="/admin/catalog/new" class="btn-ob-primary">📦 {{ t("ob_add_item", lang) }}</a>
+          <form method="POST">
+            <input type="hidden" name="action" value="skip_catalog">
+            <button type="submit" class="btn-ob-ghost">{{ t("ob_skip", lang) }}</button>
           </form>
         </div>
-        <p style="font-size:12px;color:#9ca3af;margin-top:10px;">{{ t("ob_catalog_hint", lang) }}</p>
+        <p style="font-size:12px;color:#94a3b8;margin-top:12px;line-height:1.5;">{{ t("ob_catalog_hint", lang) }}</p>
       {% endif %}
     </div>
     {% endif %}
   </div>
 
-  <!-- STEP 3 -->
-  <div class="ob-card {% if step == 2 %}active-card{% elif step >= 3 %}done-card{% else %}pending-card{% endif %}">
-    <div class="ob-card-head">
-      <div class="ob-step-num {% if step >= 3 %}done{% elif step == 2 %}active{% else %}pending{% endif %}">
+  <!-- ═══ STEP 3: Launch ═════════════════════════════════════════════════ -->
+  <div class="ob-card {% if step == 2 %}active{% elif step >= 3 %}done-card{% else %}locked{% endif %}">
+    <div class="ob-card-hd">
+      <div class="ob-card-num {% if step >= 3 %}done{% elif step == 2 %}active{% else %}pending{% endif %}">
         {% if step >= 3 %}✓{% else %}3{% endif %}
       </div>
-      <div>
+      <div class="ob-card-meta">
         <div class="ob-card-title">{{ t("ob_step3_title", lang) }}</div>
         <div class="ob-card-desc">{{ t("ob_step3_desc", lang) }}</div>
       </div>
     </div>
+
     {% if step == 2 %}
     <div class="ob-card-body">
-      <div style="background:#ede9fe;border-radius:10px;padding:14px 16px;
-                  font-size:13px;color:{{ branding.primary_color }};margin-bottom:16px;">
-        <strong>{{ t("ob_what_next", lang) }}</strong><br>
+      <div class="ob-what-next">
+        <strong>{{ t("ob_what_next", lang) }}</strong>
         {{ t("ob_what_next_body", lang) }}
       </div>
       {% if not client.whatsapp_connected %}
-        <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;
-             padding:10px 14px;font-size:13px;color:#92400e;margin-bottom:16px;">
+        <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;
+             padding:12px 16px;font-size:13px;color:#92400e;margin-bottom:16px;line-height:1.5;">
           {{ t("ob_wa_not_conn", lang) }}
         </div>
       {% endif %}
-      <form method="POST">
-        <input type="hidden" name="action" value="complete">
-        <button type="submit" class="btn-primary">{{ t("ob_go_dashboard", lang) }}</button>
-      </form>
+      <div class="ob-btn-row">
+        <form method="POST">
+          <input type="hidden" name="action" value="complete">
+          <button type="submit" class="btn-ob-primary">🚀 {{ t("ob_go_dashboard", lang) }}</button>
+        </form>
+      </div>
     </div>
     {% endif %}
   </div>
