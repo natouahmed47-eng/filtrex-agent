@@ -1,6 +1,30 @@
 {% extends "admin/layout.html" %}
 {% block content %}
+
+<!-- PayPal SDK — loaded once, only when a PayPal plan card is visible -->
+<script src="https://www.paypal.com/sdk/js?client-id=AXII0NIu0wnEJwazRqZ5UsowkdJWxJdVYxrxUT84kYljpayOSUFC76fMRyvJbIFMuzYjZMv3gP53U4C3&vault=true&intent=subscription"
+        data-sdk-integration-source="button-factory"
+        defer></script>
+
 <style>
+  .billing-wrap { max-width: 900px; margin: 0 auto; padding: 0 4px; }
+
+  /* ── Header ─────────────────────────────────────── */
+  .billing-hero { margin-bottom: 28px; }
+  .billing-hero h1 { font-size: 22px; font-weight: 800; color: #111; margin-bottom: 4px; }
+  .billing-hero p  { font-size: 14px; color: #6b7280; }
+
+  /* ── Success banner ──────────────────────────────── */
+  .billing-success {
+    display: flex; align-items: center; gap: 14px;
+    background: #dcfce7; border: 1.5px solid #86efac;
+    border-radius: 12px; padding: 16px 20px; margin-bottom: 24px;
+  }
+  .billing-success-icon { font-size: 28px; }
+  .billing-success h3   { font-size: 15px; font-weight: 700; color: #166534; margin-bottom: 3px; }
+  .billing-success p    { font-size: 13px; color: #15803d; }
+
+  /* ── Stat grid ───────────────────────────────────── */
   .billing-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 32px; }
   @media(max-width:700px){ .billing-grid { grid-template-columns: 1fr; } }
 
@@ -17,70 +41,99 @@
   .progress-bar.warn { background: #f59e0b; }
   .progress-bar.over { background: #ef4444; }
 
-  .plan-badge {
-    display: inline-block; padding: 4px 12px; border-radius: 999px;
-    font-size: 12px; font-weight: 700; letter-spacing: .3px;
-  }
+  /* ── Plan badge ──────────────────────────────────── */
+  .plan-badge { display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: .3px; }
   .badge-free     { background: #f3f4f6; color: #374151; }
   .badge-starter  { background: #dbeafe; color: #1d4ed8; }
   .badge-pro      { background: #ede9fe; color: #6d28d9; }
   .badge-business { background: #d1fae5; color: #065f46; }
 
+  /* ── Plan cards grid ─────────────────────────────── */
   .plans-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 16px; margin-top: 24px;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 18px; margin-top: 24px;
   }
   .plan-card {
-    border: 2px solid #e5e7eb; border-radius: 12px; padding: 24px;
-    background: #fff; display: flex; flex-direction: column; gap: 12px;
-    transition: border-color .2s, box-shadow .2s;
-    position: relative;
+    border: 2px solid #e5e7eb; border-radius: 14px; padding: 24px;
+    background: #fff; display: flex; flex-direction: column; gap: 14px;
+    transition: border-color .2s, box-shadow .2s; position: relative;
   }
   .plan-card.current { border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79,70,229,.12); }
+  .plan-card-current-label {
+    position: absolute; top: -13px; left: 50%; transform: translateX(-50%);
+    background: #4f46e5; color: #fff; font-size: 11px; font-weight: 700;
+    padding: 3px 14px; border-radius: 999px; letter-spacing: .5px; white-space: nowrap;
+  }
   .plan-card-name  { font-size: 17px; font-weight: 700; color: #111; }
   .plan-card-price { font-size: 26px; font-weight: 800; color: #4f46e5; }
   .plan-card-price span { font-size: 13px; font-weight: 500; color: #9ca3af; }
-  .plan-card-limits { font-size: 13px; color: #6b7280; display: flex; flex-direction: column; gap: 4px; }
-  .plan-card-limits li { list-style: none; padding-left: 0; }
+  .plan-card-limits { font-size: 13px; color: #6b7280; }
+  .plan-card-limits ul { margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+  .plan-card-limits li { list-style: none; }
   .plan-card-limits li::before { content: "✓ "; color: #4f46e5; font-weight: 700; }
-  .plan-card-current-label {
-    position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
-    background: #4f46e5; color: #fff; font-size: 11px; font-weight: 700;
-    padding: 2px 12px; border-radius: 999px; letter-spacing: .5px;
-    white-space: nowrap;
-  }
+
+  /* ── Buttons ─────────────────────────────────────── */
   .btn-upgrade {
-    display: block; text-align: center; padding: 9px 12px;
+    display: block; text-align: center; padding: 10px 14px;
     border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer;
     border: 1.5px solid #4f46e5; color: #4f46e5; background: #fff;
-    text-decoration: none; transition: all .15s;
-    margin-top: auto;
+    text-decoration: none; transition: all .15s; margin-top: auto;
   }
   .btn-upgrade:hover { background: #4f46e5; color: #fff; }
-  .btn-upgrade.current-plan { background: #f3f4f6; border-color: #e5e7eb; color: #9ca3af; cursor: default; }
-  .section-title {
-    font-size: 16px; font-weight: 700; color: #111; margin-bottom: 4px;
+  .btn-upgrade.current-plan {
+    background: #f3f4f6; border-color: #e5e7eb; color: #9ca3af;
+    cursor: default; pointer-events: none;
   }
-  .section-sub { font-size: 13px; color: #6b7280; margin-bottom: 20px; }
+  .btn-coming-soon {
+    display: block; text-align: center; padding: 10px 14px;
+    border-radius: 8px; font-size: 13px; font-weight: 600;
+    border: 1.5px solid #e5e7eb; color: #9ca3af; background: #f9fafb;
+    cursor: not-allowed; margin-top: auto;
+  }
+
+  /* ── PayPal button wrapper ───────────────────────── */
+  .paypal-btn-wrap {
+    margin-top: auto;
+  }
+  .paypal-loading {
+    text-align: center; font-size: 12px; color: #9ca3af;
+    padding: 10px 0;
+  }
+
+  /* ── Info note ───────────────────────────────────── */
   .info-note {
     background: #fffbeb; border: 1px solid #fde68a;
     border-radius: 10px; padding: 14px 18px; font-size: 13px; color: #92400e;
     margin-top: 24px;
   }
+  .section-title { font-size: 16px; font-weight: 700; color: #111; margin-bottom: 4px; }
+  .section-sub   { font-size: 13px; color: #6b7280; margin-bottom: 20px; }
 </style>
 
-<div style="max-width:900px; margin:0 auto; padding:0 4px;">
+<div class="billing-wrap">
 
-  <h1 style="font-size:22px; font-weight:800; color:#111; margin-bottom:4px;">Billing &amp; Plan</h1>
-  <p style="font-size:14px; color:#6b7280; margin-bottom:28px;">
-    Monitor your usage and manage your subscription plan.
-  </p>
+  <!-- Page header -->
+  <div class="billing-hero">
+    <h1>Billing &amp; Plan</h1>
+    <p>Monitor your usage and manage your subscription plan.</p>
+  </div>
+
+  <!-- Success banner (shown after PayPal redirect) -->
+  {% if request.args.get('success') == '1' %}
+  <div class="billing-success">
+    <div class="billing-success-icon">🎉</div>
+    <div>
+      <h3>Subscription activated!</h3>
+      <p>Your plan has been upgraded. All new limits are now active.</p>
+    </div>
+  </div>
+  {% endif %}
 
   {% if sub %}
-    {% set pct_msg  = ((sub.messages_used / sub.max_messages * 100) | int) if sub.max_messages > 0 else 0 %}
-    {% set pct_ord  = ((sub.orders_used   / sub.max_orders   * 100) | int) if sub.max_orders   > 0 else 0 %}
-    {% set pct_cat  = ((catalog_count     / sub.max_catalog_items * 100) | int) if sub.max_catalog_items > 0 else 0 %}
+    {% set pct_msg = ((sub.messages_used / sub.max_messages * 100) | int) if sub.max_messages > 0 else 0 %}
+    {% set pct_ord = ((sub.orders_used   / sub.max_orders   * 100) | int) if sub.max_orders   > 0 else 0 %}
+    {% set pct_cat = ((catalog_count     / sub.max_catalog_items * 100) | int) if sub.max_catalog_items > 0 else 0 %}
 
     <div class="billing-grid">
 
@@ -162,17 +215,19 @@
     </div>
 
   {% else %}
-    <div class="info-note">No active subscription found. Contact support.</div>
+    <div class="info-note" style="margin-bottom:28px;">No active subscription found. Contact support.</div>
   {% endif %}
 
 
-  <!-- All Plans -->
+  <!-- ═══ Available Plans ═════════════════════════════════════════════════ -->
   <div class="section-title">Available Plans</div>
   <div class="section-sub">Compare plans and upgrade when you're ready.</div>
 
   <div class="plans-grid">
     {% for plan in all_plans %}
       {% set is_current = sub and sub.plan_id == plan.id %}
+      {% set plan_slug  = plan.name | lower %}
+
       <div class="plan-card {% if is_current %}current{% endif %}">
         {% if is_current %}<div class="plan-card-current-label">Current Plan</div>{% endif %}
 
@@ -183,7 +238,7 @@
         </div>
 
         <div class="plan-card-limits">
-          <ul style="margin:0; padding:0;">
+          <ul>
             <li>{% if plan.max_messages == -1 %}Unlimited messages{% else %}{{ plan.max_messages | int }} messages/mo{% endif %}</li>
             <li>{% if plan.max_catalog_items == -1 %}Unlimited catalog items{% else %}{{ plan.max_catalog_items | int }} catalog items{% endif %}</li>
             <li>{% if plan.max_orders == -1 %}Unlimited orders{% else %}{{ plan.max_orders | int }} orders/mo{% endif %}</li>
@@ -194,15 +249,20 @@
         </div>
 
         {% if is_current %}
-          <a class="btn-upgrade current-plan">Current Plan</a>
+          <div class="btn-upgrade current-plan">Current Plan</div>
+
+        {% elif plan_slug == 'starter' %}
+          <!-- ── PayPal Subscription Button — Starter ── -->
+          <div class="paypal-btn-wrap">
+            <div id="paypal-button-container-P-2U68430732155245WNHV6LMA">
+              <div class="paypal-loading">Loading payment button…</div>
+            </div>
+          </div>
+
         {% else %}
-          <a href="#" class="btn-upgrade"
-             onclick="alert('Upgrade to {{ plan.name }} — payment integration coming soon. Contact support to upgrade.'); return false;">
-            {% if sub and plan.price_monthly > sub.price_monthly %}Upgrade to {{ plan.name }}
-            {% elif sub and plan.price_monthly < sub.price_monthly %}Downgrade to {{ plan.name }}
-            {% else %}Switch to {{ plan.name }}{% endif %}
-          </a>
+          <div class="btn-coming-soon">Coming soon</div>
         {% endif %}
+
       </div>
     {% endfor %}
   </div>
@@ -214,4 +274,64 @@
   </div>
 
 </div>
+
+<!-- ═══ PayPal Subscription Script ═════════════════════════════════════════ -->
+<script>
+(function initPayPal() {
+  var PAYPAL_PLAN_ID = 'P-2U68430732155245WNHV6LMA';
+  var container     = '#paypal-button-container-' + PAYPAL_PLAN_ID;
+
+  if (!document.querySelector(container)) return;   // not on page (current plan = starter)
+
+  function renderButton() {
+    if (typeof paypal === 'undefined') {
+      setTimeout(renderButton, 300);
+      return;
+    }
+    var el = document.querySelector(container);
+    if (el) el.innerHTML = '';   // clear loading text
+
+    paypal.Buttons({
+      style: {
+        shape:  'rect',
+        color:  'gold',
+        layout: 'vertical',
+        label:  'subscribe'
+      },
+      createSubscription: function(data, actions) {
+        return actions.subscription.create({
+          plan_id: PAYPAL_PLAN_ID
+        });
+      },
+      onApprove: function(data, actions) {
+        fetch('/paypal/subscription-success', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({
+            plan:            'starter',
+            subscription_id: data.subscriptionID
+          })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(res) {
+          if (res.ok) {
+            window.location.href = '/admin/billing?success=1';
+          } else {
+            alert('Something went wrong activating your plan. Please contact support.');
+          }
+        })
+        .catch(function() {
+          window.location.href = '/admin/billing?success=1';
+        });
+      },
+      onError: function(err) {
+        console.error('[PayPal]', err);
+      }
+    }).render(container);
+  }
+
+  renderButton();
+})();
+</script>
+
 {% endblock %}

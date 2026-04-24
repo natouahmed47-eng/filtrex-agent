@@ -712,6 +712,10 @@ def _migrate_saas():
             con.execute("ALTER TABLE client_subscriptions ADD COLUMN bonus_messages INTEGER DEFAULT 0")
             con.commit()
             print("[REFERRAL_CREATED] migrated client_subscriptions → added bonus_messages")
+        if "paypal_subscription_id" not in _sub_cols:
+            con.execute("ALTER TABLE client_subscriptions ADD COLUMN paypal_subscription_id TEXT")
+            con.commit()
+            print("[BILLING] migrated client_subscriptions → added paypal_subscription_id")
 
         # ── STEP 7d: api_keys ─────────────────────────────────────────────
         con.execute("""
@@ -3925,6 +3929,75 @@ def admin_settings():
     return render_template("admin/settings.html", client=client, active="settings")
 
 # ── /admin/billing ────────────────────────────────────────────────────────────
+def upgrade_client_plan(client_id, plan_name, subscription_id=None):
+    """
+    Activate a named subscription plan for a client.
+    Looks up the plan by name, creates/updates client_subscriptions,
+    and stores the external subscription_id for later webhook verification.
+    """
+    con = get_db_connection()
+    try:
+        plan = con.execute(
+            "SELECT * FROM subscription_plans WHERE LOWER(name)=LOWER(?) AND is_active=1",
+            (plan_name,)
+        ).fetchone()
+        if not plan:
+            print(f"[UPGRADE] plan not found: {plan_name!r}")
+            return False
+
+        plan_id = plan["id"]
+        now = datetime.now().isoformat(timespec="seconds")
+
+        existing = con.execute(
+            "SELECT id FROM client_subscriptions WHERE client_id=?",
+            (client_id,)
+        ).fetchone()
+
+        if existing:
+            con.execute("""
+                UPDATE client_subscriptions
+                SET plan_id=?, status='active', started_at=?,
+                    expires_at=NULL, paypal_subscription_id=?
+                WHERE client_id=?
+            """, (plan_id, now, subscription_id, client_id))
+        else:
+            con.execute("""
+                INSERT INTO client_subscriptions
+                    (client_id, plan_id, status, started_at, paypal_subscription_id)
+                VALUES (?, ?, 'active', ?, ?)
+            """, (client_id, plan_id, now, subscription_id))
+
+        con.commit()
+        print(f"[UPGRADE] client={client_id} → plan={plan_name!r} sub_id={subscription_id!r}")
+        return True
+    except Exception as _e:
+        print(f"[UPGRADE] ERROR: {repr(_e)}")
+        return False
+    finally:
+        con.close()
+
+
+@app.route("/paypal/subscription-success", methods=["POST"])
+def paypal_subscription_success():
+    data            = request.get_json() or {}
+    subscription_id = data.get("subscription_id")
+    plan            = data.get("plan", "").strip().lower()
+
+    client_id = session.get("client_id")
+    if not client_id:
+        return {"ok": False, "error": "not_logged_in"}, 401
+
+    if not plan or not subscription_id:
+        return {"ok": False, "error": "missing_fields"}, 400
+
+    ok = upgrade_client_plan(client_id, plan, subscription_id)
+    if not ok:
+        return {"ok": False, "error": "plan_not_found"}, 400
+
+    print(f"[PAYPAL_SUCCESS] client={client_id} plan={plan!r} sub={subscription_id!r}")
+    return {"ok": True}
+
+
 @app.route("/admin/billing")
 def admin_billing():
     guard = _admin_guard()
