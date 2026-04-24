@@ -795,10 +795,10 @@ def _migrate_saas():
         if plan_count == 0:
             import json as _json
             _plans = [
-                ("Free",     0,   100,  5,   20,  '["WhatsApp bot","Up to 5 catalog items","Basic support"]'),
-                ("Starter",  49,  1000, 25,  100, '["WhatsApp bot","Up to 25 catalog items","Email support","Multilingual"]'),
-                ("Pro",      149, 5000, 100, 500, '["WhatsApp bot","Up to 100 catalog items","Priority support","Multilingual","Upsells","Analytics"]'),
-                ("Business", 499, -1,  -1,  -1,  '["Everything in Pro","Unlimited messages","Unlimited catalog","Dedicated support","Custom branding"]'),
+                ("Free",     0,  100,  5,   20,  '["WhatsApp bot","Up to 5 catalog items","Basic support"]'),
+                ("Starter",  9,  1000, 25,  100, '["WhatsApp bot","Up to 25 catalog items","Email support","Multilingual"]'),
+                ("Pro",      29, 5000, 100, 500, '["WhatsApp bot","Up to 100 catalog items","Priority support","Multilingual","Upsells","Analytics"]'),
+                ("Business", 79, -1,  -1,  -1,  '["Everything in Pro","Unlimited messages","Unlimited catalog","Dedicated support","Custom branding"]'),
             ]
             con.executemany("""
                 INSERT INTO subscription_plans
@@ -807,6 +807,15 @@ def _migrate_saas():
             """, _plans)
             con.commit()
             print("[BILLING_PLAN] seeded 4 default plans: Free/Starter/Pro/Business")
+
+        # ── Price migration: ensure pricing matches current values ─────────
+        _price_map = {"starter": 9, "pro": 29, "business": 79, "free": 0}
+        for _pname, _pprice in _price_map.items():
+            con.execute(
+                "UPDATE subscription_plans SET price_monthly=? WHERE LOWER(name)=? AND price_monthly!=?",
+                (_pprice, _pname, _pprice)
+            )
+        con.commit()
 
         # ── Assign Free plan to any client without a subscription ─────────
         free_plan = con.execute(
