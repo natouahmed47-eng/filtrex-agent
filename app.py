@@ -2763,25 +2763,55 @@ def admin_orders():
     guard = _admin_guard()
     if guard:
         return guard
+
+    # ── read filter params ────────────────────────────────────────────────
+    f_status   = (request.args.get("status")    or "").strip().lower()
+    f_flow     = (request.args.get("flow_type") or "").strip().lower()
+    f_date     = (request.args.get("date")      or "").strip().lower()
+    f_q        = (request.args.get("q")         or "").strip()
+
+    print(f"[ORDERS_FILTERS] status={f_status!r} flow={f_flow!r} date={f_date!r} q={f_q!r}")
+
+    # ── build SQL WHERE (status / name / phone / date handled in DB) ──────
+    where_clauses = ["client_id = ?"]
+    params        = [CLIENT_ID]
+
+    if f_status in ("new", "confirmed", "done", "cancelled"):
+        where_clauses.append("status = ?")
+        params.append(f_status)
+
+    if f_q:
+        like = f"%{f_q}%"
+        where_clauses.append("(customer_name LIKE ? OR phone LIKE ?)")
+        params.extend([like, like])
+
+    if f_date == "today":
+        where_clauses.append("date(created_at) = date('now')")
+    elif f_date == "this_week":
+        where_clauses.append("date(created_at) >= date('now', '-6 days')")
+
+    sql = ("SELECT * FROM bookings_or_orders WHERE "
+           + " AND ".join(where_clauses)
+           + " ORDER BY id DESC")
+
     con = get_db_connection()
     try:
-        raw = con.execute(
-            "SELECT * FROM bookings_or_orders WHERE client_id=? ORDER BY id DESC",
-            (CLIENT_ID,)
-        ).fetchall()
+        raw  = con.execute(sql, params).fetchall()
         rows = [{k: r[k] for k in r.keys()} for r in raw]
     finally:
         con.close()
 
+    # ── per-row enrichment ────────────────────────────────────────────────
+    enriched = []
     for row in rows:
-        # ── parse stored title list ──────────────────────────────────────
+        # parse stored title list
         try:
             titles = json.loads(row.get("items_json") or "[]")
         except Exception:
             titles = []
         row["items_parsed"] = titles
 
-        # ── resolve catalog rows by title → get type + price ────────────
+        # resolve catalog rows by title → type + price
         catalog_items = []
         if titles:
             cat_con = get_db_connection()
@@ -2798,14 +2828,17 @@ def admin_orders():
                                               "price": 0, "sale_price": None})
             finally:
                 cat_con.close()
-        else:
-            catalog_items = []
 
-        # ── flow type ────────────────────────────────────────────────────
-        row["flow_type"] = determine_flow_type(catalog_items)
-        print(f"[ADMIN_RENDER_ITEMS] id={row['id']} titles={titles} flow={row['flow_type']}")
+        # flow type (computed, used for Python-side filtering)
+        flow = determine_flow_type(catalog_items)
+        row["flow_type"] = flow
+        print(f"[ADMIN_RENDER_ITEMS] id={row['id']} titles={titles} flow={flow}")
 
-        # ── rich item list for template: [{title, price, currency}] ─────
+        # apply flow_type filter in Python (can't do in SQL)
+        if f_flow in ("booking", "order", "mixed") and flow != f_flow:
+            continue
+
+        # rich item list
         row["items_rich"] = [
             {
                 "title":    it.get("title", "?"),
@@ -2815,11 +2848,23 @@ def admin_orders():
             for it in catalog_items
         ]
 
-        # ── total — use stored value (calculated at save time) ───────────
+        # total from stored value
         row["total_display"] = float(row.get("total_price") or 0)
         print(f"[ADMIN_RENDER_TOTAL] id={row['id']} total={row['total_display']}")
 
-    return render_template("admin/orders.html", orders=rows, active="orders")
+        enriched.append(row)
+
+    print(f"[ORDERS_COUNT] returned={len(enriched)} (pre-filter SQL rows={len(rows)})")
+
+    return render_template(
+        "admin/orders.html",
+        orders=enriched,
+        active="orders",
+        f_status=f_status,
+        f_flow=f_flow,
+        f_date=f_date,
+        f_q=f_q,
+    )
 
 # ── /admin/orders/<id>/status ──────────────────────────────────────────────────
 @app.route("/admin/orders/<int:order_id>/status", methods=["POST"])

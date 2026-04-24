@@ -3,10 +3,7 @@
 {% block content %}
 
 <style>
-  .badge-status-red{background:#fee2e2;color:#b91c1c}
-  .badge-status-blue{background:#dbeafe;color:#1d4ed8}
-
-  /* flow-type badges */
+  /* ── flow badges ──────────────────────────────────────────────────────── */
   .badge-flow{
     display:inline-block;padding:2px 10px;border-radius:99px;
     font-size:11px;font-weight:700;letter-spacing:.3px;white-space:nowrap
@@ -15,47 +12,120 @@
   .badge-order  {background:#dcfce7;color:#16a34a}
   .badge-mixed  {background:#ede9fe;color:#7c3aed}
 
-  /* status dropdown */
+  /* ── status dropdown ──────────────────────────────────────────────────── */
   .status-form{display:inline}
   .status-select{
-    font-size:11px;font-weight:600;padding:3px 8px;border-radius:99px;border:1.5px solid #e5e7eb;
-    background:#fff;cursor:pointer;color:#374151;
+    font-size:11px;font-weight:600;padding:3px 8px;border-radius:99px;
+    border:1.5px solid #e5e7eb;background:#fff;cursor:pointer;color:#374151;
   }
   .status-select:focus{outline:none;border-color:#4f46e5}
 
-  /* item list */
-  .item-line{
-    display:flex;align-items:baseline;gap:6px;
-    font-size:12px;color:#374151;line-height:1.7;
-  }
+  /* ── item lines ───────────────────────────────────────────────────────── */
+  .item-line{display:flex;align-items:baseline;gap:6px;font-size:12px;color:#374151;line-height:1.8}
   .item-bullet{color:#9ca3af;font-size:10px}
   .item-title{font-weight:500}
   .item-sep{color:#d1d5db}
   .item-price{color:#6b7280;white-space:nowrap}
 
-  /* total */
+  /* ── total ────────────────────────────────────────────────────────────── */
   .total-cell{font-weight:700;color:#111;white-space:nowrap}
 
-  /* misc */
+  /* ── appt ─────────────────────────────────────────────────────────────── */
   .appt{font-size:12px;color:#6b7280;white-space:nowrap}
-  .filters{display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap;align-items:center}
-  .filters select,.filters input{
+
+  /* ── filter bar ───────────────────────────────────────────────────────── */
+  .filter-bar{
+    display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+    margin-bottom:18px;
+  }
+  .filter-bar select,
+  .filter-bar input[type=text]{
     padding:7px 11px;border:1.5px solid #e5e7eb;border-radius:8px;
     font-size:13px;background:#fff;color:#374151;
+    transition:border-color .15s;
   }
-  .filters select:focus,.filters input:focus{outline:none;border-color:#4f46e5}
+  .filter-bar select:focus,
+  .filter-bar input[type=text]:focus{outline:none;border-color:#4f46e5}
+  .filter-bar input[type=text]{min-width:200px}
+  .filter-bar .btn-filter{
+    padding:7px 16px;border-radius:8px;border:none;
+    background:#4f46e5;color:#fff;font-size:13px;font-weight:600;cursor:pointer;
+  }
+  .filter-bar .btn-filter:hover{background:#4338ca}
+  .filter-bar .btn-reset{
+    padding:7px 14px;border-radius:8px;border:1.5px solid #e5e7eb;
+    background:#fff;color:#6b7280;font-size:13px;cursor:pointer;text-decoration:none;
+    display:inline-flex;align-items:center;
+  }
+  .filter-bar .btn-reset:hover{background:#f3f4f6}
+
+  /* ── active-filter pills ──────────────────────────────────────────────── */
+  .filter-pills{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+  .filter-pill{
+    display:inline-flex;align-items:center;gap:5px;
+    padding:2px 10px;border-radius:99px;background:#ede9fe;color:#4f46e5;
+    font-size:11px;font-weight:600;
+  }
+
   .count-badge{font-size:12px;color:#6b7280;font-weight:500;margin-left:6px}
 </style>
 
 <div class="page-head">
   <div>
     <h1 class="page-title">Orders &amp; Bookings
-      <span class="count-badge">{{ orders|length }} total</span>
+      <span class="count-badge">{{ orders|length }} results</span>
     </h1>
     <p class="page-sub">All records from customers via WhatsApp Sales Engine</p>
   </div>
 </div>
 
+{# ── filter form ──────────────────────────────────────────────────────────── #}
+<form method="GET" action="/admin/orders">
+  <div class="filter-bar">
+
+    <select name="status">
+      <option value=""          {% if not f_status %}selected{% endif %}>All statuses</option>
+      <option value="new"       {% if f_status=='new'       %}selected{% endif %}>New</option>
+      <option value="confirmed" {% if f_status=='confirmed' %}selected{% endif %}>Confirmed</option>
+      <option value="done"      {% if f_status=='done'      %}selected{% endif %}>Done</option>
+      <option value="cancelled" {% if f_status=='cancelled' %}selected{% endif %}>Cancelled</option>
+    </select>
+
+    <select name="flow_type">
+      <option value=""        {% if not f_flow %}selected{% endif %}>All types</option>
+      <option value="booking" {% if f_flow=='booking' %}selected{% endif %}>Booking</option>
+      <option value="order"   {% if f_flow=='order'   %}selected{% endif %}>Order</option>
+      <option value="mixed"   {% if f_flow=='mixed'   %}selected{% endif %}>Mixed</option>
+    </select>
+
+    <select name="date">
+      <option value=""          {% if not f_date %}selected{% endif %}>All dates</option>
+      <option value="today"     {% if f_date=='today'     %}selected{% endif %}>Today</option>
+      <option value="this_week" {% if f_date=='this_week' %}selected{% endif %}>This week</option>
+    </select>
+
+    <input type="text" name="q" value="{{ f_q }}"
+           placeholder="Search name or phone…">
+
+    <button class="btn-filter" type="submit">Filter</button>
+    {% if f_status or f_flow or f_date or f_q %}
+      <a class="btn-reset" href="/admin/orders">✕ Reset</a>
+    {% endif %}
+
+  </div>
+</form>
+
+{# ── active filter pills ──────────────────────────────────────────────────── #}
+{% if f_status or f_flow or f_date or f_q %}
+<div class="filter-pills">
+  {% if f_status %}<span class="filter-pill">status: {{ f_status }}</span>{% endif %}
+  {% if f_flow   %}<span class="filter-pill">type: {{ f_flow }}</span>{% endif %}
+  {% if f_date   %}<span class="filter-pill">date: {{ f_date }}</span>{% endif %}
+  {% if f_q      %}<span class="filter-pill">search: {{ f_q }}</span>{% endif %}
+</div>
+{% endif %}
+
+{# ── table ────────────────────────────────────────────────────────────────── #}
 <div class="card">
   {% if orders %}
   <div style="overflow-x:auto">
@@ -63,35 +133,27 @@
     <thead>
       <tr>
         <th>#</th>
-        <th>Created</th>
+        <th>Type</th>
         <th>Customer</th>
         <th>Phone</th>
-        <th>Type</th>
         <th>Items</th>
-        <th>Appointment</th>
         <th>Total</th>
+        <th>Day</th>
+        <th>Time</th>
         <th>Status</th>
+        <th>Created</th>
       </tr>
     </thead>
     <tbody>
     {% for o in orders %}
-    {% set status = o.status or 'new' %}
+    {% set status = o.status    or 'new'     %}
     {% set flow   = o.flow_type or 'booking' %}
     <tr>
 
+      {# ID #}
       <td style="color:#9ca3af;font-size:12px">{{ o.id }}</td>
 
-      <td style="font-size:12px;white-space:nowrap">
-        {{ (o.created_at or '')[:16] }}
-      </td>
-
-      <td style="font-weight:600">{{ o.customer_name or o.name or '—' }}</td>
-
-      <td style="font-size:12px;color:#6b7280;white-space:nowrap">
-        {{ o.phone or '—' }}
-      </td>
-
-      {# ── Type badge ──────────────────────────────────────────────── #}
+      {# Type badge #}
       <td>
         {% if flow == 'order' %}
           <span class="badge-flow badge-order">order</span>
@@ -102,7 +164,13 @@
         {% endif %}
       </td>
 
-      {# ── Items — bullet list with price ──────────────────────────── #}
+      {# Customer #}
+      <td style="font-weight:600">{{ o.customer_name or '—' }}</td>
+
+      {# Phone #}
+      <td style="font-size:12px;color:#6b7280;white-space:nowrap">{{ o.phone or '—' }}</td>
+
+      {# Items — bullet list with price #}
       <td>
         {% if o.items_rich %}
           {% for item in o.items_rich %}
@@ -127,18 +195,7 @@
         {% endif %}
       </td>
 
-      {# ── Appointment ──────────────────────────────────────────────── #}
-      <td class="appt">
-        {% set day  = o.day  or '' %}
-        {% set time = o.time or '' %}
-        {% if day or time %}
-          {{ day }} {{ time }}
-        {% else %}
-          <span style="color:#9ca3af">—</span>
-        {% endif %}
-      </td>
-
-      {# ── Total ────────────────────────────────────────────────────── #}
+      {# Total #}
       <td class="total-cell">
         {% if o.total_display and o.total_display > 0 %}
           MAD {{ o.total_display | int }}
@@ -147,7 +204,13 @@
         {% endif %}
       </td>
 
-      {# ── Status dropdown ──────────────────────────────────────────── #}
+      {# Day #}
+      <td class="appt">{{ o.day or '—' }}</td>
+
+      {# Time #}
+      <td class="appt">{{ o.time or '—' }}</td>
+
+      {# Status dropdown #}
       <td>
         <form class="status-form" method="POST"
               action="/admin/orders/{{ o.id }}/status"
@@ -155,9 +218,9 @@
           <select class="status-select" name="status"
                   style="
                     {% if status == 'confirmed' %}background:#dcfce7;color:#16a34a;border-color:#bbf7d0
-                    {% elif status == 'done' %}background:#f3f4f6;color:#6b7280;border-color:#e5e7eb
-                    {% elif status == 'cancelled' %}background:#fee2e2;color:#b91c1c;border-color:#fecaca
-                    {% else %}background:#ede9fe;color:#4f46e5;border-color:#c4b5fd
+                    {% elif status == 'done'    %}background:#f3f4f6;color:#6b7280;border-color:#e5e7eb
+                    {% elif status == 'cancelled'%}background:#fee2e2;color:#b91c1c;border-color:#fecaca
+                    {% else                     %}background:#ede9fe;color:#4f46e5;border-color:#c4b5fd
                     {% endif %}
                   ">
             <option value="new"       {% if status=='new'       %}selected{% endif %}>new</option>
@@ -166,6 +229,11 @@
             <option value="cancelled" {% if status=='cancelled' %}selected{% endif %}>cancelled</option>
           </select>
         </form>
+      </td>
+
+      {# Created #}
+      <td style="font-size:12px;white-space:nowrap;color:#6b7280">
+        {{ (o.created_at or '')[:16] }}
       </td>
 
     </tr>
@@ -177,8 +245,13 @@
   {% else %}
   <div class="empty">
     <div class="empty-icon">📦</div>
-    <div class="empty-text">No orders yet</div>
-    <div class="empty-sub">Customer orders will appear here once they complete a booking or purchase</div>
+    {% if f_status or f_flow or f_date or f_q %}
+      <div class="empty-text">No results match your filters</div>
+      <div class="empty-sub">Try adjusting the filters above or <a href="/admin/orders">reset</a></div>
+    {% else %}
+      <div class="empty-text">No orders yet</div>
+      <div class="empty-sub">Customer orders will appear here once they complete a booking or purchase</div>
+    {% endif %}
   </div>
   {% endif %}
 </div>
