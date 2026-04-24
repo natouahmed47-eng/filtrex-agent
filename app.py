@@ -299,6 +299,13 @@ def _migrate_saas():
             con.commit()
             print("[SAAS] migrated catalog_aliases → added lang column")
 
+        # clients: add whatsapp_connected column if missing
+        _cli_cols = [r[1] for r in con.execute("PRAGMA table_info(clients)").fetchall()]
+        if "whatsapp_connected" not in _cli_cols:
+            con.execute("ALTER TABLE clients ADD COLUMN whatsapp_connected INTEGER DEFAULT 0")
+            con.commit()
+            print("[SAAS] migrated clients → added whatsapp_connected")
+
         # ── STEP 8: Seed demo client ──────────────────────────────────────
         exists = con.execute("SELECT id FROM clients WHERE id = 1").fetchone()
         if not exists:
@@ -2889,6 +2896,77 @@ def admin_order_status(order_id):
     flash(f"Order #{order_id} marked as {new_status}.", "success")
     return redirect(url_for("admin_orders"))
 
+# ── /admin/connect-whatsapp ───────────────────────────────────────────────────
+@app.route("/admin/connect-whatsapp", methods=["GET", "POST"])
+def admin_connect_whatsapp():
+    guard = _admin_guard()
+    if guard:
+        return guard
+    client = get_client(CLIENT_ID)
+
+    if request.method == "POST":
+        action = request.form.get("action", "connect")
+
+        if action == "disconnect":
+            con = get_db_connection()
+            try:
+                con.execute(
+                    "UPDATE clients SET whatsapp_connected=0 WHERE id=?",
+                    (CLIENT_ID,)
+                )
+                con.commit()
+            finally:
+                con.close()
+            print(f"[CONNECT_WA] client={CLIENT_ID} disconnected")
+            flash("تم قطع الاتصال.", "success")
+            return redirect(url_for("admin_connect_whatsapp"))
+
+        # action == "connect"
+        instance = request.form.get("instance", "").strip()
+        token    = request.form.get("token", "").strip()
+
+        if not instance or not token:
+            flash("يرجى إدخال Instance ID والـ Token.", "error")
+            return redirect(url_for("admin_connect_whatsapp"))
+
+        # Test credentials against UltraMsg status endpoint
+        ok = False
+        try:
+            import requests as _req
+            resp = _req.get(
+                f"https://api.ultramsg.com/{instance}/instance/status",
+                params={"token": token},
+                timeout=8,
+            )
+            data = resp.json() if resp.content else {}
+            ok = resp.status_code == 200 and "error" not in data
+            print(f"[CONNECT_WA] test status={resp.status_code} ok={ok} body={str(data)[:120]}")
+        except Exception as _e:
+            print(f"[CONNECT_WA] test error: {repr(_e)}")
+            flash("تعذّر الاتصال بالخادم. تحقق من بياناتك وحاول مجدداً.", "error")
+            return redirect(url_for("admin_connect_whatsapp"))
+
+        if ok:
+            con = get_db_connection()
+            try:
+                con.execute("""
+                    UPDATE clients
+                    SET ultramsg_instance=?, ultramsg_token=?, whatsapp_connected=1
+                    WHERE id=?
+                """, (instance, token, CLIENT_ID))
+                con.commit()
+            finally:
+                con.close()
+            print(f"[CONNECT_WA] client={CLIENT_ID} connected instance={instance!r}")
+            flash("تم ربط واتساب بنجاح ✅", "success")
+        else:
+            flash("فشل التحقق من البيانات. تأكد من Instance ID والـ Token وحاول مجدداً.", "error")
+
+        return redirect(url_for("admin_connect_whatsapp"))
+
+    return render_template("admin/connect_whatsapp.html", client=client, active="whatsapp")
+
+
 # ── /admin/settings ───────────────────────────────────────────────────────────
 @app.route("/admin/settings", methods=["GET", "POST"])
 def admin_settings():
@@ -2903,17 +2981,14 @@ def admin_settings():
         currency         = request.form.get("currency", "MAD").strip()
         timezone         = request.form.get("timezone", "Africa/Casablanca").strip()
         admin_whatsapp   = request.form.get("admin_whatsapp", "").strip()
-        ultramsg_inst    = request.form.get("ultramsg_instance", "").strip()
-        ultramsg_tok     = request.form.get("ultramsg_token", "").strip()
         con = get_db_connection()
         try:
             con.execute("""
                 UPDATE clients SET name=?,business_type=?,default_language=?,
-                    currency=?,timezone=?,admin_whatsapp=?,
-                    ultramsg_instance=?,ultramsg_token=?
+                    currency=?,timezone=?,admin_whatsapp=?
                 WHERE id=?
             """, (name, business_type, default_language, currency, timezone,
-                  admin_whatsapp, ultramsg_inst or None, ultramsg_tok or None, CLIENT_ID))
+                  admin_whatsapp, CLIENT_ID))
             con.commit()
         finally:
             con.close()

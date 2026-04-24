@@ -1,0 +1,177 @@
+{% extends "admin/layout.html" %}
+{% block title %}ربط واتساب{% endblock %}
+{% block content %}
+
+<style>
+  .wa-page{max-width:520px}
+
+  /* ── status banner ────────────────────────────────────────────────────── */
+  .wa-status{
+    display:flex;align-items:center;gap:14px;
+    padding:20px 24px;border-radius:12px;margin-bottom:28px;
+  }
+  .wa-status.connected{background:#dcfce7;border:1.5px solid #bbf7d0}
+  .wa-status.disconnected{background:#f9fafb;border:1.5px solid #e5e7eb}
+  .wa-status-icon{font-size:32px;line-height:1}
+  .wa-status-text h3{font-size:15px;font-weight:700;margin-bottom:2px}
+  .wa-status-text p{font-size:13px;color:#6b7280}
+  .wa-status.connected .wa-status-text h3{color:#15803d}
+
+  /* ── steps ────────────────────────────────────────────────────────────── */
+  .steps{display:flex;flex-direction:column;gap:0;margin-bottom:28px}
+  .step{display:flex;gap:16px;align-items:flex-start;padding:16px 0;
+        border-bottom:1px solid #f3f4f6}
+  .step:last-child{border-bottom:none}
+  .step-num{
+    flex-shrink:0;width:28px;height:28px;border-radius:50%;
+    background:#4f46e5;color:#fff;font-size:13px;font-weight:700;
+    display:flex;align-items:center;justify-content:center;
+  }
+  .step-body h4{font-size:13px;font-weight:700;color:#111;margin-bottom:3px}
+  .step-body p{font-size:12px;color:#6b7280;line-height:1.5}
+  .step-body code{
+    display:inline-block;background:#f3f4f6;border-radius:5px;
+    padding:1px 7px;font-size:12px;color:#4f46e5;font-family:monospace;
+  }
+
+  /* ── form card ────────────────────────────────────────────────────────── */
+  .wa-form-card{
+    background:#fff;border-radius:12px;
+    box-shadow:0 1px 6px rgba(0,0,0,.06);padding:28px 32px;
+  }
+  .wa-form-card h2{font-size:16px;font-weight:700;margin-bottom:20px;color:#111}
+  .form-row{margin-bottom:18px}
+  .form-row label{display:block;font-size:13px;font-weight:600;color:#374151;margin-bottom:6px}
+  .form-row input[type=text],
+  .form-row input[type=password]{
+    width:100%;padding:10px 13px;border:1.5px solid #e5e7eb;border-radius:8px;
+    font-size:14px;color:#111;background:#fff;transition:border .12s;
+  }
+  .form-row input:focus{outline:none;border-color:#4f46e5}
+  .form-hint{font-size:12px;color:#9ca3af;margin-top:4px}
+  .form-actions{display:flex;gap:10px;margin-top:24px;flex-wrap:wrap;align-items:center}
+
+  .btn-wa{
+    padding:10px 24px;border-radius:8px;border:none;cursor:pointer;
+    font-size:14px;font-weight:700;background:#25d366;color:#fff;
+    display:inline-flex;align-items:center;gap:8px;
+  }
+  .btn-wa:hover{background:#1ebe5c}
+  .btn-disconnect{
+    padding:8px 18px;border-radius:8px;border:1.5px solid #fecaca;
+    background:transparent;color:#b91c1c;font-size:13px;font-weight:600;cursor:pointer;
+  }
+  .btn-disconnect:hover{background:#fef2f2}
+</style>
+
+<div class="page-head">
+  <div>
+    <h1 class="page-title">ربط واتساب</h1>
+    <p class="page-sub">اربط رقم واتساب الخاص بنشاطك لتفعيل المساعد الذكي</p>
+  </div>
+</div>
+
+<div class="wa-page">
+
+  {# ── Connection status banner ────────────────────────────────────────── #}
+  {% if client.whatsapp_connected %}
+  <div class="wa-status connected">
+    <div class="wa-status-icon">✅</div>
+    <div class="wa-status-text">
+      <h3>متصل بواتساب</h3>
+      <p>المساعد الذكي يعمل ويستقبل الرسائل الآن</p>
+    </div>
+  </div>
+  {% else %}
+  <div class="wa-status disconnected">
+    <div class="wa-status-icon">❌</div>
+    <div class="wa-status-text">
+      <h3 style="color:#374151">غير متصل</h3>
+      <p>أكمل الخطوات أدناه لتفعيل واتساب</p>
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── Already connected — show disconnect option only ─────────────────── #}
+  {% if client.whatsapp_connected %}
+  <div class="wa-form-card">
+    <h2>إعدادات الاتصال</h2>
+    <p style="font-size:13px;color:#6b7280;margin-bottom:20px">
+      واتساب مرتبط ويعمل. إذا أردت تغيير الاتصال، افصل الاتصال الحالي أولاً.
+    </p>
+    <form method="POST">
+      <input type="hidden" name="action" value="disconnect"/>
+      <button type="submit" class="btn-disconnect"
+              onclick="return confirm('هل تريد قطع الاتصال؟')">
+        قطع الاتصال
+      </button>
+    </form>
+  </div>
+
+  {% else %}
+  {# ── Setup steps ──────────────────────────────────────────────────────── #}
+  <div class="wa-form-card" style="margin-bottom:20px">
+    <h2>كيفية الربط</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h4>أنشئ حساباً في UltraMsg</h4>
+          <p>توجّه إلى <strong>ultramsg.com</strong> وسجّل دخولك أو أنشئ حساباً جديداً.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h4>أنشئ Instance وامسح QR</h4>
+          <p>في لوحة UltraMsg، أنشئ Instance جديدة ثم امسح رمز QR بهاتفك عبر
+             واتساب ← الأجهزة المرتبطة.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <h4>انسخ Instance ID و Token</h4>
+          <p>ستجدهما في صفحة الـ Instance:
+            <code>instance12345</code> و <code>token…</code></p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <h4>الصق البيانات وابدأ الربط</h4>
+          <p>أدخل البيانات في الحقول أدناه ثم اضغط "ابدأ الربط".</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ── Connect form ─────────────────────────────────────────────────────── #}
+  <div class="wa-form-card">
+    <h2>ابدأ الربط</h2>
+    <form method="POST">
+      <input type="hidden" name="action" value="connect"/>
+
+      <div class="form-row">
+        <label>Instance ID</label>
+        <input type="text" name="instance" placeholder="مثال: instance12345" autocomplete="off" required/>
+        <div class="form-hint">معرّف الـ Instance من لوحة UltraMsg</div>
+      </div>
+
+      <div class="form-row">
+        <label>Token</label>
+        <input type="password" name="token" placeholder="الصق الـ Token هنا" autocomplete="off" required/>
+        <div class="form-hint">لن يُعرض مجدداً بعد الحفظ</div>
+      </div>
+
+      <div class="form-actions">
+        <button type="submit" class="btn-wa">
+          <span>📱</span> ابدأ الربط
+        </button>
+      </div>
+    </form>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

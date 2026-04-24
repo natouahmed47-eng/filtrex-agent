@@ -25,6 +25,20 @@
     <div class="stat-label">Active Conversations</div>
     <div class="stat-val">{{ stats.active_convos }}</div>
   </div>
+  <a href="/admin/connect-whatsapp" style="text-decoration:none">
+    <div class="stat-card" style="cursor:pointer;transition:box-shadow .15s"
+         onmouseover="this.style.boxShadow='0 4px 14px rgba(0,0,0,.10)'"
+         onmouseout="this.style.boxShadow=''">
+      <div class="stat-label">WhatsApp</div>
+      <div class="stat-val" style="font-size:22px;margin-top:8px">
+        {% if client.whatsapp_connected %}
+          ✅ <span style="font-size:14px;font-weight:600;color:#15803d">متصل</span>
+        {% else %}
+          ❌ <span style="font-size:14px;font-weight:600;color:#b91c1c">غير متصل</span>
+        {% endif %}
+      </div>
+    </div>
+  </a>
 </div>
 
 <div class="page-head" style="margin-bottom:14px">
