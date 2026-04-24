@@ -306,6 +306,19 @@ def _migrate_saas():
             con.commit()
             print("[SAAS] migrated clients → added whatsapp_connected")
 
+        # users: add email + client_id columns for multi-tenant auth
+        _usr_cols = [r[1] for r in con.execute("PRAGMA table_info(users)").fetchall()]
+        if "email" not in _usr_cols:
+            con.execute("ALTER TABLE users ADD COLUMN email TEXT")
+            con.commit()
+            print("[SAAS] migrated users → added email")
+        if "client_id" not in _usr_cols:
+            con.execute("ALTER TABLE users ADD COLUMN client_id INTEGER")
+            # link existing users to client 1 (the only client in single-tenant MVP)
+            con.execute("UPDATE users SET client_id=1 WHERE client_id IS NULL")
+            con.commit()
+            print("[SAAS] migrated users → added client_id, linked existing users → 1")
+
         # ── STEP 8: Seed demo client ──────────────────────────────────────
         exists = con.execute("SELECT id FROM clients WHERE id = 1").fetchone()
         if not exists:
@@ -387,7 +400,12 @@ _migrate_saas()
 
 # ── SAAS HELPERS ──────────────────────────────────────────────────────────────
 
-CLIENT_ID = 1   # single-tenant MVP; future: resolve by webhook token
+CLIENT_ID = 1   # WhatsApp webhook default; admin routes use _session_client_id()
+
+def _session_client_id():
+    """Return the authenticated client's ID from session. Falls back to CLIENT_ID."""
+    cid = session.get("client_id")
+    return int(cid) if cid else CLIENT_ID
 
 def get_client(client_id=CLIENT_ID):
     con = get_db_connection()
@@ -2596,6 +2614,9 @@ def whatsapp():
 def _admin_guard():
     if not session.get("logged_in"):
         return redirect(url_for("login"))
+    cid = session.get("client_id")
+    if cid:
+        print(f"[AUTH_CLIENT_ID] client_id={cid} path={request.path}")
     return None
 
 # ── /admin/dashboard ──────────────────────────────────────────────────────────
@@ -2604,23 +2625,24 @@ def admin_dashboard():
     guard = _admin_guard()
     if guard:
         return guard
-    client = get_client(CLIENT_ID)
+    cid = _session_client_id()
+    client = get_client(cid)
     con = get_db_connection()
     try:
-        total_orders  = con.execute("SELECT COUNT(*) FROM orders WHERE client_id=?", (CLIENT_ID,)).fetchone()[0]
+        total_orders  = con.execute("SELECT COUNT(*) FROM orders WHERE client_id=?", (cid,)).fetchone()[0]
         today_str     = datetime.datetime.now().strftime("%Y-%m-%d")
         today_orders  = con.execute(
             "SELECT COUNT(*) FROM orders WHERE client_id=? AND created_at LIKE ?",
-            (CLIENT_ID, today_str + "%")
+            (cid, today_str + "%")
         ).fetchone()[0]
         catalog_count = con.execute(
-            "SELECT COUNT(*) FROM catalogs WHERE client_id=? AND is_active=1", (CLIENT_ID,)
+            "SELECT COUNT(*) FROM catalogs WHERE client_id=? AND is_active=1", (cid,)
         ).fetchone()[0]
         active_convos = con.execute(
             "SELECT COUNT(*) FROM whatsapp_state WHERE current_step != 'service'"
         ).fetchone()[0]
         recent_orders = [dict(r) for r in con.execute(
-            "SELECT * FROM orders WHERE client_id=? ORDER BY id DESC LIMIT 10", (CLIENT_ID,)
+            "SELECT * FROM orders WHERE client_id=? ORDER BY id DESC LIMIT 10", (cid,)
         ).fetchall()]
     finally:
         con.close()
@@ -2635,11 +2657,12 @@ def admin_catalog():
     guard = _admin_guard()
     if guard:
         return guard
-    client = get_client(CLIENT_ID)
+    cid = _session_client_id()
+    client = get_client(cid)
     con = get_db_connection()
     try:
         items = [dict(r) for r in con.execute(
-            "SELECT * FROM catalogs WHERE client_id=? ORDER BY id ASC", (CLIENT_ID,)
+            "SELECT * FROM catalogs WHERE client_id=? ORDER BY id ASC", (cid,)
         ).fetchall()]
     finally:
         con.close()
@@ -2652,7 +2675,8 @@ def admin_catalog_new():
     guard = _admin_guard()
     if guard:
         return guard
-    client = get_client(CLIENT_ID)
+    cid = _session_client_id()
+    client = get_client(cid)
     if request.method == "POST":
         title       = request.form.get("title", "").strip()
         typ         = request.form.get("type", "service")
@@ -2672,7 +2696,7 @@ def admin_catalog_new():
                     INSERT INTO catalogs (client_id,title,type,price,sale_price,
                         description,duration_min,stock_qty,is_active)
                     VALUES (?,?,?,?,?,?,?,?,?)
-                """, (CLIENT_ID, title, typ, price,
+                """, (cid, title, typ, price,
                       float(sale_price) if sale_price else None,
                       description, int(duration) if duration else None,
                       int(stock) if stock else None, is_active))
@@ -2696,11 +2720,12 @@ def admin_catalog_edit(cat_id):
     guard = _admin_guard()
     if guard:
         return guard
-    client = get_client(CLIENT_ID)
+    cid = _session_client_id()
+    client = get_client(cid)
     con = get_db_connection()
     try:
         item_row = con.execute(
-            "SELECT * FROM catalogs WHERE id=? AND client_id=?", (cat_id, CLIENT_ID)
+            "SELECT * FROM catalogs WHERE id=? AND client_id=?", (cat_id, cid)
         ).fetchone()
         if not item_row:
             flash("Item not found.", "error")
@@ -2731,7 +2756,7 @@ def admin_catalog_edit(cat_id):
             """, (title, typ, price,
                   float(sale_price) if sale_price else None,
                   description, int(duration) if duration else None,
-                  int(stock) if stock else None, is_active, cat_id, CLIENT_ID))
+                  int(stock) if stock else None, is_active, cat_id, cid))
             con.execute("DELETE FROM catalog_aliases WHERE catalog_id=?", (cat_id,))
             for alias in [a.strip() for a in aliases_raw.split(",") if a.strip()]:
                 con.execute(
@@ -2752,12 +2777,13 @@ def admin_catalog_delete(cat_id):
     guard = _admin_guard()
     if guard:
         return guard
+    cid = _session_client_id()
     con = get_db_connection()
     try:
         con.execute("DELETE FROM catalog_aliases WHERE catalog_id=?", (cat_id,))
         con.execute("DELETE FROM upsells WHERE trigger_item_id=? OR upsell_item_id=?",
                     (cat_id, cat_id))
-        con.execute("DELETE FROM catalogs WHERE id=? AND client_id=?", (cat_id, CLIENT_ID))
+        con.execute("DELETE FROM catalogs WHERE id=? AND client_id=?", (cat_id, cid))
         con.commit()
     finally:
         con.close()
@@ -2779,9 +2805,10 @@ def admin_orders():
 
     print(f"[ORDERS_FILTERS] status={f_status!r} flow={f_flow!r} date={f_date!r} q={f_q!r}")
 
+    cid = _session_client_id()
     # ── build SQL WHERE (status / name / phone / date handled in DB) ──────
     where_clauses = ["client_id = ?"]
-    params        = [CLIENT_ID]
+    params        = [cid]
 
     if f_status in ("new", "confirmed", "done", "cancelled"):
         where_clauses.append("status = ?")
@@ -2826,7 +2853,7 @@ def admin_orders():
                 for title in titles:
                     r = cat_con.execute(
                         "SELECT * FROM catalogs WHERE title=? AND client_id=? LIMIT 1",
-                        (title, CLIENT_ID)
+                        (title, cid)
                     ).fetchone()
                     if r:
                         catalog_items.append({k: r[k] for k in r.keys()})
@@ -2884,11 +2911,12 @@ def admin_order_status(order_id):
     if new_status not in ALLOWED:
         flash(f"Invalid status: {new_status!r}", "error")
         return redirect(url_for("admin_orders"))
+    cid = _session_client_id()
     con = get_db_connection()
     try:
         con.execute(
             "UPDATE bookings_or_orders SET status=? WHERE id=? AND client_id=?",
-            (new_status, order_id, CLIENT_ID)
+            (new_status, order_id, cid)
         )
         con.commit()
     finally:
@@ -2902,7 +2930,8 @@ def admin_connect_whatsapp():
     guard = _admin_guard()
     if guard:
         return guard
-    client = get_client(CLIENT_ID)
+    cid = _session_client_id()
+    client = get_client(cid)
 
     if request.method == "POST":
         action = request.form.get("action", "connect")
@@ -2912,12 +2941,12 @@ def admin_connect_whatsapp():
             try:
                 con.execute(
                     "UPDATE clients SET whatsapp_connected=0 WHERE id=?",
-                    (CLIENT_ID,)
+                    (cid,)
                 )
                 con.commit()
             finally:
                 con.close()
-            print(f"[CONNECT_WA] client={CLIENT_ID} disconnected")
+            print(f"[CONNECT_WA] client={cid} disconnected")
             flash("تم قطع الاتصال.", "success")
             return redirect(url_for("admin_connect_whatsapp"))
 
@@ -2953,11 +2982,11 @@ def admin_connect_whatsapp():
                     UPDATE clients
                     SET ultramsg_instance=?, ultramsg_token=?, whatsapp_connected=1
                     WHERE id=?
-                """, (instance, token, CLIENT_ID))
+                """, (instance, token, cid))
                 con.commit()
             finally:
                 con.close()
-            print(f"[CONNECT_WA] client={CLIENT_ID} connected instance={instance!r}")
+            print(f"[CONNECT_WA] client={cid} connected instance={instance!r}")
             flash("تم ربط واتساب بنجاح ✅", "success")
         else:
             flash("فشل التحقق من البيانات. تأكد من Instance ID والـ Token وحاول مجدداً.", "error")
@@ -2973,7 +3002,8 @@ def admin_settings():
     guard = _admin_guard()
     if guard:
         return guard
-    client = get_client(CLIENT_ID)
+    cid = _session_client_id()
+    client = get_client(cid)
     if request.method == "POST":
         name             = request.form.get("name", "").strip()
         business_type    = request.form.get("business_type", "clinic")
@@ -2988,7 +3018,7 @@ def admin_settings():
                     currency=?,timezone=?,admin_whatsapp=?
                 WHERE id=?
             """, (name, business_type, default_language, currency, timezone,
-                  admin_whatsapp, CLIENT_ID))
+                  admin_whatsapp, cid))
             con.commit()
         finally:
             con.close()
@@ -3088,24 +3118,83 @@ def register():
                 return redirect(url_for("login"))
     return render_template("register.html", error=error)
 
+@app.route("/signup", methods=["GET", "POST"])
+def signup():
+    error = None
+    if request.method == "POST":
+        business_name = request.form.get("business_name", "").strip()
+        email         = request.form.get("email", "").strip().lower()
+        password      = request.form.get("password", "").strip()
+        if not business_name or not email or not password:
+            error = "All fields are required."
+        elif len(password) < 6:
+            error = "Password must be at least 6 characters."
+        else:
+            con = get_db_connection()
+            try:
+                existing = con.execute(
+                    "SELECT id FROM users WHERE email=?", (email,)
+                ).fetchone()
+                if existing:
+                    error = "An account with this email already exists."
+                else:
+                    # Create client first
+                    cur_c = con.execute("""
+                        INSERT INTO clients
+                            (name, business_type, default_language,
+                             currency, timezone, is_active)
+                        VALUES (?, 'other', 'ar', 'MAD', 'Africa/Casablanca', 1)
+                    """, (business_name,))
+                    new_client_id = cur_c.lastrowid
+                    # Create user linked to that client
+                    cur_u = con.execute("""
+                        INSERT INTO users (username, email, password, client_id)
+                        VALUES (?, ?, ?, ?)
+                    """, (email, email,
+                          generate_password_hash(password), new_client_id))
+                    new_user_id = cur_u.lastrowid
+                    con.commit()
+                    print(f"[AUTH_SIGNUP] user_id={new_user_id} client_id={new_client_id} email={email!r}")
+                    # Auto-login after signup
+                    session.clear()
+                    session["logged_in"]  = True
+                    session["user_id"]    = new_user_id
+                    session["client_id"]  = new_client_id
+                    session["user_email"] = email
+                    print(f"[AUTH_LOGIN] email={email!r} client_id={new_client_id}")
+                    print(f"[AUTH_CLIENT_ID] client_id={new_client_id} path=/signup")
+                    return redirect(url_for("admin_dashboard"))
+            finally:
+                con.close()
+    return render_template("signup.html", error=error)
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     error = None
     if request.method == "POST":
-        username = request.form.get("username")
-        password = request.form.get("password")
+        email    = (request.form.get("email") or "").strip().lower()
+        password = (request.form.get("password") or "").strip()
         con = get_db_connection()
         try:
+            # Support login by email OR username (backward compat for existing accounts)
             row = con.execute(
-                "SELECT id, password FROM users WHERE username = ?", (username,)
+                "SELECT id, password, client_id, email FROM users WHERE email=? OR username=?",
+                (email, email)
             ).fetchone()
         finally:
             con.close()
         if row and check_password_hash(row["password"], password):
-            session["logged_in"] = True
-            session["user_id"] = row["id"]
+            client_id = row["client_id"] or CLIENT_ID
+            session.clear()
+            session["logged_in"]  = True
+            session["user_id"]    = row["id"]
+            session["client_id"]  = client_id
+            session["user_email"] = row["email"] or email
+            print(f"[AUTH_LOGIN] email={email!r} client_id={client_id}")
+            print(f"[AUTH_CLIENT_ID] client_id={client_id} path=/login")
             return redirect(url_for("admin_dashboard"))
-        error = "Invalid username or password."
+        error = "Invalid email or password."
     return render_template("login.html", error=error)
 
 @app.route("/logout")

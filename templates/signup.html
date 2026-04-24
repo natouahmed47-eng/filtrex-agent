@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Login — Filtrex AI</title>
+  <title>Sign Up — Filtrex AI</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -21,21 +21,11 @@
       box-shadow: 0 4px 24px rgba(0,0,0,0.08);
       padding: 48px 40px;
       width: 100%;
-      max-width: 400px;
+      max-width: 420px;
     }
-    .logo {
-      font-size: 22px;
-      font-weight: 700;
-      color: #111;
-      letter-spacing: -0.5px;
-      margin-bottom: 8px;
-    }
+    .logo { font-size: 22px; font-weight: 700; color: #111; letter-spacing: -0.5px; margin-bottom: 6px; }
     .logo span { color: #4f46e5; }
-    .subtitle {
-      font-size: 14px;
-      color: #6b7280;
-      margin-bottom: 32px;
-    }
+    .subtitle { font-size: 14px; color: #6b7280; margin-bottom: 32px; }
     label {
       display: block;
       font-size: 13px;
@@ -43,7 +33,7 @@
       color: #374151;
       margin-bottom: 6px;
     }
-    input[type="text"], input[type="password"] {
+    input[type="text"], input[type="email"], input[type="password"] {
       width: 100%;
       padding: 10px 14px;
       border: 1.5px solid #e5e7eb;
@@ -55,6 +45,7 @@
       margin-bottom: 18px;
     }
     input:focus { border-color: #4f46e5; }
+    .hint { font-size: 12px; color: #9ca3af; margin-top: -14px; margin-bottom: 16px; }
     button[type="submit"] {
       width: 100%;
       padding: 11px;
@@ -66,6 +57,7 @@
       border-radius: 8px;
       cursor: pointer;
       transition: background 0.15s;
+      margin-top: 4px;
     }
     button[type="submit"]:hover { background: #4338ca; }
     .error {
@@ -83,30 +75,55 @@
       font-size: 13px;
       color: #6b7280;
     }
-    .footer-link a {
-      color: #4f46e5;
-      text-decoration: none;
-      font-weight: 600;
-    }
+    .footer-link a { color: #4f46e5; text-decoration: none; font-weight: 600; }
     .footer-link a:hover { text-decoration: underline; }
+    .divider {
+      border: none;
+      border-top: 1px solid #f3f4f6;
+      margin: 24px 0 20px;
+    }
+    .plan-note {
+      background: #ede9fe;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 12px;
+      color: #4f46e5;
+      margin-bottom: 24px;
+    }
   </style>
 </head>
 <body>
   <div class="card">
     <div class="logo">Filtrex <span>AI</span></div>
-    <p class="subtitle">Sign in to your account</p>
+    <p class="subtitle">Create your account — free to start</p>
+
+    <div class="plan-note">
+      Each account gets its own isolated workspace. Your data is never shared.
+    </div>
+
     {% if error %}
     <div class="error">{{ error }}</div>
     {% endif %}
+
     <form method="POST">
+      <label for="business_name">Business Name</label>
+      <input type="text" id="business_name" name="business_name"
+             placeholder="e.g. Veltrix Dental Clinic" required />
+
       <label for="email">Email</label>
-      <input type="text" id="email" name="email" placeholder="you@example.com" autocomplete="email" required />
+      <input type="text" id="email" name="email"
+             placeholder="you@example.com" autocomplete="email" required />
+
       <label for="password">Password</label>
-      <input type="password" id="password" name="password" placeholder="Enter your password" required />
-      <button type="submit">Sign In</button>
+      <input type="password" id="password" name="password"
+             placeholder="At least 6 characters" required />
+      <p class="hint">Min. 6 characters</p>
+
+      <button type="submit">Create Account</button>
     </form>
+
     <div class="footer-link">
-      Don't have an account? <a href="/signup">Create account</a>
+      Already have an account? <a href="/login">Sign in</a>
     </div>
   </div>
 </body>
