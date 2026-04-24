@@ -1,7 +1,17 @@
 {% extends "admin/layout.html" %}
 {% block content %}
 
-<!-- PayPal SDK — loaded once, only when a PayPal plan card is visible -->
+{#
+  PayPal plan-ID map — edit here when new plan IDs are created in PayPal Dashboard.
+  Empty string  → plan shows "Contact Sales" button instead of PayPal button.
+#}
+{% set PAYPAL_PLANS = {
+  'starter':  'P-2U68430732155245WNHV6LMA',
+  'pro':      '',
+  'business': ''
+} %}
+
+<!-- PayPal SDK — vault=true + intent=subscription required for recurring billing -->
 <script src="https://www.paypal.com/sdk/js?client-id=AXII0NIu0wnEJwazRqZ5UsowkdJWxJdVYxrxUT84kYljpayOSUFC76fMRyvJbIFMuzYjZMv3gP53U4C3&vault=true&intent=subscription"
         data-sdk-integration-source="button-factory"
         defer></script>
@@ -51,7 +61,7 @@
   /* ── Plan cards grid ─────────────────────────────── */
   .plans-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
     gap: 18px; margin-top: 24px;
   }
   .plan-card {
@@ -74,28 +84,22 @@
   .plan-card-limits li::before { content: "✓ "; color: #4f46e5; font-weight: 700; }
 
   /* ── Buttons ─────────────────────────────────────── */
-  .btn-upgrade {
-    display: block; text-align: center; padding: 10px 14px;
-    border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer;
-    border: 1.5px solid #4f46e5; color: #4f46e5; background: #fff;
-    text-decoration: none; transition: all .15s; margin-top: auto;
-  }
-  .btn-upgrade:hover { background: #4f46e5; color: #fff; }
-  .btn-upgrade.current-plan {
-    background: #f3f4f6; border-color: #e5e7eb; color: #9ca3af;
-    cursor: default; pointer-events: none;
-  }
-  .btn-coming-soon {
+  .btn-current-plan {
     display: block; text-align: center; padding: 10px 14px;
     border-radius: 8px; font-size: 13px; font-weight: 600;
     border: 1.5px solid #e5e7eb; color: #9ca3af; background: #f9fafb;
-    cursor: not-allowed; margin-top: auto;
+    cursor: default; margin-top: auto;
   }
+  .btn-contact-sales {
+    display: block; text-align: center; padding: 10px 14px;
+    border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer;
+    border: 1.5px solid #6d28d9; color: #6d28d9; background: #fff;
+    text-decoration: none; transition: all .15s; margin-top: auto;
+  }
+  .btn-contact-sales:hover { background: #6d28d9; color: #fff; }
 
   /* ── PayPal button wrapper ───────────────────────── */
-  .paypal-btn-wrap {
-    margin-top: auto;
-  }
+  .paypal-btn-wrap { margin-top: auto; }
   .paypal-loading {
     text-align: center; font-size: 12px; color: #9ca3af;
     padding: 10px 0;
@@ -225,8 +229,9 @@
 
   <div class="plans-grid">
     {% for plan in all_plans %}
+      {% set plan_slug = plan.name | lower %}
       {% set is_current = sub and sub.plan_id == plan.id %}
-      {% set plan_slug  = plan.name | lower %}
+      {% set pp_id = PAYPAL_PLANS.get(plan_slug, '') %}
 
       <div class="plan-card {% if is_current %}current{% endif %}">
         {% if is_current %}<div class="plan-card-current-label">Current Plan</div>{% endif %}
@@ -248,19 +253,32 @@
           </ul>
         </div>
 
+        {# ── Button area ── #}
         {% if is_current %}
-          <div class="btn-upgrade current-plan">Current Plan</div>
+          {# Already on this plan #}
+          <div class="btn-current-plan">✓ Current Plan</div>
 
-        {% elif plan_slug == 'starter' %}
-          <!-- ── PayPal Subscription Button — Starter ── -->
+        {% elif plan_slug == 'free' %}
+          {# Free is the base plan — no upgrade button for downgrade #}
+          <div class="btn-current-plan" style="color:#d1d5db;">Free Tier</div>
+
+        {% elif pp_id %}
+          {# Live PayPal plan ID exists → render PayPal subscription button #}
           <div class="paypal-btn-wrap">
-            <div id="paypal-button-container-P-2U68430732155245WNHV6LMA">
-              <div class="paypal-loading">Loading payment button…</div>
+            <div id="paypal-btn-{{ plan_slug }}"
+                 data-plan-id="{{ pp_id }}"
+                 data-plan-name="{{ plan_slug }}">
+              <div class="paypal-loading">Loading payment…</div>
             </div>
           </div>
 
         {% else %}
-          <div class="btn-coming-soon">Coming soon</div>
+          {# No PayPal plan ID configured yet → show Contact Sales #}
+          <a href="mailto:sales@filtrex.ai?subject=Upgrade%20to%20{{ plan.name }}%20Plan"
+             class="btn-contact-sales">
+            Contact Sales →
+          </a>
+
         {% endif %}
 
       </div>
@@ -275,21 +293,35 @@
 
 </div>
 
-<!-- ═══ PayPal Subscription Script ═════════════════════════════════════════ -->
+<!-- ═══ PayPal Subscription Buttons — auto-initialised for every plan with a plan_id ═══ -->
 <script>
-(function initPayPal() {
-  var PAYPAL_PLAN_ID = 'P-2U68430732155245WNHV6LMA';
-  var container     = '#paypal-button-container-' + PAYPAL_PLAN_ID;
+(function () {
+  'use strict';
 
-  if (!document.querySelector(container)) return;   // not on page (current plan = starter)
+  /* Collect every container that declares a PayPal plan ID */
+  var containers = Array.from(
+    document.querySelectorAll('[id^="paypal-btn-"][data-plan-id]')
+  ).filter(function (el) {
+    return el.dataset.planId && el.dataset.planId.length > 0;
+  });
 
-  function renderButton() {
+  if (!containers.length) return;   /* nothing to render on this page */
+
+  /* Retry until the PayPal SDK is ready, then render all buttons */
+  function initAll() {
     if (typeof paypal === 'undefined') {
-      setTimeout(renderButton, 300);
+      setTimeout(initAll, 250);
       return;
     }
-    var el = document.querySelector(container);
-    if (el) el.innerHTML = '';   // clear loading text
+    containers.forEach(renderOne);
+  }
+
+  function renderOne(el) {
+    var planId   = el.dataset.planId;
+    var planName = el.dataset.planName;
+    var selector = '#' + el.id;
+
+    el.innerHTML = '';   /* clear "Loading payment…" text */
 
     paypal.Buttons({
       style: {
@@ -298,39 +330,48 @@
         layout: 'vertical',
         label:  'subscribe'
       },
-      createSubscription: function(data, actions) {
-        return actions.subscription.create({
-          plan_id: PAYPAL_PLAN_ID
-        });
+
+      createSubscription: function (data, actions) {
+        return actions.subscription.create({ plan_id: planId });
       },
-      onApprove: function(data, actions) {
-        fetch('/paypal/subscription-success', {
+
+      onApprove: function (data) {
+        return fetch('/paypal/subscription-success', {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify({
-            plan:            'starter',
+            plan:            planName,
             subscription_id: data.subscriptionID
           })
         })
-        .then(function(r) { return r.json(); })
-        .then(function(res) {
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
           if (res.ok) {
-            window.location.href = '/admin?upgraded=1';
+            window.location.href = '/admin/billing?success=1';
           } else {
-            alert('Something went wrong activating your plan. Please contact support.');
+            alert('Plan activation failed. Please contact support.');
           }
         })
-        .catch(function() {
-          window.location.href = '/admin?upgraded=1';
+        .catch(function () {
+          /* Network hiccup — still try to navigate so the webhook can activate */
+          window.location.href = '/admin/billing?success=1';
         });
       },
-      onError: function(err) {
-        console.error('[PayPal]', err);
+
+      onError: function (err) {
+        console.error('[PayPal error] plan=' + planName, err);
+        var wrap = document.getElementById('paypal-btn-' + planName);
+        if (wrap) {
+          wrap.innerHTML =
+            '<p style="color:#b91c1c;font-size:13px;text-align:center;padding:8px 0;">' +
+            '⚠️ Could not load payment button. Please refresh or contact support.' +
+            '</p>';
+        }
       }
-    }).render(container);
+    }).render(selector);
   }
 
-  renderButton();
+  initAll();
 })();
 </script>
 
