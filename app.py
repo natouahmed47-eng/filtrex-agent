@@ -1362,61 +1362,119 @@ def sanitize_booking_field(text, max_len=40):
     text = str(text).strip()
     return text[:max_len]
 
-def confirmation_message(state, name, lang, phone=None):
-    """Build confirmation message from catalog IDs in state.
-    Branches on flow type: 'booking' shows appointment, 'order' shows address."""
-    l    = lang if lang in ("ar", "en", "fr") else "ar"
-    _ids = json.loads(state.get("known_catalog_ids_json") or "[]")
-    _cur = get_client(CLIENT_ID).get("currency", "SAR")
-    day  = sanitize_booking_field(state.get("known_day"))
-    time = sanitize_booking_field(state.get("known_time"))
+def build_confirmation(state, items, flow_type, client_config, lang, name):
+    """Unified Confirmation Engine — returns formatted confirmation string.
+    Fully dynamic: no hardcoded service/product names.
+    Branches on flow_type: 'booking' | 'order' | 'mixed'.
+    Supports per-item options (size/color) and quantity."""
+    l   = lang if lang in ("ar", "en", "fr") else "ar"
+    cur = client_config.get("currency", "SAR")
+    _ids = [it["id"] for it in items] if items else []
 
-    items = get_catalog_items(CLIENT_ID, _ids)
-    flow  = determine_flow_type(items)
-    print(f"[FLOW_TYPE] confirmation_message flow={flow!r}")
+    print(f"[CONFIRM_FLOW_TYPE] {flow_type!r}")
+    print(f"[CONFIRM_ITEMS] {[it.get('title') for it in items]}")
 
-    if items:
-        item_lines = "\n".join(
-            f"• {it['title']} — {int(it.get('sale_price') or it.get('price') or 0)} {_cur}"
-            for it in items
-        )
-        total = calculate_total(CLIENT_ID, _ids)
-        total_str = f"{int(total)} {_cur}"
-    else:
-        _svcs = ensure_svc_list(state.get("known_service"))
-        item_lines = "\n".join(f"• {s}" for s in _svcs) if _svcs else "-"
-        total_str = "-"
+    # ── Per-item quantity and options from state ──────────────────────────
+    qty_global  = str(state.get("quantity") or state.get("known_quantity") or "").strip()
+    known_opts  = state.get("known_options") or {}   # {str(catalog_id): {key: val}}
 
-    if flow == "order":
-        # ── Product order confirmation ────────────────────────────────────
-        _hdr   = {"ar": "تم تأكيد طلبك بنجاح ✅",       "en": "Your order is confirmed ✅",          "fr": "Votre commande est confirmée ✅"}
-        _items = {"ar": "المنتجات:",                     "en": "Products:",                           "fr": "Produits:"}
-        _tot   = {"ar": "الإجمالي:",                     "en": "Total:",                              "fr": "Total:"}
-        _addr  = {"ar": "عنوان التوصيل:",                "en": "Delivery address:",                   "fr": "Adresse de livraison:"}
-        _nm    = {"ar": "الاسم:",                        "en": "Name:",                               "fr": "Nom:"}
-        _close = {"ar": "شكرًا على طلبك 🚀",            "en": "Thank you for your order 🚀",         "fr": "Merci pour votre commande 🚀"}
-        parts = [_hdr[l], "", _items[l], item_lines, "", f"{_tot[l]} {total_str}"]
-        _address = state.get("known_address", "")
-        if _address:
-            parts.append(f"{_addr[l]} {_address}")
-        parts.append(f"{_nm[l]} {name}")
-        parts.append("")
-        parts.append(_close[l])
-    else:
-        # ── Service booking confirmation (default, also used for mixed) ───
-        _hdr   = {"ar": "تم تأكيد حجزك بنجاح ✅",      "en": "Your booking is confirmed ✅",        "fr": "Votre réservation est confirmée ✅"}
-        _items = {"ar": "الخدمات:",                     "en": "Services:",                          "fr": "Services:"}
-        _tot   = {"ar": "الإجمالي:",                    "en": "Total:",                             "fr": "Total:"}
-        _appt  = {"ar": "الموعد:",                      "en": "Appointment:",                       "fr": "Rendez-vous:"}
-        _nm    = {"ar": "الاسم:",                       "en": "Name:",                              "fr": "Nom:"}
-        _close = {"ar": "نحن بانتظارك ⭐",              "en": "We look forward to seeing you ⭐",   "fr": "Nous avons hâte de vous accueillir ⭐"}
-        parts = [_hdr[l], "", _items[l], item_lines, "", f"{_tot[l]} {total_str}"]
+    def _fmt_item(it):
+        title   = it.get("title", "?")
+        price   = int(it.get("sale_price") or it.get("price") or 0)
+        it_type = (it.get("type") or "service").lower()
+        opts    = known_opts.get(str(it.get("id", ""))) or {}
+        if opts:
+            opts_str = " / ".join(f"{v}" for v in opts.values())
+            label = f"• {title} ({opts_str}) — {price} {cur}"
+        else:
+            label = f"• {title} — {price} {cur}"
+        if it_type == "product" and qty_global and qty_global not in ("", "1"):
+            label += f" × {qty_global}"
+        return label
+
+    svc_items  = [it for it in items if (it.get("type") or "service").lower() == "service"]
+    prod_items = [it for it in items if (it.get("type") or "service").lower() == "product"]
+    fallback   = items or []
+
+    # ── Total price ──────────────────────────────────────────────────────
+    total     = calculate_total(CLIENT_ID, _ids) if _ids else 0.0
+    total_str = f"{int(total)} {cur}"
+    print(f"[CONFIRM_TOTAL] {total_str}")
+
+    # ── i18n labels — 100% dynamic, nothing hardcoded outside this dict ──
+    _L = {
+        "hdr_booking": {"ar": "✅ تم تأكيد حجزك",          "en": "✅ Booking confirmed",                       "fr": "✅ Réservation confirmée"},
+        "hdr_order":   {"ar": "✅ تم تأكيد طلبك",          "en": "✅ Order confirmed",                         "fr": "✅ Commande confirmée"},
+        "hdr_mixed":   {"ar": "✅ تم تأكيد طلبك",          "en": "✅ Order confirmed",                         "fr": "✅ Commande confirmée"},
+        "services":    {"ar": "الخدمات:",                  "en": "Services:",                                 "fr": "Services:"},
+        "products":    {"ar": "المنتجات:",                 "en": "Products:",                                 "fr": "Produits:"},
+        "total":       {"ar": "الإجمالي:",                 "en": "Total:",                                    "fr": "Total:"},
+        "appointment": {"ar": "الموعد:",                   "en": "Appointment:",                              "fr": "Rendez-vous:"},
+        "address":     {"ar": "عنوان التوصيل:",            "en": "Delivery address:",                         "fr": "Adresse de livraison:"},
+        "name":        {"ar": "الاسم:",                    "en": "Name:",                                     "fr": "Nom:"},
+        "close_bk":    {"ar": "نحن بانتظارك ⭐",           "en": "We look forward to seeing you ⭐",           "fr": "Nous avons hâte de vous accueillir ⭐"},
+        "close_ord":   {"ar": "شكرًا على طلبك 🚀",         "en": "Thank you for your order 🚀",               "fr": "Merci pour votre commande 🚀"},
+        "close_mix":   {"ar": "شكرًا! سنتواصل معك قريباً 🚀", "en": "Thanks! We'll be in touch soon 🚀",     "fr": "Merci! Nous vous contacterons bientôt 🚀"},
+    }
+    def lbl(key): return _L[key].get(l, _L[key]["ar"])
+
+    day     = sanitize_booking_field(state.get("known_day"))
+    time    = sanitize_booking_field(state.get("known_time"))
+    address = (state.get("known_address") or state.get("address") or "").strip()
+    parts   = []
+
+    if flow_type == "booking":
+        parts += [lbl("hdr_booking"), ""]
+        parts += [lbl("services")] + [_fmt_item(it) for it in (svc_items or fallback)]
+        if total > 0:
+            parts += ["", f"{lbl('total')} {total_str}"]
         if day or time:
-            parts.append(f"{_appt[l]} {day or ''} {time or ''}".strip())
-        parts.append(f"{_nm[l]} {name}")
-        parts.append("")
-        parts.append(_close[l])
+            parts.append(f"{lbl('appointment')} {day} {time}".strip())
+        parts.append(f"{lbl('name')} {name}")
+        parts += ["", lbl("close_bk")]
+
+    elif flow_type == "order":
+        parts += [lbl("hdr_order"), ""]
+        parts += [lbl("products")] + [_fmt_item(it) for it in (prod_items or fallback)]
+        parts += ["", f"{lbl('total')} {total_str}"]
+        if address:
+            parts.append(f"{lbl('address')} {address}")
+        parts.append(f"{lbl('name')} {name}")
+        parts += ["", lbl("close_ord")]
+
+    else:   # mixed
+        parts += [lbl("hdr_mixed"), ""]
+        if svc_items:
+            parts += [lbl("services")] + [_fmt_item(it) for it in svc_items]
+        if prod_items:
+            parts += [lbl("products")] + [_fmt_item(it) for it in prod_items]
+        if not svc_items and not prod_items:
+            parts += [_fmt_item(it) for it in fallback]
+        parts += ["", f"{lbl('total')} {total_str}"]
+        if day or time:
+            parts.append(f"{lbl('appointment')} {day} {time}".strip())
+        if address:
+            parts.append(f"{lbl('address')} {address}")
+        parts.append(f"{lbl('name')} {name}")
+        parts += ["", lbl("close_mix")]
+
     return "\n".join(parts)
+
+
+def confirmation_message(state, name, lang, phone=None):
+    """Thin wrapper — resolves items/flow/client then delegates to build_confirmation()."""
+    _ids         = json.loads(state.get("known_catalog_ids_json") or "[]")
+    items        = get_catalog_items(CLIENT_ID, _ids)
+    flow         = determine_flow_type(items)
+    client_cfg   = get_client(CLIENT_ID)
+    l            = lang if lang in ("ar", "en", "fr") else "ar"
+    # Fallback item list from known_service if catalog IDs resolve nothing
+    if not items:
+        _svcs = ensure_svc_list(state.get("known_service"))
+        items = [{"id": None, "title": s, "type": "service", "price": 0, "sale_price": None}
+                 for s in _svcs]
+        flow  = "booking"
+    return build_confirmation(state, items, flow, client_cfg, l, name)
 
 _RECOMMENDED_SERVICE = "تنظيف أسنان"
 
