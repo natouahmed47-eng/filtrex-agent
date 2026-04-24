@@ -811,28 +811,7 @@ def wa_reply(to, text):
     return "", 200
 
 
-def wa_send_admin(text, customer_sender=None):
-    """Send a message to the ADMIN only.
-    customer_sender: the customer's normalized number.
-    If admin number == customer number the notification is skipped so the
-    customer can never receive admin content, even in single-device testing."""
-    if not ADMIN_WHATSAPP_NUMBER or not ADMIN_WHATSAPP_NUMBER.strip():
-        print("[SEND_ADMIN] skipped — ADMIN_WHATSAPP_NUMBER not configured")
-        return
-    _to = normalize_number(ADMIN_WHATSAPP_NUMBER.strip())
-    if customer_sender:
-        _cs = normalize_number(customer_sender)
-        if _to == _cs:
-            print(f"[SEND_ADMIN] skipped — admin number == customer number ({_to!r}). "
-                  f"Set a different ADMIN_WHATSAPP_NUMBER to receive booking notifications.")
-            return
-    print(f"[SEND_ADMIN] to={_to!r}")
-    print(f"[SEND_ADMIN] body={text!r}")
-    try:
-        resp = ultramsg_send(_to, text)
-        print(f"[SEND_ADMIN] status={resp.status_code if resp else 'N/A'}")
-    except Exception as e:
-        print(f"[SEND_ADMIN] ERROR={e}")
+# wa_send_admin() REMOVED — use send_booking_messages() as the single send point
 
 _WA_PRICES = {
     "تنظيف أسنان":   "100 ريال",
@@ -1596,6 +1575,7 @@ def send_booking_messages(sender, state, name, lang):
     Sends exactly ONE message to the customer and ONE to the admin.
     This is the ONLY function allowed to send booking-related messages."""
 
+    print(f"[TRACE] sending from send_booking_messages ONLY")
     print(f"[DEBUG_SEND_CHECK] sender={sender!r} name={name!r}")
 
     # ── 1. Build customer confirmation ───────────────────────────────────────
@@ -1603,6 +1583,7 @@ def send_booking_messages(sender, state, name, lang):
 
     # ── 2. Send to customer (sender) — ONLY the confirmation ────────────────
     print(f"[SEND_CUSTOMER] to={normalize_number(sender)!r}")
+    print(f"[SEND_CUSTOMER] body={customer_message!r}")
     wa_reply(sender, customer_message)
 
     # ── 3. Build admin notification ──────────────────────────────────────────
@@ -1863,17 +1844,21 @@ def whatsapp():
     print("🔥 WHATSAPP ROUTE HIT")
     try:
         data = request.get_json(force=True, silent=True) or {}
+        print(f"[TRACE_PAYLOAD] {data}")          # full dump — reveals UltraMsg echo payloads
         msg_data     = data.get("data", {})
         sender       = msg_data.get("from", "").strip()
         incoming_msg = msg_data.get("body", "").strip()
         msg_type     = msg_data.get("type", "")
-        from_me      = bool(msg_data.get("fromMe", False))
 
-        print(f"[WHATSAPP] sender={sender!r} message={incoming_msg!r} type={msg_type!r} fromMe={from_me!r}")
+        # ── Harden fromMe: UltraMsg may send True, 1, "true", "1" ────────────
+        _from_me_raw = msg_data.get("fromMe", False)
+        from_me = _from_me_raw in (True, 1, "true", "1", "True")
+
+        print(f"[WHATSAPP] sender={sender!r} message={incoming_msg!r} type={msg_type!r} fromMe_raw={_from_me_raw!r} fromMe={from_me!r}")
 
         # ── Ignore outbound messages the bot itself sent ─────────────────────
         if from_me:
-            print("[WHATSAPP] ignored outbound (fromMe=True) — skipping to prevent loop")
+            print(f"[WHATSAPP] IGNORED outbound (fromMe={_from_me_raw!r}) — body={incoming_msg!r}")
             return "", 200
 
         if msg_type != "chat" or not sender or not incoming_msg:
