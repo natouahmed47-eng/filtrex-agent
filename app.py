@@ -796,12 +796,21 @@ def wa_reply(to, text):
     return "", 200
 
 
-def wa_send_admin(text):
-    """Send a message to the ADMIN only. Never send customer messages through here."""
+def wa_send_admin(text, customer_sender=None):
+    """Send a message to the ADMIN only.
+    customer_sender: the customer's normalized number.
+    If admin number == customer number the notification is skipped so the
+    customer can never receive admin content, even in single-device testing."""
     if not ADMIN_WHATSAPP_NUMBER or not ADMIN_WHATSAPP_NUMBER.strip():
         print("[SEND_ADMIN] skipped — ADMIN_WHATSAPP_NUMBER not configured")
         return
     _to = normalize_number(ADMIN_WHATSAPP_NUMBER.strip())
+    if customer_sender:
+        _cs = normalize_number(customer_sender)
+        if _to == _cs:
+            print(f"[SEND_ADMIN] skipped — admin number == customer number ({_to!r}). "
+                  f"Set a different ADMIN_WHATSAPP_NUMBER to receive booking notifications.")
+            return
     print(f"[SEND_ADMIN] to={_to!r}")
     print(f"[SEND_ADMIN] body={text!r}")
     try:
@@ -1592,7 +1601,7 @@ def notify_admin_booking(phone, state, name):
         f"الإجمالي: {total_str}\n"
         f"الموعد: {state.get('known_day', '')} {state.get('known_time', '')}"
     )
-    wa_send_admin(msg.strip())   # ← ONLY route for admin messages
+    wa_send_admin(msg.strip(), customer_sender=phone)   # ← ONLY route for admin messages
 
 _ALL_TIMES = [
     "09:00", "10:00", "11:00", "12:00",
@@ -2100,23 +2109,28 @@ def whatsapp():
             state["known_catalog_ids_json"] = json.dumps(_sc_ids)
             state["current_step"] = "done"
             state["completed"]    = True
+
+            # 1. Persist the booking
             wa_save_booking(sender, state, _sc_name)
-            # ── Admin notification — goes to ADMIN_WHATSAPP_NUMBER only ──────
-            _admin_norm = normalize_number(ADMIN_WHATSAPP_NUMBER.strip()) if ADMIN_WHATSAPP_NUMBER else ""
-            _sender_norm = normalize_number(sender)
-            if _admin_norm and _admin_norm == _sender_norm:
-                print(f"[WARNING] ADMIN_WHATSAPP_NUMBER == sender — same phone: both messages will arrive at {_sender_norm!r}. Set a separate admin number to avoid this.")
+            wa_save(sender, state)
+
+            # 2. Build messages (never mixed up)
+            _customer_message = confirmation_message(state, _sc_name, lang, phone=None)
+            _admin_message    = None   # built inside notify_admin_booking
+
+            # 3. Send admin notification — skipped automatically if admin == sender
             try:
-                notify_admin_booking(sender, state, _sc_name)   # → wa_send_admin() → ADMIN number
+                notify_admin_booking(sender, state, _sc_name)
             except Exception as _ne:
                 print(f"[ADMIN_NOTIFY_ERROR] {repr(_ne)}")
-            # ── Customer confirmation — goes to sender only ───────────────────
-            _confirm = confirmation_message(state, _sc_name, lang, phone=None)
-            wa_save(sender, state)          # persist completed=True + step=done
-            print(f"[CONFIRMATION] sent_to_customer={sender!r}")
+
+            # 4. Send customer confirmation — ONLY the confirmation text
+            print(f"[SEND_CUSTOMER] to={normalize_number(sender)!r}")
+            _admin_log = normalize_number(ADMIN_WHATSAPP_NUMBER.strip()) if ADMIN_WHATSAPP_NUMBER else "not-set"
+            print(f"[SEND_ADMIN] to={_admin_log!r}")
             print(f"[STATE_COMPLETED] True")
             print(f"[FINAL STATE] {state}")
-            return wa_reply(sender, _confirm)
+            return wa_reply(sender, _customer_message)
 
         # ── STEP: service ─────────────────────────────────────────────────
         if step == "service":
@@ -2333,23 +2347,27 @@ def whatsapp():
 
             state["current_step"] = "done"
             state["completed"]    = True
+
+            # 1. Persist the booking
             wa_save_booking(sender, state, name)
-            # ── Admin notification — goes to ADMIN_WHATSAPP_NUMBER only ──────
-            _admin_norm2  = normalize_number(ADMIN_WHATSAPP_NUMBER.strip()) if ADMIN_WHATSAPP_NUMBER else ""
-            _sender_norm2 = normalize_number(sender)
-            if _admin_norm2 and _admin_norm2 == _sender_norm2:
-                print(f"[WARNING] ADMIN_WHATSAPP_NUMBER == sender — same phone: both messages will arrive at {_sender_norm2!r}. Set a separate admin number to avoid this.")
+            wa_save(sender, state)
+
+            # 2. Build messages (never mixed up)
+            _customer_message2 = confirmation_message(state, name, lang, phone=None)
+
+            # 3. Send admin notification — skipped automatically if admin == sender
             try:
-                notify_admin_booking(sender, state, name)       # → wa_send_admin() → ADMIN number
+                notify_admin_booking(sender, state, name)
             except Exception as _ne:
                 print(f"[ADMIN_NOTIFY_ERROR] {repr(_ne)}")
-            # ── Customer confirmation — goes to sender only ───────────────────
-            _confirm = confirmation_message(state, name, lang, phone=None)
-            wa_save(sender, state)          # persist completed=True + step=done
-            print(f"[CONFIRMATION] sent_to_customer={sender!r}")
+
+            # 4. Send customer confirmation — ONLY the confirmation text
+            print(f"[SEND_CUSTOMER] to={normalize_number(sender)!r}")
+            _admin_log2 = normalize_number(ADMIN_WHATSAPP_NUMBER.strip()) if ADMIN_WHATSAPP_NUMBER else "not-set"
+            print(f"[SEND_ADMIN] to={_admin_log2!r}")
             print(f"[STATE_COMPLETED] True")
             print(f"[FINAL STATE] {state}")
-            return wa_reply(sender, _confirm)
+            return wa_reply(sender, _customer_message2)
 
         else:
             _reprompts = {
