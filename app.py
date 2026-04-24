@@ -726,6 +726,16 @@ def _migrate_saas():
             con.execute("ALTER TABLE clients ADD COLUMN subscription_id TEXT")
             con.commit()
             print("[BILLING] migrated clients → added subscription_id")
+        if "subscription_status" not in _cli_cols:
+            con.execute("ALTER TABLE clients ADD COLUMN subscription_status TEXT DEFAULT 'inactive'")
+            # backfill: clients that already have a plan are active
+            con.execute("""
+                UPDATE clients
+                SET subscription_status = 'active'
+                WHERE plan IS NOT NULL AND plan != 'free' AND plan != ''
+            """)
+            con.commit()
+            print("[BILLING] migrated clients → added subscription_status")
 
         # ── STEP 7d: api_keys ─────────────────────────────────────────────
         con.execute("""
@@ -760,6 +770,22 @@ def _migrate_saas():
                 config_json TEXT DEFAULT '{}',
                 is_active   INTEGER DEFAULT 1,
                 updated_at  TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        con.commit()
+
+        # ── STEP 7g: paypal_payments ──────────────────────────────────────
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS paypal_payments (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id       INTEGER,
+                subscription_id TEXT,
+                sale_id         TEXT UNIQUE,
+                amount          REAL,
+                currency        TEXT DEFAULT 'USD',
+                event_type      TEXT,
+                raw_json        TEXT,
+                created_at      TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
         con.commit()
@@ -3938,7 +3964,133 @@ def admin_settings():
         return redirect(url_for("admin_settings"))
     return render_template("admin/settings.html", client=client, active="settings")
 
-# ── /admin/billing ────────────────────────────────────────────────────────────
+# ── /admin/billing + PayPal routes ───────────────────────────────────────────
+# ── PayPal plan-ID → internal plan name map ──────────────────────────────────
+PAYPAL_PLAN_MAP = {
+    "P-2U68430732155245WNHV6LMA": "starter",   # live Starter plan
+    "P-STARTER":                   "starter",   # test alias
+    "P-PRO":                       "pro",
+    "P-BUSINESS":                  "business",
+}
+
+
+def get_plan_from_paypal(plan_id):
+    """Return internal plan name for a PayPal plan_id, defaulting to 'free'."""
+    return PAYPAL_PLAN_MAP.get(plan_id, "free")
+
+
+# ── /paypal/webhook ───────────────────────────────────────────────────────────
+@app.route("/paypal/webhook", methods=["POST"])
+def paypal_webhook():
+    import json as _json
+
+    payload    = request.get_json(silent=True) or {}
+    event_type = payload.get("event_type", "UNKNOWN")
+    resource   = payload.get("resource", {})
+
+    print(f"[PAYPAL WEBHOOK RECEIVED] event_type={event_type!r}")
+
+    # ── BILLING.SUBSCRIPTION.ACTIVATED ───────────────────────────────────
+    if event_type == "BILLING.SUBSCRIPTION.ACTIVATED":
+        subscription_id = resource.get("id")
+        plan_id         = resource.get("plan_id")
+        subscriber      = resource.get("subscriber") or {}
+        email           = subscriber.get("email_address", "").strip().lower()
+        plan_name       = get_plan_from_paypal(plan_id)
+
+        print(f"[SUBSCRIPTION ACTIVATED] sub_id={subscription_id!r} "
+              f"plan_id={plan_id!r} → plan={plan_name!r} email={email!r}")
+
+        con = get_db_connection()
+        try:
+            client_id = None
+
+            # Resolve client via users.email
+            if email:
+                user_row = con.execute(
+                    "SELECT client_id FROM users WHERE LOWER(email)=?", (email,)
+                ).fetchone()
+                if user_row:
+                    client_id = user_row["client_id"]
+
+            # Fallback: resolve via existing subscription_id on clients
+            if not client_id and subscription_id:
+                cli_row = con.execute(
+                    "SELECT id FROM clients WHERE subscription_id=?",
+                    (subscription_id,)
+                ).fetchone()
+                if cli_row:
+                    client_id = cli_row["id"]
+
+            if client_id:
+                now = datetime.now().isoformat(timespec="seconds")
+                con.execute("""
+                    UPDATE clients
+                    SET plan=?, subscription_id=?,
+                        subscription_status='active'
+                    WHERE id=?
+                """, (plan_name, subscription_id, client_id))
+                con.commit()
+                print(f"[SUBSCRIPTION ACTIVATED] client={client_id} "
+                      f"plan={plan_name!r} status=active")
+
+                # Keep client_subscriptions in sync for limits/usage
+                upgrade_client_plan(client_id, plan_name, subscription_id)
+            else:
+                print(f"[SUBSCRIPTION ACTIVATED] WARNING: no client found "
+                      f"for email={email!r} sub_id={subscription_id!r}")
+        finally:
+            con.close()
+
+    # ── PAYMENT.SALE.COMPLETED ────────────────────────────────────────────
+    elif event_type == "PAYMENT.SALE.COMPLETED":
+        subscription_id = resource.get("billing_agreement_id")
+        sale_id         = resource.get("id")
+        amount_obj      = resource.get("amount") or {}
+        amount          = amount_obj.get("total")
+        currency        = amount_obj.get("currency", "USD")
+
+        print(f"[PAYMENT COMPLETED] sub_id={subscription_id!r} "
+              f"amount={amount!r} {currency} sale_id={sale_id!r}")
+
+        con = get_db_connection()
+        try:
+            # Resolve client via subscription_id stored on clients
+            client_id = None
+            if subscription_id:
+                cli_row = con.execute(
+                    "SELECT id FROM clients WHERE subscription_id=?",
+                    (subscription_id,)
+                ).fetchone()
+                if cli_row:
+                    client_id = cli_row["id"]
+
+            now = datetime.now().isoformat(timespec="seconds")
+            try:
+                con.execute("""
+                    INSERT OR IGNORE INTO paypal_payments
+                        (client_id, subscription_id, sale_id, amount,
+                         currency, event_type, raw_json, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (client_id, subscription_id, sale_id,
+                      float(amount) if amount else None,
+                      currency, event_type,
+                      _json.dumps(payload), now))
+                con.commit()
+                print(f"[PAYMENT COMPLETED] logged: client={client_id} "
+                      f"amount={amount} {currency}")
+            except Exception as _pe:
+                print(f"[PAYMENT COMPLETED] insert error: {repr(_pe)}")
+        finally:
+            con.close()
+
+    else:
+        print(f"[PAYPAL WEBHOOK RECEIVED] unhandled event_type={event_type!r} — ignored")
+
+    # Always return 200 so PayPal doesn't retry
+    return {"ok": True}, 200
+
+
 def upgrade_client_plan(client_id, plan_name, subscription_id=None):
     """
     Activate a named subscription plan for a client.
