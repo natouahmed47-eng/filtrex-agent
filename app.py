@@ -1634,22 +1634,18 @@ def send_booking_messages(sender, state, name, lang):
         print("[SEND_ADMIN] SKIPPED — ADMIN_WHATSAPP_NUMBER not configured")
         return
 
-    print(f"[DEBUG_ADMIN_RAW] {ADMIN_WHATSAPP_NUMBER!r}")
+    print(f"[ADMIN_RAW] {ADMIN_WHATSAPP_NUMBER!r}")
     _admin_to   = normalize_number(ADMIN_WHATSAPP_NUMBER.strip())
     _customer_n = normalize_number(sender)
-    print(f"[DEBUG_ADMIN_NORMALIZED] {_admin_to!r}")
-    print(f"[DEBUG_CUSTOMER_NORMALIZED] {_customer_n!r}")
+    print(f"[ADMIN_FINAL] {_admin_to!r}")
+    print(f"[CUSTOMER] {_customer_n!r}")
 
     if _admin_to == _customer_n:
         print(f"[SEND_ADMIN] SKIPPED — admin == customer ({_admin_to!r})")
         return
 
-    print(f"[SEND_ADMIN] to={_admin_to!r}")
-    try:
-        resp = ultramsg_send(_admin_to, admin_message)
-        print(f"[SEND_ADMIN] status={resp.status_code if resp else 'N/A'}")
-    except Exception as e:
-        print(f"[SEND_ADMIN] ERROR={e}")
+    # resp = ultramsg_send(_admin_to, admin_message)   # DISABLED FOR TEST
+    print("[SEND_ADMIN] DISABLED FOR TEST")
 
 _ALL_TIMES = [
     "09:00", "10:00", "11:00", "12:00",
