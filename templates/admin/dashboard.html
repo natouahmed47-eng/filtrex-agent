@@ -116,6 +116,53 @@
   </a>
 </div>
 
+<!-- ── Invite & Earn ──────────────────────────────────────────────────── -->
+{% if referral_link %}
+<div style="background:#fff;border:1.5px solid #e5e7eb;border-radius:12px;
+            padding:20px 24px;margin-bottom:24px;">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;
+              flex-wrap:wrap;gap:12px;">
+    <div>
+      <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">
+        🎁 Invite &amp; Earn
+      </div>
+      <div style="font-size:13px;color:#6b7280;margin-bottom:12px;">
+        Invite colleagues and earn <strong>+500 bonus messages</strong> for every 3 referrals.
+        {% if client.referral_count %}
+          You've referred <strong>{{ client.referral_count }}</strong> client{{ 's' if client.referral_count != 1 }} so far.
+        {% else %}
+          Share your link to get started.
+        {% endif %}
+      </div>
+      <!-- Referral link copy box -->
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <input id="ref-link-input" type="text" value="{{ referral_link }}" readonly
+               style="font-size:12px;color:#374151;background:#f9fafb;border:1px solid #e5e7eb;
+                      border-radius:8px;padding:8px 12px;width:320px;max-width:100%;outline:none;" />
+        <button onclick="
+          var el = document.getElementById('ref-link-input');
+          el.select(); document.execCommand('copy');
+          this.textContent = 'Copied!';
+          setTimeout(()=>this.textContent='Copy', 1500);
+        " style="padding:8px 16px;background:#4f46e5;color:#fff;border:none;
+                 border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;
+                 white-space:nowrap;">Copy</button>
+      </div>
+    </div>
+    {% if client.referral_count %}
+    <div style="text-align:center;min-width:80px;">
+      <div style="font-size:32px;font-weight:800;color:#4f46e5;">{{ client.referral_count }}</div>
+      <div style="font-size:12px;color:#9ca3af;font-weight:600;">referral{{ 's' if client.referral_count != 1 }}</div>
+      {% set next_reward = 3 - (client.referral_count % 3) %}
+      {% if next_reward != 3 %}
+      <div style="font-size:11px;color:#6b7280;margin-top:4px;">{{ next_reward }} more to reward</div>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
 <div class="page-head" style="margin-bottom:14px">
   <div>
     <h2 style="font-size:16px;font-weight:700">Recent Orders</h2>

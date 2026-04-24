@@ -105,7 +105,16 @@
     <div class="error">{{ error }}</div>
     {% endif %}
 
+    {% if request.args.get('ref') %}
+    <div style="background:#d1fae5;border-radius:8px;padding:10px 14px;
+                font-size:13px;color:#065f46;margin-bottom:16px;">
+      🎉 You were invited! Sign up to get started.
+    </div>
+    {% endif %}
+
     <form method="POST">
+      <input type="hidden" name="ref_code" value="{{ request.args.get('ref', '') }}">
+
       <label for="business_name">Business Name</label>
       <input type="text" id="business_name" name="business_name"
              placeholder="e.g. Veltrix Dental Clinic" required />

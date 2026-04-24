@@ -5,6 +5,7 @@ import os
 import json
 import sqlite3
 import datetime
+import random
 
 ULTRAMSG_INSTANCE = os.getenv("ULTRAMSG_INSTANCE", "")
 ULTRAMSG_TOKEN         = os.getenv("ULTRAMSG_TOKEN", "")
@@ -311,6 +312,19 @@ def _migrate_saas():
             con.execute("UPDATE clients SET onboarding_step=3 WHERE id=1")
             con.commit()
             print("[SAAS] migrated clients → added onboarding_step, existing client=1 marked done")
+        if "referral_code" not in _cli_cols:
+            con.execute("ALTER TABLE clients ADD COLUMN referral_code   TEXT")
+            con.execute("ALTER TABLE clients ADD COLUMN referred_by     INTEGER")
+            con.execute("ALTER TABLE clients ADD COLUMN referral_count  INTEGER DEFAULT 0")
+            con.commit()
+            # Generate referral codes for existing clients
+            _no_code = con.execute("SELECT id FROM clients WHERE referral_code IS NULL").fetchall()
+            for _r in _no_code:
+                _code = f"REF{_r['id']}{random.randint(1000, 9999)}"
+                con.execute("UPDATE clients SET referral_code=? WHERE id=?", (_code, _r["id"]))
+            if _no_code:
+                con.commit()
+            print(f"[REFERRAL_CREATED] migrated clients → referral columns, generated {len(_no_code)} code(s)")
 
         # users: add email + client_id columns for multi-tenant auth
         _usr_cols = [r[1] for r in con.execute("PRAGMA table_info(users)").fetchall()]
@@ -349,10 +363,18 @@ def _migrate_saas():
                 started_at     TEXT DEFAULT CURRENT_TIMESTAMP,
                 expires_at     TEXT,
                 messages_used  INTEGER DEFAULT 0,
-                orders_used    INTEGER DEFAULT 0
+                orders_used    INTEGER DEFAULT 0,
+                bonus_messages INTEGER DEFAULT 0
             )
         """)
         con.commit()
+
+        # client_subscriptions: bonus_messages for referral rewards (existing DBs)
+        _sub_cols = [r[1] for r in con.execute("PRAGMA table_info(client_subscriptions)").fetchall()]
+        if "bonus_messages" not in _sub_cols:
+            con.execute("ALTER TABLE client_subscriptions ADD COLUMN bonus_messages INTEGER DEFAULT 0")
+            con.commit()
+            print("[REFERRAL_CREATED] migrated client_subscriptions → added bonus_messages")
 
         # ── Seed default plans ────────────────────────────────────────────
         plan_count = con.execute("SELECT COUNT(*) FROM subscription_plans").fetchone()[0]
@@ -495,7 +517,7 @@ def get_client_subscription(client_id):
         row = con.execute("""
             SELECT cs.id, cs.client_id, cs.plan_id, cs.status,
                    cs.started_at, cs.expires_at,
-                   cs.messages_used, cs.orders_used,
+                   cs.messages_used, cs.orders_used, cs.bonus_messages,
                    sp.name        AS plan_name,
                    sp.price_monthly,
                    sp.max_messages, sp.max_catalog_items, sp.max_orders,
@@ -533,7 +555,7 @@ def check_usage_limit(client_id, limit_type):
     plan_name = sub.get("plan_name", "?")
 
     if limit_type == "messages":
-        limit = sub.get("max_messages", 100)
+        limit = sub.get("max_messages", 100) + sub.get("bonus_messages", 0)
         used  = sub.get("messages_used", 0)
     elif limit_type == "catalog_items":
         limit = sub.get("max_catalog_items", 5)
@@ -577,6 +599,31 @@ def _billing_increment(client_id, field):
         con.commit()
     finally:
         con.close()
+
+
+def generate_referral_code(client_id):
+    """Generate a unique referral code for a client."""
+    digits = random.randint(1000, 9999)
+    return f"REF{client_id}{digits}"
+
+
+def _apply_referral_reward(referrer_id, new_count):
+    """
+    Grant 500 bonus messages for every 3 successful referrals.
+    Logs [REFERRAL_REWARD].
+    """
+    if new_count > 0 and new_count % 3 == 0:
+        con = get_db_connection()
+        try:
+            con.execute("""
+                UPDATE client_subscriptions
+                SET    bonus_messages = bonus_messages + 500
+                WHERE  client_id = ? AND status = 'active'
+            """, (referrer_id,))
+            con.commit()
+        finally:
+            con.close()
+        print(f"[REFERRAL_REWARD] client={referrer_id} referral_count={new_count} → +500 bonus messages")
 
 
 def _check_activation(client_id):
@@ -2879,10 +2926,12 @@ def admin_dashboard():
         con.close()
 
     sub = get_client_subscription(cid)
+    referral_link = f"{request.host_url.rstrip('/')}signup?ref={client.get('referral_code', '')}"
     stats = dict(total_orders=total_orders, today_orders=today_orders,
                  catalog_count=catalog_count, active_convos=active_convos)
     return render_template("admin/dashboard.html", client=client, stats=stats,
-                           recent_orders=recent_orders, sub=sub, active="dashboard")
+                           recent_orders=recent_orders, sub=sub,
+                           referral_link=referral_link, active="dashboard")
 
 # ── /admin/onboarding ─────────────────────────────────────────────────────────
 @app.route("/admin/onboarding", methods=["GET", "POST"])
@@ -3511,6 +3560,7 @@ def signup():
                 if existing:
                     error = "An account with this email already exists."
                 else:
+                    ref_code = (request.form.get("ref_code") or "").strip().upper()
                     # Create client first
                     cur_c = con.execute("""
                         INSERT INTO clients
@@ -3519,6 +3569,12 @@ def signup():
                         VALUES (?, 'other', 'ar', 'MAD', 'Africa/Casablanca', 1)
                     """, (business_name,))
                     new_client_id = cur_c.lastrowid
+                    # Generate and save referral code
+                    new_ref_code = generate_referral_code(new_client_id)
+                    con.execute(
+                        "UPDATE clients SET referral_code=? WHERE id=?",
+                        (new_ref_code, new_client_id)
+                    )
                     # Create user linked to that client
                     cur_u = con.execute("""
                         INSERT INTO users (username, email, password, client_id)
@@ -3527,7 +3583,31 @@ def signup():
                           generate_password_hash(password), new_client_id))
                     new_user_id = cur_u.lastrowid
                     con.commit()
-                    print(f"[AUTH_SIGNUP] user_id={new_user_id} client_id={new_client_id} email={email!r}")
+                    print(f"[AUTH_SIGNUP] user_id={new_user_id} client_id={new_client_id} email={email!r} referral_code={new_ref_code!r}")
+
+                    # ── Referral tracking ─────────────────────────────────
+                    if ref_code:
+                        referrer = con.execute(
+                            "SELECT id, referral_count FROM clients WHERE referral_code=?",
+                            (ref_code,)
+                        ).fetchone()
+                        if referrer and referrer["id"] != new_client_id:
+                            referrer_id    = referrer["id"]
+                            new_ref_count  = (referrer["referral_count"] or 0) + 1
+                            con.execute(
+                                "UPDATE clients SET referred_by=? WHERE id=?",
+                                (referrer_id, new_client_id)
+                            )
+                            con.execute(
+                                "UPDATE clients SET referral_count=? WHERE id=?",
+                                (new_ref_count, referrer_id)
+                            )
+                            con.commit()
+                            print(f"[REFERRAL_USED] new_client={new_client_id} referred_by={referrer_id} ref_code={ref_code!r} referrer_count={new_ref_count}")
+                            _apply_referral_reward(referrer_id, new_ref_count)
+                        else:
+                            print(f"[REFERRAL_USED] ref_code={ref_code!r} not found or self-referral — ignored")
+
                     # Auto-login after signup
                     session.clear()
                     session["logged_in"]  = True
