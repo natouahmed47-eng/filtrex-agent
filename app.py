@@ -12,6 +12,10 @@ ADMIN_WHATSAPP_NUMBER  = os.getenv("ADMIN_WHATSAPP_NUMBER", "")
 print(f"[STARTUP] ADMIN_WHATSAPP_NUMBER={ADMIN_WHATSAPP_NUMBER!r}")
 
 def ultramsg_send(to, text):
+    import traceback as _tb
+    if any(kw in (text or "") for kw in ("حجز جديد", "📦", "📥", "هل ترغب")):
+        print("[TRACE_DUPLICATE_ADMIN_MESSAGE_SOURCE] ⚠️  suspicious text fired:")
+        _tb.print_stack()
     url = f"https://api.ultramsg.com/{ULTRAMSG_INSTANCE}/messages/chat"
     payload = {"token": ULTRAMSG_TOKEN, "to": to, "body": text}
     print(f"[ULTRAMSG] sending to={to!r} body={text!r}")
