@@ -496,6 +496,29 @@ def determine_flow_type(items):
         return "order"
     return "mixed"
 
+def get_required_fields(flow_type, items=None):
+    """Return ordered list of state keys required to complete the flow."""
+    if flow_type == "booking":
+        return ["known_name", "known_day", "known_time"]
+    if flow_type == "order":
+        return ["known_name", "quantity", "address"]
+    if flow_type == "mixed":
+        return ["known_name", "known_day", "known_time", "quantity", "address"]
+    return ["known_name", "known_day", "known_time"]   # safe default
+
+def get_missing_fields(state, required_fields):
+    """Return list of required fields not yet present in state."""
+    return [f for f in required_fields if not state.get(f)]
+
+# Maps state field name → step name the bot advances to when asking for it
+_FIELD_TO_STEP = {
+    "known_day":  "day",
+    "known_time": "time",
+    "known_name": "name",
+    "quantity":   "quantity",
+    "address":    "address",
+}
+
 def get_upsell_for_item(client_id, catalog_id):
     """Return upsell catalog row dict using spec columns (source/target), or None."""
     con = get_db_connection()
@@ -2225,18 +2248,21 @@ def whatsapp():
                         _ids_set.append(_sv_id)
                 state["known_catalog_ids_json"] = json.dumps(_ids_set)
 
-                _has_day  = bool(state.get("known_day"))
-                _has_time = bool(state.get("known_time"))
-                if _has_day and _has_time:
-                    state["current_step"] = "name"
-                elif _has_day:
-                    state["current_step"] = "time"
-                else:
-                    state["current_step"] = "day"
-                print(f"[FLOW] asking_for={state['current_step']!r}")
+                # ── Required Fields Engine ────────────────────────────────
+                _svc_items_now = get_catalog_items(CLIENT_ID, _ids_set)
+                _svc_flow      = determine_flow_type(_svc_items_now)
+                _req_fields    = get_required_fields(_svc_flow, _svc_items_now)
+                _miss_fields   = get_missing_fields(state, _req_fields)
+                _next_field    = _miss_fields[0] if _miss_fields else None
+                _next_step     = _FIELD_TO_STEP.get(_next_field, "name") if _next_field else "done"
+                state["current_step"] = _next_step
+                print(f"[FLOW_TYPE]       {_svc_flow!r}")
+                print(f"[REQUIRED_FIELDS] {_req_fields}")
+                print(f"[MISSING_FIELDS]  {_miss_fields}")
+                print(f"[ASKING_FOR]      {_next_field!r} → step={_next_step!r}")
                 wa_save(sender, state)
 
-                # ── Build service-confirmed reply using catalog data ────────
+                # ── Build item-confirmed reply using catalog data ──────────
                 _primary = _cur_svcs[-1]
                 _cur     = get_client(CLIENT_ID).get("currency", "SAR")
                 if _cat_item:
@@ -2275,7 +2301,8 @@ def whatsapp():
                         benefit=_benefit,
                     )
 
-                if not _has_day:
+                # Append times hint only when service/mixed flow needs day next
+                if _next_field == "known_day" and _svc_flow in ("booking", "mixed"):
                     reply += "\n" + build_times_hint(_primary, lang, day=state.get("known_day"))
 
                 # ── Upsell from catalog (DB-first, no hardcoded map) ───────
