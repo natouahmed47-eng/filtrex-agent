@@ -779,11 +779,26 @@ def openai_chat(user_message, lang="ar"):
             "fr": "Désolé, une erreur s'est produite. Veuillez réessayer."}
     return _err.get(lang, _err["ar"])
 
-def normalize_number(sender):
-    sender = sender.replace("whatsapp:", "").replace("+", "").strip()
-    if not sender.endswith("@c.us"):
-        sender = sender + "@c.us"
-    return sender
+def normalize_number(raw):
+    """Return a WhatsApp number in the canonical form  DIGITS@c.us.
+    Handles every known malformed variant:
+      • "22923289"            → "22923289@c.us"
+      • "+22923289"           → "22923289@c.us"
+      • "22923289@c.us"       → "22923289@c.us"   (already correct)
+      • "c.us@22923289"       → "22923289@c.us"   (reversed)
+      • "whatsapp:22923289"   → "22923289@c.us"
+      • "  22923289  "        → "22923289@c.us"
+    """
+    import re as _re
+    s = str(raw).strip()
+    # Remove known text prefixes
+    s = s.replace("whatsapp:", "").replace("@c.us", "").replace("c.us@", "")
+    # Strip non-digit characters (handles +, spaces, dashes, dots)
+    digits = _re.sub(r"\D", "", s)
+    if not digits:
+        # Fallback: return raw with @c.us so the caller can log it
+        return str(raw).strip() + "@c.us"
+    return digits + "@c.us"
 
 def wa_reply(to, text):
     """Send a message to the CUSTOMER only. Never call this with admin content."""
@@ -1619,8 +1634,11 @@ def send_booking_messages(sender, state, name, lang):
         print("[SEND_ADMIN] SKIPPED — ADMIN_WHATSAPP_NUMBER not configured")
         return
 
+    print(f"[DEBUG_ADMIN_RAW] {ADMIN_WHATSAPP_NUMBER!r}")
     _admin_to   = normalize_number(ADMIN_WHATSAPP_NUMBER.strip())
     _customer_n = normalize_number(sender)
+    print(f"[DEBUG_ADMIN_NORMALIZED] {_admin_to!r}")
+    print(f"[DEBUG_CUSTOMER_NORMALIZED] {_customer_n!r}")
 
     if _admin_to == _customer_n:
         print(f"[SEND_ADMIN] SKIPPED — admin == customer ({_admin_to!r})")
