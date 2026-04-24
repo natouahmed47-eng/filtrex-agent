@@ -3,20 +3,41 @@
 {% block content %}
 
 <style>
-  .badge-red{background:#fee2e2;color:#b91c1c}
-  .badge-blue{background:#dbeafe;color:#1d4ed8}
+  .badge-status-red{background:#fee2e2;color:#b91c1c}
+  .badge-status-blue{background:#dbeafe;color:#1d4ed8}
+
+  /* flow-type badges */
+  .badge-flow{
+    display:inline-block;padding:2px 10px;border-radius:99px;
+    font-size:11px;font-weight:700;letter-spacing:.3px;white-space:nowrap
+  }
+  .badge-booking{background:#dbeafe;color:#1d4ed8}
+  .badge-order  {background:#dcfce7;color:#16a34a}
+  .badge-mixed  {background:#ede9fe;color:#7c3aed}
+
+  /* status dropdown */
   .status-form{display:inline}
   .status-select{
     font-size:11px;font-weight:600;padding:3px 8px;border-radius:99px;border:1.5px solid #e5e7eb;
     background:#fff;cursor:pointer;color:#374151;
   }
   .status-select:focus{outline:none;border-color:#4f46e5}
-  .item-tag{
-    display:inline-block;background:#f3f4f6;color:#374151;
-    border-radius:6px;padding:2px 8px;font-size:12px;margin:2px 2px 2px 0;
+
+  /* item list */
+  .item-line{
+    display:flex;align-items:baseline;gap:6px;
+    font-size:12px;color:#374151;line-height:1.7;
   }
+  .item-bullet{color:#9ca3af;font-size:10px}
+  .item-title{font-weight:500}
+  .item-sep{color:#d1d5db}
+  .item-price{color:#6b7280;white-space:nowrap}
+
+  /* total */
+  .total-cell{font-weight:700;color:#111;white-space:nowrap}
+
+  /* misc */
   .appt{font-size:12px;color:#6b7280;white-space:nowrap}
-  .total-cell{font-weight:700;color:#111}
   .filters{display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap;align-items:center}
   .filters select,.filters input{
     padding:7px 11px;border:1.5px solid #e5e7eb;border-radius:8px;
@@ -45,6 +66,7 @@
         <th>Created</th>
         <th>Customer</th>
         <th>Phone</th>
+        <th>Type</th>
         <th>Items</th>
         <th>Appointment</th>
         <th>Total</th>
@@ -54,7 +76,9 @@
     <tbody>
     {% for o in orders %}
     {% set status = o.status or 'new' %}
+    {% set flow   = o.flow_type or 'booking' %}
     <tr>
+
       <td style="color:#9ca3af;font-size:12px">{{ o.id }}</td>
 
       <td style="font-size:12px;white-space:nowrap">
@@ -67,20 +91,45 @@
         {{ o.phone or '—' }}
       </td>
 
+      {# ── Type badge ──────────────────────────────────────────────── #}
       <td>
-        {% if o.items_parsed %}
-          {% for item in o.items_parsed %}
-            <span class="item-tag">{{ item }}</span>
+        {% if flow == 'order' %}
+          <span class="badge-flow badge-order">order</span>
+        {% elif flow == 'mixed' %}
+          <span class="badge-flow badge-mixed">mixed</span>
+        {% else %}
+          <span class="badge-flow badge-booking">booking</span>
+        {% endif %}
+      </td>
+
+      {# ── Items — bullet list with price ──────────────────────────── #}
+      <td>
+        {% if o.items_rich %}
+          {% for item in o.items_rich %}
+          <div class="item-line">
+            <span class="item-bullet">●</span>
+            <span class="item-title">{{ item.title }}</span>
+            {% if item.price and item.price > 0 %}
+              <span class="item-sep">—</span>
+              <span class="item-price">{{ item.price | int }} {{ item.currency }}</span>
+            {% endif %}
+          </div>
           {% endfor %}
-        {% elif o.items %}
-          <span class="item-tag">{{ o.items }}</span>
+        {% elif o.items_parsed %}
+          {% for t in o.items_parsed %}
+          <div class="item-line">
+            <span class="item-bullet">●</span>
+            <span class="item-title">{{ t }}</span>
+          </div>
+          {% endfor %}
         {% else %}
           <span style="color:#9ca3af">—</span>
         {% endif %}
       </td>
 
+      {# ── Appointment ──────────────────────────────────────────────── #}
       <td class="appt">
-        {% set day = o.day or '' %}
+        {% set day  = o.day  or '' %}
         {% set time = o.time or '' %}
         {% if day or time %}
           {{ day }} {{ time }}
@@ -89,14 +138,16 @@
         {% endif %}
       </td>
 
+      {# ── Total ────────────────────────────────────────────────────── #}
       <td class="total-cell">
-        {% if o.total_price and o.total_price > 0 %}
-          {{ o.total_price | int }}
+        {% if o.total_display and o.total_display > 0 %}
+          MAD {{ o.total_display | int }}
         {% else %}
           <span style="color:#9ca3af">—</span>
         {% endif %}
       </td>
 
+      {# ── Status dropdown ──────────────────────────────────────────── #}
       <td>
         <form class="status-form" method="POST"
               action="/admin/orders/{{ o.id }}/status"
@@ -109,18 +160,20 @@
                     {% else %}background:#ede9fe;color:#4f46e5;border-color:#c4b5fd
                     {% endif %}
                   ">
-            <option value="new"       {% if status=='new' %}selected{% endif %}>new</option>
+            <option value="new"       {% if status=='new'       %}selected{% endif %}>new</option>
             <option value="confirmed" {% if status=='confirmed' %}selected{% endif %}>confirmed</option>
-            <option value="done"      {% if status=='done' %}selected{% endif %}>done</option>
+            <option value="done"      {% if status=='done'      %}selected{% endif %}>done</option>
             <option value="cancelled" {% if status=='cancelled' %}selected{% endif %}>cancelled</option>
           </select>
         </form>
       </td>
+
     </tr>
     {% endfor %}
     </tbody>
   </table>
   </div>
+
   {% else %}
   <div class="empty">
     <div class="empty-icon">📦</div>

@@ -2765,18 +2765,60 @@ def admin_orders():
         return guard
     con = get_db_connection()
     try:
-        rows = [dict(r) for r in con.execute(
+        raw = con.execute(
             "SELECT * FROM bookings_or_orders WHERE client_id=? ORDER BY id DESC",
             (CLIENT_ID,)
-        ).fetchall()]
+        ).fetchall()
+        rows = [{k: r[k] for k in r.keys()} for r in raw]
     finally:
         con.close()
-    # Parse items_json into readable list for template
+
     for row in rows:
+        # ── parse stored title list ──────────────────────────────────────
         try:
-            row["items_parsed"] = json.loads(row.get("items_json") or "[]")
+            titles = json.loads(row.get("items_json") or "[]")
         except Exception:
-            row["items_parsed"] = []
+            titles = []
+        row["items_parsed"] = titles
+
+        # ── resolve catalog rows by title → get type + price ────────────
+        catalog_items = []
+        if titles:
+            cat_con = get_db_connection()
+            try:
+                for title in titles:
+                    r = cat_con.execute(
+                        "SELECT * FROM catalogs WHERE title=? AND client_id=? LIMIT 1",
+                        (title, CLIENT_ID)
+                    ).fetchone()
+                    if r:
+                        catalog_items.append({k: r[k] for k in r.keys()})
+                    else:
+                        catalog_items.append({"title": title, "type": "service",
+                                              "price": 0, "sale_price": None})
+            finally:
+                cat_con.close()
+        else:
+            catalog_items = []
+
+        # ── flow type ────────────────────────────────────────────────────
+        row["flow_type"] = determine_flow_type(catalog_items)
+        print(f"[ADMIN_RENDER_ITEMS] id={row['id']} titles={titles} flow={row['flow_type']}")
+
+        # ── rich item list for template: [{title, price, currency}] ─────
+        row["items_rich"] = [
+            {
+                "title":    it.get("title", "?"),
+                "price":    float(it.get("sale_price") or it.get("price") or 0),
+                "currency": "MAD",
+            }
+            for it in catalog_items
+        ]
+
+        # ── total — use stored value (calculated at save time) ───────────
+        row["total_display"] = float(row.get("total_price") or 0)
+        print(f"[ADMIN_RENDER_TOTAL] id={row['id']} total={row['total_display']}")
+
     return render_template("admin/orders.html", orders=rows, active="orders")
 
 # ── /admin/orders/<id>/status ──────────────────────────────────────────────────
