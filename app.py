@@ -1867,30 +1867,84 @@ def is_time_slot_taken(service, day, time_val):
     return taken
 
 def wa_save_booking(phone, state, name):
-    _svcs = ensure_svc_list(state.get("known_service"))
-    svc   = " / ".join(_svcs) if _svcs else "غير محدد"
+    print("[SAVE_BOOKING] START")
+    print(f"[SAVE_BOOKING] client_id={CLIENT_ID}")
+    print(f"[SAVE_BOOKING] phone={phone}")
+    print(f"[SAVE_BOOKING] name={name}")
+    print(f"[SAVE_BOOKING] state={state}")
+
     day  = state.get("known_day")  or ""
     time = state.get("known_time") or ""
-    slot = f"{day} {time}".strip()
-    print(f"[DB] wa_save_booking phone={phone} service={svc} slot={slot} name={name}")
+
+    # ── Resolve catalog items + total ─────────────────────────────────────
+    _ids   = json.loads(state.get("known_catalog_ids_json") or "[]")
+    _items = get_catalog_items(CLIENT_ID, _ids)
+    _total = calculate_total(CLIENT_ID, _ids) if _ids else 0.0
+
+    # Build items list — titles from catalog, fallback to known_service
+    if _items:
+        item_titles = [it.get("title", str(it.get("id", "?"))) for it in _items]
+    else:
+        item_titles = ensure_svc_list(state.get("known_service")) or []
+    items_json = json.dumps(item_titles, ensure_ascii=False)
+
+    print(f"[SAVE_BOOKING] ids={_ids} items={item_titles} total={_total} day={day!r} time={time!r}")
+
+    # ── 1. INSERT into bookings_or_orders (primary admin table) ───────────
     con = get_db_connection()
     try:
-        con.execute(
-            "INSERT INTO bookings (user_id, name, service, time, timestamp) VALUES (?, ?, ?, ?, ?)",
-            (str(WHATSAPP_USER_ID), name, svc, slot, datetime.datetime.now().isoformat())
-        )
+        con.execute("""
+            INSERT INTO bookings_or_orders
+                (client_id, phone, customer_name, items_json,
+                 day, time, total_price, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'new', ?)
+        """, (
+            CLIENT_ID,
+            phone,
+            name,
+            items_json,
+            day,
+            time,
+            _total,
+            datetime.datetime.now().isoformat(),
+        ))
         con.commit()
-        print(f"[DB] wa_save_booking committed")
-    except Exception as db_err:
-        print(f"[DB] wa_save_booking ERROR: {repr(db_err)}")
-        raise
+        print("[SAVE_BOOKING] SUCCESS — bookings_or_orders row committed")
+    except Exception as e:
+        print(f"[SAVE_BOOKING] ERROR bookings_or_orders: {repr(e)}")
+        import traceback as _tb; _tb.print_exc()
     finally:
         con.close()
-    save_order(CLIENT_ID, phone, name, _svcs, slot, status="confirmed")
-    # ── Write to bookings_or_orders with real catalog pricing ──────────────
-    _ids   = json.loads(state.get("known_catalog_ids_json") or "[]")
-    _total = calculate_total(CLIENT_ID, _ids) if _ids else 0.0
-    save_booking_or_order(CLIENT_ID, phone, name, _ids, day, time, total_price=_total)
+
+    # ── 2. Legacy bookings table (kept for backwards compat) ──────────────
+    svc_str = " / ".join(item_titles) if item_titles else "غير محدد"
+    slot    = f"{day} {time}".strip()
+    con2 = get_db_connection()
+    try:
+        con2.execute(
+            "INSERT INTO bookings (user_id, name, service, time, timestamp) VALUES (?, ?, ?, ?, ?)",
+            (str(WHATSAPP_USER_ID), name, svc_str, slot, datetime.datetime.now().isoformat())
+        )
+        con2.commit()
+        print("[SAVE_BOOKING] bookings (legacy) row committed")
+    except Exception as e:
+        print(f"[SAVE_BOOKING] ERROR bookings (legacy): {repr(e)}")
+    finally:
+        con2.close()
+
+    # ── 3. orders table (secondary, independent transaction) ──────────────
+    con3 = get_db_connection()
+    try:
+        con3.execute(
+            "INSERT INTO orders (client_id, phone, name, items, scheduled, status) VALUES (?, ?, ?, ?, ?, 'confirmed')",
+            (CLIENT_ID, phone, name, items_json, slot)
+        )
+        con3.commit()
+        print("[SAVE_BOOKING] orders row committed")
+    except Exception as e:
+        print(f"[SAVE_BOOKING] ERROR orders: {repr(e)}")
+    finally:
+        con3.close()
 
 _SERVICE_MAP = {
     "تنظيف": "تنظيف أسنان",
