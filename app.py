@@ -1316,13 +1316,12 @@ def confirmation_message(state, name, lang, phone=None):
         item_lines = "\n".join(f"• {s}" for s in _svcs) if _svcs else "-"
         total_str = "-"
 
-    _hdr   = {"ar": "تم تأكيد طلبك بنجاح ✅",     "en": "Your order is confirmed ✅",         "fr": "Votre commande est confirmée ✅"}
-    _items = {"ar": "العناصر:",                     "en": "Items:",                             "fr": "Éléments:"}
+    _hdr   = {"ar": "تم تأكيد حجزك بنجاح ✅",      "en": "Your booking is confirmed ✅",        "fr": "Votre réservation est confirmée ✅"}
+    _items = {"ar": "الخدمات:",                     "en": "Services:",                          "fr": "Services:"}
     _tot   = {"ar": "الإجمالي:",                    "en": "Total:",                             "fr": "Total:"}
     _appt  = {"ar": "الموعد:",                      "en": "Appointment:",                       "fr": "Rendez-vous:"}
     _nm    = {"ar": "الاسم:",                       "en": "Name:",                              "fr": "Nom:"}
-    _ph    = {"ar": "الهاتف:",                      "en": "Phone:",                             "fr": "Téléphone:"}
-    _close = {"ar": "نحن بانتظارك 🌟",              "en": "We look forward to seeing you 🌟",   "fr": "Nous avons hâte de vous accueillir 🌟"}
+    _close = {"ar": "نحن بانتظارك ⭐",              "en": "We look forward to seeing you ⭐",   "fr": "Nous avons hâte de vous accueillir ⭐"}
 
     parts = [
         _hdr[l],
@@ -1333,10 +1332,9 @@ def confirmation_message(state, name, lang, phone=None):
         f"{_tot[l]} {total_str}",
     ]
     if day or time:
-        parts.append(f"{_appt[l]} {day} {time}".strip())
+        parts.append(f"{_appt[l]} {day or ''} {time or ''}".strip())
     parts.append(f"{_nm[l]} {name}")
-    if phone:
-        parts.append(f"{_ph[l]} {phone}")
+    parts.append("")
     parts.append(_close[l])
     return "\n".join(parts)
 
@@ -1798,8 +1796,14 @@ def whatsapp():
         sender       = msg_data.get("from", "").strip()
         incoming_msg = msg_data.get("body", "").strip()
         msg_type     = msg_data.get("type", "")
+        from_me      = bool(msg_data.get("fromMe", False))
 
-        print(f"[WHATSAPP] sender={sender!r} message={incoming_msg!r} type={msg_type!r}")
+        print(f"[WHATSAPP] sender={sender!r} message={incoming_msg!r} type={msg_type!r} fromMe={from_me!r}")
+
+        # ── Ignore outbound messages the bot itself sent ─────────────────────
+        if from_me:
+            print("[WHATSAPP] ignored outbound (fromMe=True) — skipping to prevent loop")
+            return "", 200
 
         if msg_type != "chat" or not sender or not incoming_msg:
             print("[WHATSAPP] ignored non-chat or empty message")
@@ -1807,6 +1811,20 @@ def whatsapp():
 
         state = wa_load(sender)
         _step_early = state.get("current_step", "service")
+
+        print(f"[FINAL STATE] {state}")
+        print(f"[COMPLETED] step={_step_early!r} is_done={_step_early == 'done'}")
+
+        # ── COMPLETED LOCK — booking already done, offer new booking ─────────
+        if _step_early == "done":
+            print(f"[COMPLETED] booking already done — offering new booking")
+            _new_booking_q = {
+                "ar": "هل ترغب في حجز جديد؟",
+                "en": "Would you like to make a new booking?",
+                "fr": "Souhaitez-vous faire une nouvelle réservation?",
+            }
+            _cl = state.get("lang") or "ar"
+            return wa_reply(sender, _new_booking_q.get(_cl, _new_booking_q["ar"]))
 
         if is_noise_message(incoming_msg) and _step_early != "service":
             print(f"[NOISE] ignored mid-booking greeting at step={_step_early!r}")
@@ -2002,13 +2020,20 @@ def whatsapp():
 
         print(f"[FLOW] current_step={step!r}")
 
-        # ── GREETING — only reset if message is PURELY a greeting ──────────
+        # ── GREETING — only reset if state is empty AND message is pure greeting
         if is_greeting(incoming_msg):
+            _state_has_data = bool(
+                ensure_svc_list(state.get("known_service")) or
+                state.get("known_day") or state.get("known_time") or state.get("known_name")
+            )
             _intent_has_data = bool(
                 _intent.get("services") or _intent.get("day") or
                 _intent.get("time")     or _intent.get("name")
             )
-            if _intent_has_data:
+            if _state_has_data:
+                # State already has booking progress — never reset, fall through
+                print(f"[GREETING] skipping reset — state has existing data (guard)")
+            elif _intent_has_data:
                 # Message is a greeting + booking data — don't reset, fall through
                 print(f"[GREETING] skipping reset — intent has data={_intent}")
             elif step == "service":
@@ -2056,14 +2081,15 @@ def whatsapp():
                     _sc_ids.append(_sv_id)
             state["known_catalog_ids_json"] = json.dumps(_sc_ids)
             state["current_step"] = "done"
-            wa_save(sender, state)
             wa_save_booking(sender, state, _sc_name)
             try:
                 notify_admin_booking(sender, state, _sc_name)
             except Exception as _ne:
                 print(f"[SHORTCUT_ADMIN_ERROR] {repr(_ne)}")
-            _confirm = confirmation_message(state, _sc_name, lang, phone=sender)
-            wa_clear(sender)
+            _confirm = confirmation_message(state, _sc_name, lang, phone=None)
+            wa_save(sender, state)          # persist current_step="done" — locks state
+            print(f"[SHORTCUT FIRED] confirmed — step=done locked")
+            print(f"[FINAL STATE] {state}")
             return wa_reply(sender, _confirm)
 
         # ── STEP: service ─────────────────────────────────────────────────
@@ -2279,6 +2305,7 @@ def whatsapp():
 
             print("[DEBUG] name accepted — saving booking")
 
+            state["current_step"] = "done"
             wa_save_booking(sender, state, name)
 
             print("[WHATSAPP] booking saved — calling notify_admin_booking")
@@ -2288,9 +2315,11 @@ def whatsapp():
             except Exception as _ne:
                 print(f"[ADMIN_NOTIFY_OUTER_ERROR] {repr(_ne)}")
 
-            wa_clear(sender)
-
-            return wa_reply(sender, confirmation_message(state, name, lang, phone=sender))
+            _confirm = confirmation_message(state, name, lang, phone=None)
+            wa_save(sender, state)          # persist current_step="done" — locks state
+            print(f"[STEP NAME DONE] step=done locked")
+            print(f"[FINAL STATE] {state}")
+            return wa_reply(sender, _confirm)
 
         else:
             _reprompts = {
