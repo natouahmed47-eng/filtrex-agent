@@ -1,5 +1,5 @@
 {% extends "admin/layout.html" %}
-{% block title %}Dashboard{% endblock %}
+{% block title %}{{ t("dashboard_title", lang) }}{% endblock %}
 {% block content %}
 <style>
   .plan-banner {
@@ -21,15 +21,15 @@
   .plan-stat strong { color: #111; }
   .mini-bar-wrap { display:inline-block; width:80px; height:6px; background:#e5e7eb;
                    border-radius:999px; vertical-align:middle; margin:0 6px; overflow:hidden; }
-  .mini-bar      { height:6px; border-radius:999px; background:#4f46e5; }
+  .mini-bar      { height:6px; border-radius:999px; background:{{ branding.primary_color }}; }
   .mini-bar.warn { background:#f59e0b; }
   .mini-bar.over { background:#ef4444; }
   .btn-upgrade-sm {
-    margin-left:auto; padding:7px 16px; background:#4f46e5; color:#fff;
+    margin-left:auto; padding:7px 16px; background:{{ branding.primary_color }}; color:#fff;
     border-radius:8px; font-size:13px; font-weight:600; text-decoration:none;
-    white-space:nowrap; transition:background .15s;
+    white-space:nowrap; transition:opacity .15s;
   }
-  .btn-upgrade-sm:hover { background:#4338ca; }
+  .btn-upgrade-sm:hover { opacity:.88; }
 </style>
 
 {% if sub %}
@@ -41,10 +41,10 @@
     <span class="plan-pill pill-{{ sub.plan_name | lower }}">{{ sub.plan_name }}</span>
 
     <span class="plan-stat">
-      Messages&nbsp;
+      {{ t("stat_total_orders", lang) }}&nbsp;
       <strong>{{ sub.messages_used }}</strong>
       {% if sub.max_messages != -1 %}
-        / {{ sub.max_messages }}
+        / {{ sub.max_messages + (sub.bonus_messages or 0) }}
         <span class="mini-bar-wrap"><span class="mini-bar {% if pct_msg>=100 %}over{% elif pct_msg>=80 %}warn{% endif %}"
           style="width:{{ [pct_msg,100]|min }}%"></span></span>
       {% else %}
@@ -53,7 +53,7 @@
     </span>
 
     <span class="plan-stat">
-      Orders&nbsp;
+      {{ t("nav_orders", lang) }}&nbsp;
       <strong>{{ sub.orders_used }}</strong>
       {% if sub.max_orders != -1 %}
         / {{ sub.max_orders }}
@@ -65,51 +65,51 @@
     </span>
 
     {% if over_limit %}
-      <span style="font-size:13px;color:#b91c1c;font-weight:600;">⚠️ Limit reached — bot paused</span>
+      <span style="font-size:13px;color:#b91c1c;font-weight:600;">{{ t("plan_limit_reached", lang) }}</span>
     {% elif near_limit %}
-      <span style="font-size:13px;color:#92400e;font-weight:600;">⚠️ Approaching limit</span>
+      <span style="font-size:13px;color:#92400e;font-weight:600;">{{ t("plan_approaching_limit", lang) }}</span>
     {% endif %}
 
     <a href="/admin/billing" class="btn-upgrade-sm">
-      {% if sub.plan_name == 'Free' %}Upgrade Plan{% else %}Manage Plan{% endif %}
+      {% if sub.plan_name == 'Free' %}{{ t("upgrade_plan", lang) }}{% else %}{{ t("manage_plan", lang) }}{% endif %}
     </a>
   </div>
 {% endif %}
 
 <div class="page-head">
   <div>
-    <h1 class="page-title">Dashboard</h1>
+    <h1 class="page-title">{{ t("dashboard_title", lang) }}</h1>
     <p class="page-sub">{{ client.name }} — {{ client.business_type }}</p>
   </div>
 </div>
 
 <div class="stats">
   <div class="stat-card">
-    <div class="stat-label">Total Orders</div>
+    <div class="stat-label">{{ t("stat_total_orders", lang) }}</div>
     <div class="stat-val">{{ stats.total_orders }}</div>
   </div>
   <div class="stat-card">
-    <div class="stat-label">Today</div>
+    <div class="stat-label">{{ t("stat_today", lang) }}</div>
     <div class="stat-val">{{ stats.today_orders }}</div>
   </div>
   <div class="stat-card">
-    <div class="stat-label">Catalog Items</div>
+    <div class="stat-label">{{ t("stat_catalog", lang) }}</div>
     <div class="stat-val">{{ stats.catalog_count }}</div>
   </div>
   <div class="stat-card">
-    <div class="stat-label">Active Conversations</div>
+    <div class="stat-label">{{ t("stat_convos", lang) }}</div>
     <div class="stat-val">{{ stats.active_convos }}</div>
   </div>
   <a href="/admin/connect-whatsapp" style="text-decoration:none">
     <div class="stat-card" style="cursor:pointer;transition:box-shadow .15s"
          onmouseover="this.style.boxShadow='0 4px 14px rgba(0,0,0,.10)'"
          onmouseout="this.style.boxShadow=''">
-      <div class="stat-label">WhatsApp</div>
+      <div class="stat-label">{{ t("stat_whatsapp", lang) }}</div>
       <div class="stat-val" style="font-size:22px;margin-top:8px">
         {% if client.whatsapp_connected %}
-          ✅ <span style="font-size:14px;font-weight:600;color:#15803d">متصل</span>
+          ✅ <span style="font-size:14px;font-weight:600;color:#15803d">{{ t("wa_connected", lang) }}</span>
         {% else %}
-          ❌ <span style="font-size:14px;font-weight:600;color:#b91c1c">غير متصل</span>
+          ❌ <span style="font-size:14px;font-weight:600;color:#b91c1c">{{ t("wa_disconnected", lang) }}</span>
         {% endif %}
       </div>
     </div>
@@ -124,38 +124,38 @@
               flex-wrap:wrap;gap:12px;">
     <div>
       <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">
-        🎁 Invite &amp; Earn
+        🎁 {{ t("invite_earn", lang) }}
       </div>
       <div style="font-size:13px;color:#6b7280;margin-bottom:12px;">
-        Invite colleagues and earn <strong>+500 bonus messages</strong> for every 3 referrals.
+        {{ t("invite_desc", lang) }}
         {% if client.referral_count %}
-          You've referred <strong>{{ client.referral_count }}</strong> client{{ 's' if client.referral_count != 1 }} so far.
+          {{ t("invite_referred", lang) }} <strong>{{ client.referral_count }}</strong> {{ t("invite_referred_suffix", lang) }}
         {% else %}
-          Share your link to get started.
+          {{ t("invite_share_link", lang) }}
         {% endif %}
       </div>
-      <!-- Referral link copy box -->
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <input id="ref-link-input" type="text" value="{{ referral_link }}" readonly
                style="font-size:12px;color:#374151;background:#f9fafb;border:1px solid #e5e7eb;
                       border-radius:8px;padding:8px 12px;width:320px;max-width:100%;outline:none;" />
-        <button onclick="
-          var el = document.getElementById('ref-link-input');
-          el.select(); document.execCommand('copy');
-          this.textContent = 'Copied!';
-          setTimeout(()=>this.textContent='Copy', 1500);
-        " style="padding:8px 16px;background:#4f46e5;color:#fff;border:none;
-                 border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;
-                 white-space:nowrap;">Copy</button>
+        <button id="copy-btn"
+                onclick="
+                  var el=document.getElementById('ref-link-input');
+                  el.select();document.execCommand('copy');
+                  this.textContent='{{ t('copied', lang) }}';
+                  var orig=this;setTimeout(function(){orig.textContent='{{ t('copy', lang) }}';},1500);"
+                style="padding:8px 16px;background:{{ branding.primary_color }};color:#fff;border:none;
+                       border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;
+                       white-space:nowrap;">{{ t("copy", lang) }}</button>
       </div>
     </div>
     {% if client.referral_count %}
     <div style="text-align:center;min-width:80px;">
-      <div style="font-size:32px;font-weight:800;color:#4f46e5;">{{ client.referral_count }}</div>
-      <div style="font-size:12px;color:#9ca3af;font-weight:600;">referral{{ 's' if client.referral_count != 1 }}</div>
+      <div style="font-size:32px;font-weight:800;color:{{ branding.primary_color }};">{{ client.referral_count }}</div>
+      <div style="font-size:12px;color:#9ca3af;font-weight:600;">{{ t("referrals_label", lang) }}</div>
       {% set next_reward = 3 - (client.referral_count % 3) %}
       {% if next_reward != 3 %}
-      <div style="font-size:11px;color:#6b7280;margin-top:4px;">{{ next_reward }} more to reward</div>
+      <div style="font-size:11px;color:#6b7280;margin-top:4px;">{{ next_reward }} {{ t("more_to_reward", lang) }}</div>
       {% endif %}
     </div>
     {% endif %}
@@ -165,14 +165,22 @@
 
 <div class="page-head" style="margin-bottom:14px">
   <div>
-    <h2 style="font-size:16px;font-weight:700">Recent Orders</h2>
+    <h2 style="font-size:16px;font-weight:700">{{ t("recent_orders", lang) }}</h2>
   </div>
-  <a href="/admin/orders" class="btn btn-ghost btn-sm">View all</a>
+  <a href="/admin/orders" class="btn btn-ghost btn-sm">{{ t("view_all", lang) }}</a>
 </div>
 <div class="card">
   {% if recent_orders %}
   <table>
-    <thead><tr><th>Date</th><th>Name</th><th>Items</th><th>Scheduled</th><th>Status</th></tr></thead>
+    <thead>
+      <tr>
+        <th>{{ t("col_date", lang) }}</th>
+        <th>{{ t("col_name", lang) }}</th>
+        <th>{{ t("col_items", lang) }}</th>
+        <th>{{ t("col_scheduled", lang) }}</th>
+        <th>{{ t("col_status", lang) }}</th>
+      </tr>
+    </thead>
     <tbody>
     {% for o in recent_orders %}
     <tr>
@@ -188,8 +196,8 @@
   {% else %}
   <div class="empty">
     <div class="empty-icon">📋</div>
-    <div class="empty-text">No orders yet</div>
-    <div class="empty-sub">Orders will appear here once customers start booking</div>
+    <div class="empty-text">{{ t("no_orders", lang) }}</div>
+    <div class="empty-sub">{{ t("no_orders_sub", lang) }}</div>
   </div>
   {% endif %}
 </div>

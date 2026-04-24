@@ -127,6 +127,181 @@ def _inject_branding():
                                                   "white_label_enabled": 0})}
 
 
+# ═══════════════════════════════════════════════════════════════
+# TRANSLATION SYSTEM
+# ═══════════════════════════════════════════════════════════════
+
+TRANSLATIONS = {
+    "en": {
+        # Nav
+        "nav_dashboard":    "Dashboard",
+        "nav_catalog":      "Catalog",
+        "nav_orders":       "Orders",
+        "nav_whatsapp":     "WhatsApp",
+        "nav_billing":      "Billing",
+        "nav_branding":     "Branding",
+        "nav_integrations": "Integrations",
+        "nav_settings":     "Settings",
+        "nav_logout":       "Logout",
+        # Dashboard
+        "dashboard_title":        "Dashboard",
+        "plan_limit_reached":     "⚠️ Limit reached — bot paused",
+        "plan_approaching_limit": "⚠️ Approaching limit",
+        "upgrade_plan":           "Upgrade Plan",
+        "manage_plan":            "Manage Plan",
+        "stat_total_orders":      "Total Orders",
+        "stat_today":             "Today",
+        "stat_catalog":           "Catalog Items",
+        "stat_convos":            "Active Conversations",
+        "stat_whatsapp":          "WhatsApp",
+        "wa_connected":           "Connected",
+        "wa_disconnected":        "Not Connected",
+        "invite_earn":            "Invite & Earn",
+        "invite_desc":            "Invite colleagues and earn +500 bonus messages for every 3 referrals.",
+        "invite_share_link":      "Share your link to get started.",
+        "invite_referred":        "You've referred",
+        "invite_referred_suffix": "client(s) so far.",
+        "referrals_label":        "referral(s)",
+        "more_to_reward":         "more to reward",
+        "copy":                   "Copy",
+        "copied":                 "Copied!",
+        "recent_orders":          "Recent Orders",
+        "view_all":               "View all",
+        "col_date":               "Date",
+        "col_name":               "Name",
+        "col_items":              "Items",
+        "col_scheduled":          "Scheduled",
+        "col_status":             "Status",
+        "no_orders":              "No orders yet",
+        "no_orders_sub":          "Orders will appear here once customers start booking",
+        # Onboarding
+        "ob_welcome":         "Welcome to {brand} 🚀",
+        "ob_subtitle":        "Let's get your WhatsApp AI sales engine up and running in 3 quick steps.",
+        "ob_step1_label":     "Connect WhatsApp",
+        "ob_step2_label":     "Add Catalog",
+        "ob_step3_label":     "Launch",
+        "ob_step1_title":     "Connect WhatsApp",
+        "ob_step1_desc":      "Link your UltraMsg account so your AI bot can send and receive messages.",
+        "ob_step2_title":     "Add your first catalog item",
+        "ob_step2_desc":      "Add a service or product so the bot knows what to sell.",
+        "ob_step3_title":     "You're ready to launch! 🎉",
+        "ob_step3_desc":      "Your AI sales engine is configured. Go to your dashboard to monitor orders and conversations.",
+        "ob_already_conn":    "✅ Already connected",
+        "ob_done":            "✓ Done",
+        "ob_continue":        "Continue →",
+        "ob_skip":            "Skip for now",
+        "ob_chat_preview":    "This is a preview of how your AI bot will converse with customers over WhatsApp.",
+        "ob_connect_btn":     "Connect WhatsApp →",
+        "ob_items_added":     "item(s) added",
+        "ob_add_item":        "Add catalog item →",
+        "ob_add_another":     "Add another",
+        "ob_catalog_hint":    "You can add items any time from the Catalog menu.",
+        "ob_what_next":       "What happens next:",
+        "ob_what_next_body":  "Customers message your WhatsApp number → the AI bot greets them, shows your catalog, collects their order, and notifies you. All automatically.",
+        "ob_wa_not_conn":     "⚠️ WhatsApp is not connected yet. You can still launch and connect later.",
+        "ob_go_dashboard":    "Go to Dashboard →",
+        "ob_already_have":    "You already have",
+        "ob_in_catalog":      "item(s) in your catalog.",
+    },
+    "ar": {
+        # Nav
+        "nav_dashboard":    "لوحة التحكم",
+        "nav_catalog":      "الكتالوج",
+        "nav_orders":       "الطلبات",
+        "nav_whatsapp":     "واتساب",
+        "nav_billing":      "الفواتير",
+        "nav_branding":     "العلامة التجارية",
+        "nav_integrations": "التكاملات",
+        "nav_settings":     "الإعدادات",
+        "nav_logout":       "تسجيل الخروج",
+        # Dashboard
+        "dashboard_title":        "لوحة التحكم",
+        "plan_limit_reached":     "⚠️ تم الوصول للحد — البوت متوقف",
+        "plan_approaching_limit": "⚠️ اقتراب من الحد",
+        "upgrade_plan":           "ترقية الخطة",
+        "manage_plan":            "إدارة الخطة",
+        "stat_total_orders":      "إجمالي الطلبات",
+        "stat_today":             "اليوم",
+        "stat_catalog":           "عناصر الكتالوج",
+        "stat_convos":            "محادثات نشطة",
+        "stat_whatsapp":          "واتساب",
+        "wa_connected":           "متصل",
+        "wa_disconnected":        "غير متصل",
+        "invite_earn":            "ادع واربح",
+        "invite_desc":            "ادع زملاءك واحصل على +500 رسالة مجانية لكل 3 دعوات.",
+        "invite_share_link":      "شارك رابطك للبدء.",
+        "invite_referred":        "لقد دعوت",
+        "invite_referred_suffix": "عميل حتى الآن.",
+        "referrals_label":        "دعوة",
+        "more_to_reward":         "دعوة أخرى للمكافأة",
+        "copy":                   "نسخ",
+        "copied":                 "تم النسخ!",
+        "recent_orders":          "الطلبات الأخيرة",
+        "view_all":               "عرض الكل",
+        "col_date":               "التاريخ",
+        "col_name":               "الاسم",
+        "col_items":              "العناصر",
+        "col_scheduled":          "المجدول",
+        "col_status":             "الحالة",
+        "no_orders":              "لا طلبات حتى الآن",
+        "no_orders_sub":          "ستظهر الطلبات هنا عندما يبدأ العملاء بالحجز",
+        # Onboarding
+        "ob_welcome":         "مرحباً بك في {brand} 🚀",
+        "ob_subtitle":        "دعنا نشغّل محرك المبيعات الذكي لواتساب في 3 خطوات سريعة.",
+        "ob_step1_label":     "ربط واتساب",
+        "ob_step2_label":     "إضافة كتالوج",
+        "ob_step3_label":     "الإطلاق",
+        "ob_step1_title":     "ربط واتساب",
+        "ob_step1_desc":      "اربط حساب UltraMsg حتى يتمكن البوت من إرسال واستقبال الرسائل.",
+        "ob_step2_title":     "أضف أول عنصر في كتالوجك",
+        "ob_step2_desc":      "أضف خدمة أو منتجاً ليعرف البوت ما يبيعه.",
+        "ob_step3_title":     "أنت جاهز للإطلاق! 🎉",
+        "ob_step3_desc":      "تم إعداد محرك المبيعات الذكي. انتقل إلى لوحة التحكم لمتابعة الطلبات والمحادثات.",
+        "ob_already_conn":    "✅ مرتبط بالفعل",
+        "ob_done":            "✓ تم",
+        "ob_continue":        "متابعة ←",
+        "ob_skip":            "تخطي الآن",
+        "ob_chat_preview":    "هذه معاينة لكيفية تحدث البوت مع عملائك عبر واتساب.",
+        "ob_connect_btn":     "ربط واتساب ←",
+        "ob_items_added":     "عنصر مضاف",
+        "ob_add_item":        "إضافة عنصر للكتالوج ←",
+        "ob_add_another":     "إضافة آخر",
+        "ob_catalog_hint":    "يمكنك إضافة عناصر في أي وقت من قائمة الكتالوج.",
+        "ob_what_next":       "ماذا سيحدث بعد ذلك:",
+        "ob_what_next_body":  "يرسل العملاء رسالة لرقم واتساب ← يرحب بهم البوت، يعرض كتالوجك، يجمع طلبهم، ويُخطرك. كل ذلك تلقائياً.",
+        "ob_wa_not_conn":     "⚠️ واتساب غير مرتبط بعد. يمكنك الإطلاق والربط لاحقاً.",
+        "ob_go_dashboard":    "الذهاب للوحة التحكم ←",
+        "ob_already_have":    "لديك بالفعل",
+        "ob_in_catalog":      "عنصر في كتالوجك.",
+    },
+}
+
+
+def t(key, lang="en"):
+    """Return translated string for key in given language, falling back to English."""
+    lang = lang if lang in TRANSLATIONS else "en"
+    return TRANSLATIONS[lang].get(key) or TRANSLATIONS["en"].get(key, key)
+
+
+@app.context_processor
+def _inject_lang():
+    """Inject lang and t() into every template."""
+    cid = session.get("client_id")
+    lang = "en"
+    if cid:
+        _con = sqlite3.connect("bookings.db", timeout=10)
+        _con.row_factory = sqlite3.Row
+        try:
+            _row = _con.execute(
+                "SELECT default_language FROM clients WHERE id=?", (cid,)
+            ).fetchone()
+        finally:
+            _con.close()
+        if _row:
+            lang = _row["default_language"] or "en"
+    return {"lang": lang, "t": t}
+
+
 DB_FILE = "bookings.db"
 
 def get_db_connection():
@@ -3261,17 +3436,28 @@ def admin_onboarding():
     finally:
         con.close()
 
-    # Demo conversation for clients without WhatsApp connected
-    demo_messages = [
-        {"from": "customer", "text": "السلام عليكم"},
-        {"from": "bot",      "text": "وعليكم السلام! 👋 أهلاً بك. كيف يمكنني مساعدتك اليوم؟"},
-        {"from": "customer", "text": "أريد أعرف الخدمات"},
-        {"from": "bot",      "text": "بالطبع! لدينا:\n• تنظيف أسنان — 100 د.م\n• تبييض أسنان — 250 د.م\n• فحص أسنان — 50 د.م\nأي خدمة تريد؟"},
-        {"from": "customer", "text": "تنظيف أسنان"},
-        {"from": "bot",      "text": "ممتاز! 🦷 ما هو اليوم المناسب لك؟"},
-    ]
+    # Demo conversation — language-aware
+    _lang = client.get("default_language") or "en"
+    if _lang == "ar":
+        demo_messages = [
+            {"from": "customer", "text": "السلام عليكم"},
+            {"from": "bot",      "text": "وعليكم السلام! 👋 أهلاً بك. كيف يمكنني مساعدتك اليوم؟"},
+            {"from": "customer", "text": "أريد أعرف الخدمات"},
+            {"from": "bot",      "text": "بالطبع! لدينا:\n• تنظيف أسنان — 100 د.م\n• تبييض أسنان — 250 د.م\n• فحص أسنان — 50 د.م\nأي خدمة تريد؟"},
+            {"from": "customer", "text": "تنظيف أسنان"},
+            {"from": "bot",      "text": "ممتاز! 🦷 ما هو اليوم المناسب لك؟"},
+        ]
+    else:
+        demo_messages = [
+            {"from": "customer", "text": "Hi!"},
+            {"from": "bot",      "text": "Hello! 👋 Welcome. How can I help you today?"},
+            {"from": "customer", "text": "What services do you offer?"},
+            {"from": "bot",      "text": "Sure! We offer:\n• Teeth Cleaning — $50\n• Teeth Whitening — $120\n• Dental Check-up — $30\nWhich one interests you?"},
+            {"from": "customer", "text": "Teeth Cleaning please"},
+            {"from": "bot",      "text": "Great choice! 🦷 What day works best for you?"},
+        ]
 
-    print(f"[ONBOARDING_STEP] client={cid} viewing onboarding step={step} catalog={catalog_count}")
+    print(f"[ONBOARDING_STEP] client={cid} viewing onboarding step={step} lang={_lang!r} catalog={catalog_count}")
     return render_template(
         "admin/onboarding.html",
         client=client,
