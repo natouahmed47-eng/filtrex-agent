@@ -1,0 +1,217 @@
+{% extends "admin/layout.html" %}
+{% block content %}
+<style>
+  .billing-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 32px; }
+  @media(max-width:700px){ .billing-grid { grid-template-columns: 1fr; } }
+
+  .stat-card {
+    background: #fff; border-radius: 12px; border: 1px solid #e5e7eb;
+    padding: 24px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .stat-label { font-size: 12px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: .5px; }
+  .stat-value { font-size: 28px; font-weight: 700; color: #111; }
+  .stat-sub   { font-size: 13px; color: #9ca3af; }
+
+  .progress-bar-wrap { background: #f3f4f6; border-radius: 999px; height: 8px; overflow: hidden; margin-top: 6px; }
+  .progress-bar      { height: 8px; border-radius: 999px; background: #4f46e5; transition: width .4s; }
+  .progress-bar.warn { background: #f59e0b; }
+  .progress-bar.over { background: #ef4444; }
+
+  .plan-badge {
+    display: inline-block; padding: 4px 12px; border-radius: 999px;
+    font-size: 12px; font-weight: 700; letter-spacing: .3px;
+  }
+  .badge-free     { background: #f3f4f6; color: #374151; }
+  .badge-starter  { background: #dbeafe; color: #1d4ed8; }
+  .badge-pro      { background: #ede9fe; color: #6d28d9; }
+  .badge-business { background: #d1fae5; color: #065f46; }
+
+  .plans-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px; margin-top: 24px;
+  }
+  .plan-card {
+    border: 2px solid #e5e7eb; border-radius: 12px; padding: 24px;
+    background: #fff; display: flex; flex-direction: column; gap: 12px;
+    transition: border-color .2s, box-shadow .2s;
+    position: relative;
+  }
+  .plan-card.current { border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79,70,229,.12); }
+  .plan-card-name  { font-size: 17px; font-weight: 700; color: #111; }
+  .plan-card-price { font-size: 26px; font-weight: 800; color: #4f46e5; }
+  .plan-card-price span { font-size: 13px; font-weight: 500; color: #9ca3af; }
+  .plan-card-limits { font-size: 13px; color: #6b7280; display: flex; flex-direction: column; gap: 4px; }
+  .plan-card-limits li { list-style: none; padding-left: 0; }
+  .plan-card-limits li::before { content: "✓ "; color: #4f46e5; font-weight: 700; }
+  .plan-card-current-label {
+    position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
+    background: #4f46e5; color: #fff; font-size: 11px; font-weight: 700;
+    padding: 2px 12px; border-radius: 999px; letter-spacing: .5px;
+    white-space: nowrap;
+  }
+  .btn-upgrade {
+    display: block; text-align: center; padding: 9px 12px;
+    border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer;
+    border: 1.5px solid #4f46e5; color: #4f46e5; background: #fff;
+    text-decoration: none; transition: all .15s;
+    margin-top: auto;
+  }
+  .btn-upgrade:hover { background: #4f46e5; color: #fff; }
+  .btn-upgrade.current-plan { background: #f3f4f6; border-color: #e5e7eb; color: #9ca3af; cursor: default; }
+  .section-title {
+    font-size: 16px; font-weight: 700; color: #111; margin-bottom: 4px;
+  }
+  .section-sub { font-size: 13px; color: #6b7280; margin-bottom: 20px; }
+  .info-note {
+    background: #fffbeb; border: 1px solid #fde68a;
+    border-radius: 10px; padding: 14px 18px; font-size: 13px; color: #92400e;
+    margin-top: 24px;
+  }
+</style>
+
+<div style="max-width:900px; margin:0 auto; padding:0 4px;">
+
+  <h1 style="font-size:22px; font-weight:800; color:#111; margin-bottom:4px;">Billing &amp; Plan</h1>
+  <p style="font-size:14px; color:#6b7280; margin-bottom:28px;">
+    Monitor your usage and manage your subscription plan.
+  </p>
+
+  {% if sub %}
+    {% set pct_msg  = ((sub.messages_used / sub.max_messages * 100) | int) if sub.max_messages > 0 else 0 %}
+    {% set pct_ord  = ((sub.orders_used   / sub.max_orders   * 100) | int) if sub.max_orders   > 0 else 0 %}
+    {% set pct_cat  = ((catalog_count     / sub.max_catalog_items * 100) | int) if sub.max_catalog_items > 0 else 0 %}
+
+    <div class="billing-grid">
+
+      <!-- Current Plan -->
+      <div class="stat-card" style="grid-column:1/-1">
+        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+          <div>
+            <div class="stat-label">Current Plan</div>
+            <div style="display:flex; align-items:center; gap:10px; margin-top:6px;">
+              <span class="stat-value">{{ sub.plan_name }}</span>
+              <span class="plan-badge badge-{{ sub.plan_name | lower }}">{{ sub.plan_name }}</span>
+            </div>
+            <div class="stat-sub" style="margin-top:4px;">
+              {% if sub.price_monthly == 0 %}Free forever
+              {% else %}${{ sub.price_monthly }}/month{% endif %}
+              {% if sub.expires_at %} · Expires {{ sub.expires_at[:10] }}{% endif %}
+            </div>
+          </div>
+          <div style="text-align:right;">
+            <div class="stat-label">Status</div>
+            <span style="display:inline-block; margin-top:6px; padding:4px 14px;
+              border-radius:999px; font-size:13px; font-weight:700;
+              background:{% if sub.status=='active' %}#d1fae5{% else %}#fee2e2{% endif %};
+              color:{% if sub.status=='active' %}#065f46{% else %}#991b1b{% endif %};">
+              {{ sub.status | title }}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Messages -->
+      <div class="stat-card">
+        <div class="stat-label">Messages Used</div>
+        {% if sub.max_messages == -1 %}
+          <div class="stat-value">{{ sub.messages_used }}</div>
+          <div class="stat-sub">Unlimited</div>
+        {% else %}
+          <div class="stat-value">{{ sub.messages_used }} <span style="font-size:16px; color:#9ca3af;">/ {{ sub.max_messages }}</span></div>
+          <div class="progress-bar-wrap">
+            <div class="progress-bar {% if pct_msg >= 90 %}over{% elif pct_msg >= 70 %}warn{% endif %}"
+                 style="width:{{ [pct_msg, 100] | min }}%"></div>
+          </div>
+          <div class="stat-sub">{{ pct_msg }}% of plan limit used</div>
+        {% endif %}
+      </div>
+
+      <!-- Orders -->
+      <div class="stat-card">
+        <div class="stat-label">Orders Used</div>
+        {% if sub.max_orders == -1 %}
+          <div class="stat-value">{{ sub.orders_used }}</div>
+          <div class="stat-sub">Unlimited</div>
+        {% else %}
+          <div class="stat-value">{{ sub.orders_used }} <span style="font-size:16px; color:#9ca3af;">/ {{ sub.max_orders }}</span></div>
+          <div class="progress-bar-wrap">
+            <div class="progress-bar {% if pct_ord >= 90 %}over{% elif pct_ord >= 70 %}warn{% endif %}"
+                 style="width:{{ [pct_ord, 100] | min }}%"></div>
+          </div>
+          <div class="stat-sub">{{ pct_ord }}% of plan limit used</div>
+        {% endif %}
+      </div>
+
+      <!-- Catalog Items -->
+      <div class="stat-card" style="grid-column:1/-1">
+        <div class="stat-label">Catalog Items</div>
+        {% if sub.max_catalog_items == -1 %}
+          <div class="stat-value">{{ catalog_count }}</div>
+          <div class="stat-sub">Unlimited</div>
+        {% else %}
+          <div class="stat-value">{{ catalog_count }} <span style="font-size:16px; color:#9ca3af;">/ {{ sub.max_catalog_items }}</span></div>
+          <div class="progress-bar-wrap">
+            <div class="progress-bar {% if pct_cat >= 90 %}over{% elif pct_cat >= 70 %}warn{% endif %}"
+                 style="width:{{ [pct_cat, 100] | min }}%"></div>
+          </div>
+          <div class="stat-sub">{{ pct_cat }}% of plan limit used</div>
+        {% endif %}
+      </div>
+
+    </div>
+
+  {% else %}
+    <div class="info-note">No active subscription found. Contact support.</div>
+  {% endif %}
+
+
+  <!-- All Plans -->
+  <div class="section-title">Available Plans</div>
+  <div class="section-sub">Compare plans and upgrade when you're ready.</div>
+
+  <div class="plans-grid">
+    {% for plan in all_plans %}
+      {% set is_current = sub and sub.plan_id == plan.id %}
+      <div class="plan-card {% if is_current %}current{% endif %}">
+        {% if is_current %}<div class="plan-card-current-label">Current Plan</div>{% endif %}
+
+        <div class="plan-card-name">{{ plan.name }}</div>
+        <div class="plan-card-price">
+          {% if plan.price_monthly == 0 %}Free
+          {% else %}${{ plan.price_monthly | int }}<span>/mo</span>{% endif %}
+        </div>
+
+        <div class="plan-card-limits">
+          <ul style="margin:0; padding:0;">
+            <li>{% if plan.max_messages == -1 %}Unlimited messages{% else %}{{ plan.max_messages | int }} messages/mo{% endif %}</li>
+            <li>{% if plan.max_catalog_items == -1 %}Unlimited catalog items{% else %}{{ plan.max_catalog_items | int }} catalog items{% endif %}</li>
+            <li>{% if plan.max_orders == -1 %}Unlimited orders{% else %}{{ plan.max_orders | int }} orders/mo{% endif %}</li>
+            {% for feat in plan.features %}
+            <li>{{ feat }}</li>
+            {% endfor %}
+          </ul>
+        </div>
+
+        {% if is_current %}
+          <a class="btn-upgrade current-plan">Current Plan</a>
+        {% else %}
+          <a href="#" class="btn-upgrade"
+             onclick="alert('Upgrade to {{ plan.name }} — payment integration coming soon. Contact support to upgrade.'); return false;">
+            {% if sub and plan.price_monthly > sub.price_monthly %}Upgrade to {{ plan.name }}
+            {% elif sub and plan.price_monthly < sub.price_monthly %}Downgrade to {{ plan.name }}
+            {% else %}Switch to {{ plan.name }}{% endif %}
+          </a>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+
+  <div class="info-note" style="margin-top:28px;">
+    <strong>Need a custom plan?</strong> Contact our team for enterprise pricing, custom limits, or white-label options.
+    Usage counters reset at the start of each billing cycle.
+    Catalog item limits are enforced in real-time.
+  </div>
+
+</div>
+{% endblock %}

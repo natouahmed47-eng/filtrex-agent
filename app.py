@@ -319,6 +319,73 @@ def _migrate_saas():
             con.commit()
             print("[SAAS] migrated users → added client_id, linked existing users → 1")
 
+        # ── STEP 7b: subscription_plans ──────────────────────────────────
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS subscription_plans (
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                name               TEXT NOT NULL,
+                price_monthly      REAL NOT NULL DEFAULT 0,
+                max_messages       INTEGER NOT NULL DEFAULT 100,
+                max_catalog_items  INTEGER NOT NULL DEFAULT 5,
+                max_orders         INTEGER NOT NULL DEFAULT 20,
+                features_json      TEXT DEFAULT '[]',
+                is_active          INTEGER DEFAULT 1
+            )
+        """)
+
+        # ── STEP 7c: client_subscriptions ────────────────────────────────
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS client_subscriptions (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id      INTEGER NOT NULL,
+                plan_id        INTEGER NOT NULL,
+                status         TEXT NOT NULL DEFAULT 'active',
+                started_at     TEXT DEFAULT CURRENT_TIMESTAMP,
+                expires_at     TEXT,
+                messages_used  INTEGER DEFAULT 0,
+                orders_used    INTEGER DEFAULT 0
+            )
+        """)
+        con.commit()
+
+        # ── Seed default plans ────────────────────────────────────────────
+        plan_count = con.execute("SELECT COUNT(*) FROM subscription_plans").fetchone()[0]
+        if plan_count == 0:
+            import json as _json
+            _plans = [
+                ("Free",     0,   100,  5,   20,  '["WhatsApp bot","Up to 5 catalog items","Basic support"]'),
+                ("Starter",  49,  1000, 25,  100, '["WhatsApp bot","Up to 25 catalog items","Email support","Multilingual"]'),
+                ("Pro",      149, 5000, 100, 500, '["WhatsApp bot","Up to 100 catalog items","Priority support","Multilingual","Upsells","Analytics"]'),
+                ("Business", 499, -1,  -1,  -1,  '["Everything in Pro","Unlimited messages","Unlimited catalog","Dedicated support","Custom branding"]'),
+            ]
+            con.executemany("""
+                INSERT INTO subscription_plans
+                    (name, price_monthly, max_messages, max_catalog_items, max_orders, features_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, _plans)
+            con.commit()
+            print("[BILLING_PLAN] seeded 4 default plans: Free/Starter/Pro/Business")
+
+        # ── Assign Free plan to any client without a subscription ─────────
+        free_plan = con.execute(
+            "SELECT id FROM subscription_plans WHERE name='Free' LIMIT 1"
+        ).fetchone()
+        if free_plan:
+            unsubscribed = con.execute("""
+                SELECT id FROM clients
+                WHERE id NOT IN (
+                    SELECT DISTINCT client_id FROM client_subscriptions WHERE status='active'
+                )
+            """).fetchall()
+            for cli in unsubscribed:
+                con.execute("""
+                    INSERT INTO client_subscriptions (client_id, plan_id, status)
+                    VALUES (?, ?, 'active')
+                """, (cli["id"], free_plan["id"]))
+            if unsubscribed:
+                con.commit()
+                print(f"[BILLING_PLAN] assigned Free plan to {len(unsubscribed)} existing client(s)")
+
         # ── STEP 8: Seed demo client ──────────────────────────────────────
         exists = con.execute("SELECT id FROM clients WHERE id = 1").fetchone()
         if not exists:
@@ -414,6 +481,97 @@ def get_client(client_id=CLIENT_ID):
     finally:
         con.close()
     return dict(row) if row else {}
+
+def get_client_subscription(client_id):
+    """Return dict with subscription + plan data for the active subscription, or None."""
+    con = get_db_connection()
+    try:
+        row = con.execute("""
+            SELECT cs.id, cs.client_id, cs.plan_id, cs.status,
+                   cs.started_at, cs.expires_at,
+                   cs.messages_used, cs.orders_used,
+                   sp.name        AS plan_name,
+                   sp.price_monthly,
+                   sp.max_messages, sp.max_catalog_items, sp.max_orders,
+                   sp.features_json
+            FROM   client_subscriptions cs
+            JOIN   subscription_plans   sp ON sp.id = cs.plan_id
+            WHERE  cs.client_id = ? AND cs.status = 'active'
+            ORDER  BY cs.id DESC LIMIT 1
+        """, (client_id,)).fetchone()
+    finally:
+        con.close()
+    if not row:
+        return None
+    d = dict(row)
+    try:
+        d["features"] = json.loads(d.get("features_json") or "[]")
+    except Exception:
+        d["features"] = []
+    return d
+
+
+def check_usage_limit(client_id, limit_type):
+    """
+    Check whether client_id is within their plan limits.
+    limit_type: 'messages' | 'catalog_items' | 'orders'
+    Returns (allowed: bool, sub: dict|None)
+    Logs [BILLING_LIMIT_CHECK] and [BILLING_BLOCKED].
+    """
+    sub = get_client_subscription(client_id)
+    if not sub:
+        # No subscription row → allow (should not happen after migration)
+        print(f"[BILLING_LIMIT_CHECK] client={client_id} type={limit_type} NO_SUB → allowed")
+        return True, None
+
+    plan_name = sub.get("plan_name", "?")
+
+    if limit_type == "messages":
+        limit = sub.get("max_messages", 100)
+        used  = sub.get("messages_used", 0)
+    elif limit_type == "catalog_items":
+        limit = sub.get("max_catalog_items", 5)
+        # live count straight from DB (most accurate)
+        con = get_db_connection()
+        try:
+            used = con.execute(
+                "SELECT COUNT(*) FROM catalogs WHERE client_id=?", (client_id,)
+            ).fetchone()[0]
+        finally:
+            con.close()
+    elif limit_type == "orders":
+        limit = sub.get("max_orders", 20)
+        used  = sub.get("orders_used", 0)
+    else:
+        print(f"[BILLING_LIMIT_CHECK] client={client_id} UNKNOWN limit_type={limit_type!r} → allowed")
+        return True, sub
+
+    # -1 means unlimited
+    if limit == -1:
+        print(f"[BILLING_LIMIT_CHECK] client={client_id} plan={plan_name!r} type={limit_type} used={used}/∞ → allowed (unlimited)")
+        return True, sub
+
+    allowed = used < limit
+    status  = "allowed" if allowed else "BLOCKED"
+    print(f"[BILLING_LIMIT_CHECK] client={client_id} plan={plan_name!r} type={limit_type} used={used}/{limit} → {status}")
+    if not allowed:
+        print(f"[BILLING_BLOCKED] client={client_id} plan={plan_name!r} type={limit_type} limit={limit} used={used}")
+    return allowed, sub
+
+
+def _billing_increment(client_id, field):
+    """Increment messages_used or orders_used for the active subscription."""
+    con = get_db_connection()
+    try:
+        con.execute(f"""
+            UPDATE client_subscriptions
+            SET    {field} = {field} + 1
+            WHERE  client_id = ? AND status = 'active'
+        """, (client_id,))
+        con.commit()
+    finally:
+        con.close()
+
 
 def find_catalog_match(client_id, msg, lang="ar"):
     """
@@ -1898,6 +2056,15 @@ def wa_save_booking(phone, state, name):
     print(f"[SAVE_BOOKING] name={name}")
     print(f"[SAVE_BOOKING] state={state}")
 
+    # ── BILLING: order limit check ─────────────────────────────────────────
+    _ord_ok, _ord_sub = check_usage_limit(CLIENT_ID, "orders")
+    if not _ord_ok:
+        _ord_plan = (_ord_sub or {}).get("plan_name", "Free")
+        _ord_lim  = (_ord_sub or {}).get("max_orders", 20)
+        print(f"[BILLING_BLOCKED] wa_save_booking stopped — client={CLIENT_ID} plan={_ord_plan!r} orders_limit={_ord_lim}")
+        return  # abort save silently
+    _billing_increment(CLIENT_ID, "orders_used")
+
     day  = state.get("known_day")  or ""
     time = state.get("known_time") or ""
 
@@ -2069,6 +2236,14 @@ def whatsapp():
         if msg_type != "chat" or not sender or not incoming_msg:
             print("[WHATSAPP] ignored non-chat or empty message")
             return "", 200
+
+        # ── BILLING: message limit check ──────────────────────────────────
+        _msg_allowed, _msg_sub = check_usage_limit(CLIENT_ID, "messages")
+        if not _msg_allowed:
+            _plan_n = (_msg_sub or {}).get("plan_name", "Free")
+            print(f"[BILLING_BLOCKED] WhatsApp message dropped — client={CLIENT_ID} plan={_plan_n!r}")
+            return "", 200  # silent drop; no reply to user
+        _billing_increment(CLIENT_ID, "messages_used")
 
         state = wa_load(sender)
         _step_early = state.get("current_step", "service")
@@ -2690,6 +2865,17 @@ def admin_catalog_new():
         if not title:
             flash("Title is required.", "error")
         else:
+            # ── BILLING: catalog item limit ───────────────────────────────
+            _cat_ok, _cat_sub = check_usage_limit(cid, "catalog_items")
+            if not _cat_ok:
+                _cat_plan = (_cat_sub or {}).get("plan_name", "Free")
+                _cat_lim  = (_cat_sub or {}).get("max_catalog_items", 5)
+                flash(
+                    f"Catalog item limit reached ({_cat_lim} items on {_cat_plan} plan). "
+                    f"Upgrade your plan to add more items.",
+                    "error"
+                )
+                return redirect(url_for("admin_catalog"))
             con = get_db_connection()
             try:
                 cur = con.execute("""
@@ -3025,6 +3211,47 @@ def admin_settings():
         flash("Settings saved.", "success")
         return redirect(url_for("admin_settings"))
     return render_template("admin/settings.html", client=client, active="settings")
+
+# ── /admin/billing ────────────────────────────────────────────────────────────
+@app.route("/admin/billing")
+def admin_billing():
+    guard = _admin_guard()
+    if guard:
+        return guard
+    cid = _session_client_id()
+    sub = get_client_subscription(cid)
+
+    # catalog item count (live)
+    con = get_db_connection()
+    try:
+        catalog_count = con.execute(
+            "SELECT COUNT(*) FROM catalogs WHERE client_id=?", (cid,)
+        ).fetchone()[0]
+        all_plans = con.execute(
+            "SELECT * FROM subscription_plans WHERE is_active=1 ORDER BY price_monthly ASC"
+        ).fetchall()
+    finally:
+        con.close()
+
+    plans_list = []
+    for p in all_plans:
+        pd = dict(p)
+        try:
+            pd["features"] = json.loads(pd.get("features_json") or "[]")
+        except Exception:
+            pd["features"] = []
+        plans_list.append(pd)
+
+    _plan_display = sub.get("plan_name") if sub else "none"
+    print(f"[BILLING_PLAN] admin_billing client={cid} plan={_plan_display!r}")
+    return render_template(
+        "admin/billing.html",
+        sub=sub,
+        catalog_count=catalog_count,
+        all_plans=plans_list,
+        active="billing"
+    )
+
 
 # ── /admin/bookings ──────────────────────────────────────────────────────────── (legacy)
 @app.route("/admin/bookings")
