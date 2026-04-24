@@ -145,8 +145,8 @@ TRANSLATIONS = {
         "nav_logout":       "Logout",
         # Dashboard
         "dashboard_title":        "Dashboard",
-        "plan_limit_reached":     "⚠️ Limit reached — bot paused",
-        "plan_approaching_limit": "⚠️ Approaching limit",
+        "plan_limit_reached":     "You have reached your current plan limit. Please upgrade to continue.",
+        "plan_approaching_limit": "⚠️ Approaching your plan limit — consider upgrading soon.",
         "upgrade_plan":           "Upgrade Plan",
         "manage_plan":            "Manage Plan",
         "stat_total_orders":      "Total Orders",
@@ -246,8 +246,8 @@ TRANSLATIONS = {
         "nav_logout":       "تسجيل الخروج",
         # Dashboard
         "dashboard_title":        "لوحة التحكم",
-        "plan_limit_reached":     "⚠️ تم الوصول للحد — البوت متوقف",
-        "plan_approaching_limit": "⚠️ اقتراب من الحد",
+        "plan_limit_reached":     "لقد وصلت إلى حد خطتك الحالية. يرجى الترقية للمتابعة.",
+        "plan_approaching_limit": "⚠️ اقتراب من حد الخطة — يُنصح بالترقية قريباً.",
         "upgrade_plan":           "ترقية الخطة",
         "manage_plan":            "إدارة الخطة",
         "stat_total_orders":      "إجمالي الطلبات",
@@ -1013,6 +1013,127 @@ def _billing_increment(client_id, field):
         con.commit()
     finally:
         con.close()
+
+
+# ── Plan configuration ─────────────────────────────────────────────────────────
+# Single source of truth for feature gates and per-plan limits.
+# None  = unlimited.  -1 in DB = also unlimited (handled by check_usage_limit).
+PLANS = {
+    "free": {
+        "max_messages":      100,
+        "max_catalog_items": 5,
+        "max_orders":        10,
+        "features": {
+            "whatsapp_bot": True,
+            "multilingual": False,
+            "upsell":       False,
+            "analytics":    False,
+            "white_label":  False,
+        },
+    },
+    "starter": {
+        "max_messages":      1000,
+        "max_catalog_items": 25,
+        "max_orders":        100,
+        "features": {
+            "whatsapp_bot": True,
+            "multilingual": True,
+            "upsell":       False,
+            "analytics":    False,
+            "white_label":  False,
+        },
+    },
+    "pro": {
+        "max_messages":      5000,
+        "max_catalog_items": 100,
+        "max_orders":        500,
+        "features": {
+            "whatsapp_bot": True,
+            "multilingual": True,
+            "upsell":       True,
+            "analytics":    True,
+            "white_label":  False,
+        },
+    },
+    "business": {
+        "max_messages":      None,
+        "max_catalog_items": None,
+        "max_orders":        None,
+        "features": {
+            "whatsapp_bot": True,
+            "multilingual": True,
+            "upsell":       True,
+            "analytics":    True,
+            "white_label":  True,
+        },
+    },
+}
+
+
+def get_client_plan(client_id):
+    """
+    Return the client's active plan name as a lowercase string
+    (e.g. 'free', 'starter', 'pro', 'business').
+    Reads from clients.plan; defaults to 'free'.
+    Logs [PLAN_CHECK].
+    """
+    con = get_db_connection()
+    try:
+        row = con.execute(
+            "SELECT plan FROM clients WHERE id=?", (client_id,)
+        ).fetchone()
+    finally:
+        con.close()
+    plan = (row["plan"] if row and row["plan"] else "free").lower().strip()
+    print(f"[PLAN_CHECK] client={client_id} plan={plan!r}")
+    return plan
+
+
+def has_feature(client_id, feature):
+    """
+    Return True if the client's current plan includes 'feature'.
+    feature: 'whatsapp_bot' | 'multilingual' | 'upsell' | 'analytics' | 'white_label'
+    Logs [PLAN_CHECK] (via get_client_plan) and [FEATURE_BLOCKED] when denied.
+    """
+    plan    = get_client_plan(client_id)
+    allowed = PLANS.get(plan, PLANS["free"])["features"].get(feature, False)
+    if not allowed:
+        print(f"[FEATURE_BLOCKED] client={client_id} plan={plan!r} feature={feature!r} → blocked")
+    return allowed
+
+
+def check_limit(client_id, limit_type):
+    """
+    Return (allowed: bool, sub: dict|None).
+    limit_type: 'messages' | 'catalog_items' | 'orders'
+
+    Checks the PLANS dict for unlimited overrides, then delegates to
+    check_usage_limit() for live DB counter comparison.
+    Logs [LIMIT_CHECK] and [LIMIT_EXCEEDED].
+    """
+    plan     = get_client_plan(client_id)
+    plan_cfg = PLANS.get(plan, PLANS["free"])
+    _key_map = {
+        "messages":      "max_messages",
+        "catalog_items": "max_catalog_items",
+        "orders":        "max_orders",
+    }
+    static_limit = plan_cfg.get(_key_map.get(limit_type, ""), 0)
+
+    # None = unlimited in PLANS config
+    if static_limit is None:
+        print(f"[LIMIT_CHECK] client={client_id} plan={plan!r} type={limit_type} → unlimited ✓")
+        return True, None
+
+    # Delegate to DB-aware checker (handles messages_used, orders_used, live catalog count)
+    allowed, sub = check_usage_limit(client_id, limit_type)
+    status = "allowed" if allowed else "EXCEEDED"
+    print(f"[LIMIT_CHECK] client={client_id} plan={plan!r} type={limit_type} "
+          f"static_limit={static_limit} → {status}")
+    if not allowed:
+        print(f"[LIMIT_EXCEEDED] client={client_id} plan={plan!r} "
+              f"type={limit_type} limit={static_limit}")
+    return allowed, sub
 
 
 def generate_referral_code(client_id):
@@ -2412,6 +2533,11 @@ _UPSELL_CANONICAL_MAP = {
 }
 
 def can_show_upsell(state):
+    # ── PLAN GATE: upsell is a pro / business feature ──────────────────────
+    if not has_feature(CLIENT_ID, "upsell"):
+        print(f"[FEATURE_BLOCKED] can_show_upsell client={CLIENT_ID} → upsell not available on current plan")
+        return False
+
     step          = state.get("current_step", "service")
     svcs          = ensure_svc_list(state.get("known_service"))
     offered       = state.get("upsell_offered", False)
@@ -4210,6 +4336,69 @@ def admin_billing():
     )
 
 
+# ── /admin/analytics ──────────────────────────────────────────────────────────
+@app.route("/admin/analytics")
+def admin_analytics():
+    guard = _admin_guard()
+    if guard:
+        return guard
+    cid    = _session_client_id()
+    client = get_client(cid)
+
+    # ── PLAN GATE: analytics requires pro or business ─────────────────────
+    if not has_feature(cid, "analytics"):
+        plan_now = get_client_plan(cid)
+        print(f"[FEATURE_BLOCKED] admin_analytics client={cid} plan={plan_now!r} → analytics not in plan")
+        flash(
+            "Analytics is not available on your current plan. "
+            "Upgrade to Pro or Business to unlock analytics.",
+            "error"
+        )
+        return redirect(url_for("admin_billing"))
+
+    # ── Gather analytics data ─────────────────────────────────────────────
+    con = get_db_connection()
+    try:
+        total_orders   = con.execute(
+            "SELECT COUNT(*) FROM orders WHERE client_id=?", (cid,)
+        ).fetchone()[0]
+        catalog_count  = con.execute(
+            "SELECT COUNT(*) FROM catalogs WHERE client_id=?", (cid,)
+        ).fetchone()[0]
+        recent_orders  = [dict(r) for r in con.execute(
+            "SELECT * FROM orders WHERE client_id=? ORDER BY id DESC LIMIT 20", (cid,)
+        ).fetchall()]
+        # Daily order counts (last 14 days)
+        daily_orders   = [dict(r) for r in con.execute("""
+            SELECT DATE(created_at) AS day, COUNT(*) AS cnt
+            FROM orders
+            WHERE client_id=? AND created_at >= DATE('now', '-14 days')
+            GROUP BY day ORDER BY day ASC
+        """, (cid,)).fetchall()]
+        payments_total = con.execute(
+            "SELECT COALESCE(SUM(amount), 0) FROM paypal_payments WHERE client_id=?", (cid,)
+        ).fetchone()[0]
+    finally:
+        con.close()
+
+    sub = get_client_subscription(cid)
+    messages_used = sub.get("messages_used", 0) if sub else 0
+
+    print(f"[PLAN_CHECK] admin_analytics client={cid} plan={get_client_plan(cid)!r} → analytics allowed")
+    return render_template(
+        "admin/analytics.html",
+        client=client,
+        sub=sub,
+        total_orders=total_orders,
+        catalog_count=catalog_count,
+        recent_orders=recent_orders,
+        daily_orders=daily_orders,
+        messages_used=messages_used,
+        payments_total=payments_total,
+        active="analytics"
+    )
+
+
 # ── /admin/branding ───────────────────────────────────────────────────────────
 ALLOWED_LOGO_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "svg"}
 
@@ -4360,6 +4549,21 @@ def api_post_orders():
     status    = body.get("status", "pending")
     if not phone or not items:
         return jsonify({"error": "phone and items are required"}), 400
+
+    # ── PLAN GATE: order limit ─────────────────────────────────────────────
+    _ord_ok, _ord_sub = check_limit(cid, "orders")
+    if not _ord_ok:
+        _ord_plan = (_ord_sub or {}).get("plan_name", "Free")
+        _ord_lim  = (_ord_sub or {}).get("max_orders", 10)
+        print(f"[LIMIT_EXCEEDED] api_post_orders blocked client={cid} "
+              f"plan={_ord_plan!r} limit={_ord_lim}")
+        return jsonify({
+            "error": "You have reached your current plan limit. Please upgrade to continue.",
+            "limit_type": "orders",
+            "plan": _ord_plan,
+            "limit": _ord_lim,
+        }), 429
+
     con = get_db_connection()
     try:
         cur = con.execute(
