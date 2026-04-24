@@ -1,172 +1,368 @@
 {% extends "admin/layout.html" %}
-{% block title %}ربط واتساب{% endblock %}
+{% block title %}{{ t("wa_page_title", lang) }}{% endblock %}
+
 {% block content %}
+{% set dir = "rtl" if lang == "ar" else "ltr" %}
+{% set status = client.whatsapp_connection_status or "not_connected" %}
 
 <style>
-  .wa-page{max-width:520px}
-
-  /* ── status banner ────────────────────────────────────────────────────── */
-  .wa-status{
-    display:flex;align-items:center;gap:14px;
-    padding:20px 24px;border-radius:12px;margin-bottom:28px;
+  /* ── Layout ─────────────────────────────────────── */
+  .wa-wrap {
+    max-width: 560px;
+    direction: {{ dir }};
   }
-  .wa-status.connected{background:#dcfce7;border:1.5px solid #bbf7d0}
-  .wa-status.disconnected{background:#f9fafb;border:1.5px solid #e5e7eb}
-  .wa-status-icon{font-size:32px;line-height:1}
-  .wa-status-text h3{font-size:15px;font-weight:700;margin-bottom:2px}
-  .wa-status-text p{font-size:13px;color:#6b7280}
-  .wa-status.connected .wa-status-text h3{color:#15803d}
-
-  /* ── steps ────────────────────────────────────────────────────────────── */
-  .steps{display:flex;flex-direction:column;gap:0;margin-bottom:28px}
-  .step{display:flex;gap:16px;align-items:flex-start;padding:16px 0;
-        border-bottom:1px solid #f3f4f6}
-  .step:last-child{border-bottom:none}
-  .step-num{
-    flex-shrink:0;width:28px;height:28px;border-radius:50%;
-    background:#4f46e5;color:#fff;font-size:13px;font-weight:700;
-    display:flex;align-items:center;justify-content:center;
+  .wa-page-head {
+    margin-bottom: 28px;
   }
-  .step-body h4{font-size:13px;font-weight:700;color:#111;margin-bottom:3px}
-  .step-body p{font-size:12px;color:#6b7280;line-height:1.5}
-  .step-body code{
-    display:inline-block;background:#f3f4f6;border-radius:5px;
-    padding:1px 7px;font-size:12px;color:#4f46e5;font-family:monospace;
+  .wa-page-head h1 {
+    font-size: 24px;
+    font-weight: 800;
+    color: #0f172a;
+    margin-bottom: 6px;
+  }
+  .wa-page-head p {
+    font-size: 14px;
+    color: #64748b;
+    line-height: 1.6;
   }
 
-  /* ── form card ────────────────────────────────────────────────────────── */
-  .wa-form-card{
-    background:#fff;border-radius:12px;
-    box-shadow:0 1px 6px rgba(0,0,0,.06);padding:28px 32px;
+  /* ── Status banner ───────────────────────────────── */
+  .wa-status-banner {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 18px 22px;
+    border-radius: 14px;
+    margin-bottom: 24px;
+    border: 1.5px solid transparent;
   }
-  .wa-form-card h2{font-size:16px;font-weight:700;margin-bottom:20px;color:#111}
-  .form-row{margin-bottom:18px}
-  .form-row label{display:block;font-size:13px;font-weight:600;color:#374151;margin-bottom:6px}
-  .form-row input[type=text],
-  .form-row input[type=password]{
-    width:100%;padding:10px 13px;border:1.5px solid #e5e7eb;border-radius:8px;
-    font-size:14px;color:#111;background:#fff;transition:border .12s;
-  }
-  .form-row input:focus{outline:none;border-color:#4f46e5}
-  .form-hint{font-size:12px;color:#9ca3af;margin-top:4px}
-  .form-actions{display:flex;gap:10px;margin-top:24px;flex-wrap:wrap;align-items:center}
+  .wa-status-banner.connected  { background: #dcfce7; border-color: #86efac; }
+  .wa-status-banner.pending    { background: #fef9c3; border-color: #fde047; }
+  .wa-status-banner.failed     { background: #fee2e2; border-color: #fca5a5; }
+  .wa-status-banner.not_connected { background: #f8fafc; border-color: #e2e8f0; }
 
-  .btn-wa{
-    padding:10px 24px;border-radius:8px;border:none;cursor:pointer;
-    font-size:14px;font-weight:700;background:#25d366;color:#fff;
-    display:inline-flex;align-items:center;gap:8px;
+  .wa-status-icon { font-size: 30px; line-height: 1; flex-shrink: 0; }
+  .wa-status-body h3 {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 3px;
   }
-  .btn-wa:hover{background:#1ebe5c}
-  .btn-disconnect{
-    padding:8px 18px;border-radius:8px;border:1.5px solid #fecaca;
-    background:transparent;color:#b91c1c;font-size:13px;font-weight:600;cursor:pointer;
+  .wa-status-body p  { font-size: 13px; line-height: 1.5; }
+
+  .connected  .wa-status-body h3 { color: #15803d; }
+  .connected  .wa-status-body p  { color: #166534; }
+  .pending    .wa-status-body h3 { color: #854d0e; }
+  .pending    .wa-status-body p  { color: #713f12; }
+  .failed     .wa-status-body h3 { color: #991b1b; }
+  .failed     .wa-status-body p  { color: #7f1d1d; }
+  .not_connected .wa-status-body h3 { color: #374151; }
+  .not_connected .wa-status-body p  { color: #6b7280; }
+
+  /* ── Card ────────────────────────────────────────── */
+  .wa-card {
+    background: #fff;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 16px;
+    padding: 28px 32px;
+    box-shadow: 0 2px 12px rgba(0,0,0,.05);
+    margin-bottom: 16px;
   }
-  .btn-disconnect:hover{background:#fef2f2}
+  .wa-card-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: #0f172a;
+    margin-bottom: 20px;
+  }
+
+  /* ── Form ────────────────────────────────────────── */
+  .wa-field { margin-bottom: 20px; }
+  .wa-field label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: #374151;
+    margin-bottom: 7px;
+  }
+  .wa-input-wrap {
+    display: flex;
+    align-items: center;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 10px;
+    background: #fff;
+    overflow: hidden;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .wa-input-wrap:focus-within {
+    border-color: #4f46e5;
+    box-shadow: 0 0 0 3px rgba(79,70,229,.10);
+  }
+  .wa-input-prefix {
+    padding: 0 14px;
+    font-size: 20px;
+    color: #25d366;
+    background: #f0fdf4;
+    border-{{ "left" if dir == "ltr" else "right" }}: 1.5px solid #e2e8f0;
+    height: 46px;
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  .wa-input-wrap input {
+    flex: 1;
+    border: none;
+    outline: none;
+    padding: 12px 14px;
+    font-size: 15px;
+    color: #0f172a;
+    background: transparent;
+    direction: ltr;
+    text-align: {{ "right" if dir == "rtl" else "left" }};
+  }
+  .wa-hint {
+    font-size: 12px;
+    color: #94a3b8;
+    margin-top: 7px;
+    line-height: 1.5;
+  }
+
+  /* ── Registered number display ───────────────────── */
+  .wa-number-display {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: #f8fafc;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin-bottom: 20px;
+    font-size: 14px;
+    color: #374151;
+    direction: ltr;
+  }
+  .wa-number-display .wa-num-icon { font-size: 18px; }
+  .wa-number-display .wa-num-val  { font-weight: 700; color: #0f172a; flex: 1; }
+  .wa-number-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #94a3b8;
+    margin-bottom: 8px;
+  }
+
+  /* ── Pending info box ────────────────────────────── */
+  .wa-pending-box {
+    display: flex;
+    gap: 12px;
+    background: #fef9c3;
+    border: 1px solid #fde047;
+    border-radius: 12px;
+    padding: 14px 18px;
+    font-size: 13px;
+    color: #713f12;
+    line-height: 1.6;
+    margin-bottom: 20px;
+  }
+  .wa-pending-icon { font-size: 20px; flex-shrink: 0; margin-top: 1px; }
+
+  /* ── Buttons ─────────────────────────────────────── */
+  .wa-btn-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 4px;
+  }
+  .btn-wa-primary {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 26px;
+    background: #25d366;
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    text-decoration: none;
+    transition: opacity .15s, transform .1s;
+    box-shadow: 0 2px 8px rgba(37,211,102,.30);
+  }
+  .btn-wa-primary:hover  { opacity: .88; transform: translateY(-1px); }
+  .btn-wa-primary:active { transform: translateY(0); }
+
+  .btn-wa-danger {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 20px;
+    background: transparent;
+    color: #b91c1c;
+    border: 1.5px solid #fca5a5;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .btn-wa-danger:hover { background: #fef2f2; border-color: #f87171; }
+
+  .btn-wa-ghost {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 18px;
+    background: #fff;
+    color: #64748b;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+    transition: all .15s;
+  }
+  .btn-wa-ghost:hover { color: #334155; border-color: #cbd5e1; background: #f8fafc; }
+
+  /* ── Responsive ─────────────────────────────────── */
+  @media (max-width: 600px) {
+    .wa-card { padding: 20px 18px; }
+    .wa-btn-row { flex-direction: column; align-items: stretch; }
+    .btn-wa-primary, .btn-wa-danger, .btn-wa-ghost { justify-content: center; }
+  }
 </style>
 
-<div class="page-head">
-  <div>
-    <h1 class="page-title">ربط واتساب</h1>
-    <p class="page-sub">اربط رقم واتساب الخاص بنشاطك لتفعيل المساعد الذكي</p>
+<div class="wa-wrap">
+
+  <!-- Page header -->
+  <div class="wa-page-head">
+    <h1>📲 {{ t("wa_page_title", lang) }}</h1>
+    <p>{{ t("wa_page_sub", lang) }}</p>
   </div>
-</div>
 
-<div class="wa-page">
+  <!-- Flash messages -->
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <div style="padding:12px 16px;border-radius:10px;margin-bottom:20px;font-size:14px;
+           background:{% if category=='success' %}#dcfce7{% else %}#fee2e2{% endif %};
+           border:1px solid {% if category=='success' %}#bbf7d0{% else %}#fecaca{% endif %};
+           color:{% if category=='success' %}#166534{% else %}#991b1b{% endif %};">
+        {{ message }}
+      </div>
+    {% endfor %}
+  {% endwith %}
 
-  {# ── Connection status banner ────────────────────────────────────────── #}
-  {% if client.whatsapp_connected %}
-  <div class="wa-status connected">
-    <div class="wa-status-icon">✅</div>
-    <div class="wa-status-text">
-      <h3>متصل بواتساب</h3>
-      <p>المساعد الذكي يعمل ويستقبل الرسائل الآن</p>
+  <!-- Status banner -->
+  <div class="wa-status-banner {{ status }}">
+    <div class="wa-status-icon">
+      {% if status == "connected"    %}✅
+      {% elif status == "pending"    %}🕐
+      {% elif status == "failed"     %}❌
+      {% else                        %}📵
+      {% endif %}
+    </div>
+    <div class="wa-status-body">
+      <h3>
+        {% if status == "connected"    %}{{ t("wa_status_connected", lang) }}
+        {% elif status == "pending"    %}{{ t("wa_status_pending", lang) }}
+        {% elif status == "failed"     %}{{ t("wa_status_failed", lang) }}
+        {% else                        %}{{ t("wa_status_not_conn", lang) }}
+        {% endif %}
+      </h3>
+      <p>
+        {% if status == "connected"    %}{{ t("wa_status_connected_sub", lang) }}
+        {% elif status == "pending"    %}{{ t("wa_status_pending_sub", lang) }}
+        {% elif status == "failed"     %}{{ t("wa_status_failed_sub", lang) }}
+        {% else                        %}{{ t("wa_status_not_conn_sub", lang) }}
+        {% endif %}
+      </p>
     </div>
   </div>
-  {% else %}
-  <div class="wa-status disconnected">
-    <div class="wa-status-icon">❌</div>
-    <div class="wa-status-text">
-      <h3 style="color:#374151">غير متصل</h3>
-      <p>أكمل الخطوات أدناه لتفعيل واتساب</p>
-    </div>
-  </div>
-  {% endif %}
 
-  {# ── Already connected — show disconnect option only ─────────────────── #}
-  {% if client.whatsapp_connected %}
-  <div class="wa-form-card">
-    <h2>إعدادات الاتصال</h2>
-    <p style="font-size:13px;color:#6b7280;margin-bottom:20px">
-      واتساب مرتبط ويعمل. إذا أردت تغيير الاتصال، افصل الاتصال الحالي أولاً.
-    </p>
-    <form method="POST">
-      <input type="hidden" name="action" value="disconnect"/>
-      <button type="submit" class="btn-disconnect"
-              onclick="return confirm('هل تريد قطع الاتصال؟')">
-        قطع الاتصال
-      </button>
+  <!-- ═══ CONNECTED: show number + disconnect option ═══════════════════════ -->
+  {% if status == "connected" %}
+  <div class="wa-card">
+    <div class="wa-card-title">{{ t("wa_settings_title", lang) }}</div>
+
+    {% if client.business_whatsapp_number %}
+      <div class="wa-number-label">{{ t("wa_settings_number", lang) }}</div>
+      <div class="wa-number-display">
+        <span class="wa-num-icon">📱</span>
+        <span class="wa-num-val">{{ client.business_whatsapp_number }}</span>
+      </div>
+    {% endif %}
+
+    <p style="font-size:13px;color:#64748b;margin-bottom:20px;">{{ t("wa_settings_change", lang) }}</p>
+
+    <form method="POST"
+          onsubmit="return confirm('{{ t('wa_disconnect_confirm', lang) }}')">
+      <input type="hidden" name="action" value="disconnect">
+      <button type="submit" class="btn-wa-danger">🔌 {{ t("wa_btn_disconnect", lang) }}</button>
     </form>
   </div>
 
-  {% else %}
-  {# ── Setup steps ──────────────────────────────────────────────────────── #}
-  <div class="wa-form-card" style="margin-bottom:20px">
-    <h2>كيفية الربط</h2>
-    <div class="steps">
-      <div class="step">
-        <div class="step-num">1</div>
-        <div class="step-body">
-          <h4>أنشئ حساباً في UltraMsg</h4>
-          <p>توجّه إلى <strong>ultramsg.com</strong> وسجّل دخولك أو أنشئ حساباً جديداً.</p>
-        </div>
-      </div>
-      <div class="step">
-        <div class="step-num">2</div>
-        <div class="step-body">
-          <h4>أنشئ Instance وامسح QR</h4>
-          <p>في لوحة UltraMsg، أنشئ Instance جديدة ثم امسح رمز QR بهاتفك عبر
-             واتساب ← الأجهزة المرتبطة.</p>
-        </div>
-      </div>
-      <div class="step">
-        <div class="step-num">3</div>
-        <div class="step-body">
-          <h4>انسخ Instance ID و Token</h4>
-          <p>ستجدهما في صفحة الـ Instance:
-            <code>instance12345</code> و <code>token…</code></p>
-        </div>
-      </div>
-      <div class="step">
-        <div class="step-num">4</div>
-        <div class="step-body">
-          <h4>الصق البيانات وابدأ الربط</h4>
-          <p>أدخل البيانات في الحقول أدناه ثم اضغط "ابدأ الربط".</p>
-        </div>
-      </div>
+  <!-- ═══ PENDING: show info + allow update ════════════════════════════════ -->
+  {% elif status == "pending" %}
+  <div class="wa-card">
+    <div class="wa-pending-box">
+      <span class="wa-pending-icon">💬</span>
+      <div>{{ t("wa_pending_box", lang) }}</div>
     </div>
+
+    {% if client.business_whatsapp_number %}
+      <div class="wa-number-label">{{ t("wa_settings_number", lang) }}</div>
+      <div class="wa-number-display">
+        <span class="wa-num-icon">📱</span>
+        <span class="wa-num-val">{{ client.business_whatsapp_number }}</span>
+      </div>
+    {% endif %}
+
+    <div class="wa-card-title" style="margin-bottom:14px;">{{ t("wa_form_title", lang) }}</div>
+    <form method="POST">
+      <input type="hidden" name="action" value="connect">
+      <div class="wa-field">
+        <label>{{ t("wa_form_label", lang) }}</label>
+        <div class="wa-input-wrap">
+          <span class="wa-input-prefix">📱</span>
+          <input type="tel" name="business_whatsapp_number"
+                 placeholder="{{ t('wa_form_placeholder', lang) }}"
+                 value="{{ client.business_whatsapp_number or '' }}"
+                 autocomplete="tel">
+        </div>
+        <div class="wa-hint">{{ t("wa_form_hint", lang) }}</div>
+      </div>
+      <div class="wa-btn-row">
+        <button type="submit" class="btn-wa-primary">
+          <span>✅</span> {{ t("wa_btn_update", lang) }}
+        </button>
+        <form method="POST" style="display:contents"
+              onsubmit="return confirm('{{ t('wa_disconnect_confirm', lang) }}')">
+          <input type="hidden" name="action" value="disconnect">
+          <button type="submit" class="btn-wa-ghost">{{ t("wa_btn_disconnect", lang) }}</button>
+        </form>
+      </div>
+    </form>
   </div>
 
-  {# ── Connect form ─────────────────────────────────────────────────────── #}
-  <div class="wa-form-card">
-    <h2>ابدأ الربط</h2>
+  <!-- ═══ NOT CONNECTED / FAILED: show connect form ════════════════════════ -->
+  {% else %}
+  <div class="wa-card">
+    <div class="wa-card-title">{{ t("wa_form_title", lang) }}</div>
     <form method="POST">
-      <input type="hidden" name="action" value="connect"/>
-
-      <div class="form-row">
-        <label>Instance ID</label>
-        <input type="text" name="instance" placeholder="مثال: instance12345" autocomplete="off" required/>
-        <div class="form-hint">معرّف الـ Instance من لوحة UltraMsg</div>
+      <input type="hidden" name="action" value="connect">
+      <div class="wa-field">
+        <label>{{ t("wa_form_label", lang) }}</label>
+        <div class="wa-input-wrap">
+          <span class="wa-input-prefix">📱</span>
+          <input type="tel" name="business_whatsapp_number"
+                 placeholder="{{ t('wa_form_placeholder', lang) }}"
+                 value="{{ client.business_whatsapp_number or '' }}"
+                 autocomplete="tel" required>
+        </div>
+        <div class="wa-hint">{{ t("wa_form_hint", lang) }}</div>
       </div>
-
-      <div class="form-row">
-        <label>Token</label>
-        <input type="password" name="token" placeholder="الصق الـ Token هنا" autocomplete="off" required/>
-        <div class="form-hint">لن يُعرض مجدداً بعد الحفظ</div>
-      </div>
-
-      <div class="form-actions">
-        <button type="submit" class="btn-wa">
-          <span>📱</span> ابدأ الربط
+      <div class="wa-btn-row">
+        <button type="submit" class="btn-wa-primary">
+          <span>📲</span> {{ t("wa_btn_connect", lang) }}
         </button>
       </div>
     </form>

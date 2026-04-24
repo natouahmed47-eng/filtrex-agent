@@ -174,6 +174,32 @@ TRANSLATIONS = {
         "col_status":             "Status",
         "no_orders":              "No orders yet",
         "no_orders_sub":          "Orders will appear here once customers start booking",
+        # Connect WhatsApp page
+        "wa_page_title":          "Connect WhatsApp",
+        "wa_page_sub":            "Connect your business WhatsApp number to activate the AI assistant.",
+        "wa_status_connected":    "Connected",
+        "wa_status_connected_sub":"The AI assistant is active and receiving messages.",
+        "wa_status_pending":      "Connection Pending",
+        "wa_status_pending_sub":  "We received your number and are setting up the connection.",
+        "wa_status_failed":       "Connection Failed",
+        "wa_status_failed_sub":   "Something went wrong. Please try again or contact support.",
+        "wa_status_not_conn":     "Not Connected",
+        "wa_status_not_conn_sub": "Enter your WhatsApp number below to get started.",
+        "wa_form_title":          "Your WhatsApp Business Number",
+        "wa_form_label":          "WhatsApp Number",
+        "wa_form_placeholder":    "e.g. +966501234567",
+        "wa_form_hint":           "Enter the full number with country code.",
+        "wa_btn_connect":         "Connect WhatsApp",
+        "wa_btn_update":          "Update Number",
+        "wa_btn_disconnect":      "Disconnect",
+        "wa_disconnect_confirm":  "Are you sure you want to disconnect?",
+        "wa_settings_title":      "Connection Settings",
+        "wa_settings_number":     "Registered number:",
+        "wa_settings_change":     "To change your number, disconnect first.",
+        "wa_pending_box":         "We received your number and are configuring the connection. Our team will activate it shortly — no action needed from your side.",
+        "wa_success_msg":         "Your number has been received. We are setting up the connection.",
+        "wa_disconnect_msg":      "Disconnected successfully.",
+        "wa_error_number":        "Please enter a valid WhatsApp number.",
         # Onboarding
         "ob_welcome":         "Welcome to {brand} 🚀",
         "ob_subtitle":        "Let's get your WhatsApp AI sales engine up and running in 3 quick steps.",
@@ -249,6 +275,32 @@ TRANSLATIONS = {
         "col_status":             "الحالة",
         "no_orders":              "لا طلبات حتى الآن",
         "no_orders_sub":          "ستظهر الطلبات هنا عندما يبدأ العملاء بالحجز",
+        # Connect WhatsApp page
+        "wa_page_title":          "ربط واتساب",
+        "wa_page_sub":            "أدخل رقم واتساب الخاص بنشاطك، وسنقوم بتجهيز الربط لك.",
+        "wa_status_connected":    "متصل",
+        "wa_status_connected_sub":"المساعد الذكي يعمل ويستقبل الرسائل.",
+        "wa_status_pending":      "جاري تجهيز الربط",
+        "wa_status_pending_sub":  "تم استلام رقمك وجاري الإعداد.",
+        "wa_status_failed":       "فشل الاتصال",
+        "wa_status_failed_sub":   "حدث خطأ ما. يرجى المحاولة مجدداً أو التواصل مع الدعم.",
+        "wa_status_not_conn":     "غير متصل",
+        "wa_status_not_conn_sub": "أدخل رقم واتساب أدناه للبدء.",
+        "wa_form_title":          "رقم واتساب الخاص بنشاطك",
+        "wa_form_label":          "رقم واتساب",
+        "wa_form_placeholder":    "مثال: ‎+966501234567",
+        "wa_form_hint":           "أدخل الرقم كاملاً مع رمز الدولة.",
+        "wa_btn_connect":         "ربط واتساب",
+        "wa_btn_update":          "تحديث الرقم",
+        "wa_btn_disconnect":      "قطع الاتصال",
+        "wa_disconnect_confirm":  "هل تريد قطع الاتصال؟",
+        "wa_settings_title":      "إعدادات الاتصال",
+        "wa_settings_number":     "الرقم المسجّل:",
+        "wa_settings_change":     "لتغيير الرقم، قطع الاتصال أولاً.",
+        "wa_pending_box":         "تم استلام رقمك بنجاح. جاري تجهيز الربط من قِبل فريقنا — لا حاجة لأي إجراء من جهتك.",
+        "wa_success_msg":         "تم استلام رقمك بنجاح. جاري تجهيز الربط.",
+        "wa_disconnect_msg":      "تم قطع الاتصال.",
+        "wa_error_number":        "يرجى إدخال رقم واتساب صحيح.",
         # Onboarding
         "ob_welcome":         "مرحباً بك في {brand} 🚀",
         "ob_subtitle":        "دعنا نشغّل محرك المبيعات الذكي لواتساب في 3 خطوات سريعة.",
@@ -588,6 +640,28 @@ def _migrate_saas():
             if _no_code:
                 con.commit()
             print(f"[REFERRAL_CREATED] migrated clients → referral columns, generated {len(_no_code)} code(s)")
+
+        # clients: WhatsApp connection UX v2 — number + status + provider
+        if "business_whatsapp_number" not in _cli_cols:
+            con.execute("ALTER TABLE clients ADD COLUMN business_whatsapp_number TEXT")
+            con.commit()
+            print("[SAAS] migrated clients → added business_whatsapp_number")
+        if "whatsapp_connection_status" not in _cli_cols:
+            con.execute("ALTER TABLE clients ADD COLUMN whatsapp_connection_status TEXT DEFAULT 'not_connected'")
+            # Migrate existing connected clients so they show as connected
+            con.execute("""
+                UPDATE clients
+                SET whatsapp_connection_status = CASE
+                    WHEN whatsapp_connected = 1 THEN 'connected'
+                    ELSE 'not_connected'
+                END
+            """)
+            con.commit()
+            print("[SAAS] migrated clients → added whatsapp_connection_status, backfilled existing")
+        if "whatsapp_provider" not in _cli_cols:
+            con.execute("ALTER TABLE clients ADD COLUMN whatsapp_provider TEXT DEFAULT 'ultramsg'")
+            con.commit()
+            print("[SAAS] migrated clients → added whatsapp_provider")
 
         # users: add email + client_id columns for multi-tenant auth
         _usr_cols = [r[1] for r in con.execute("PRAGMA table_info(users)").fetchall()]
@@ -3768,8 +3842,9 @@ def admin_connect_whatsapp():
     guard = _admin_guard()
     if guard:
         return guard
-    cid = _session_client_id()
+    cid  = _session_client_id()
     client = get_client(cid)
+    _lang  = client.get("default_language") or "en"
 
     if request.method == "POST":
         action = request.form.get("action", "connect")
@@ -3777,58 +3852,43 @@ def admin_connect_whatsapp():
         if action == "disconnect":
             con = get_db_connection()
             try:
-                con.execute(
-                    "UPDATE clients SET whatsapp_connected=0 WHERE id=?",
-                    (cid,)
-                )
+                con.execute("""
+                    UPDATE clients
+                    SET whatsapp_connected=0,
+                        whatsapp_connection_status='not_connected'
+                    WHERE id=?
+                """, (cid,))
                 con.commit()
             finally:
                 con.close()
             print(f"[CONNECT_WA] client={cid} disconnected")
-            flash("تم قطع الاتصال.", "success")
+            flash(t("wa_disconnect_msg", _lang), "success")
             return redirect(url_for("admin_connect_whatsapp"))
 
-        # action == "connect"
-        instance = request.form.get("instance", "").strip()
-        token    = request.form.get("token", "").strip()
+        # action == "connect" — save number, mark pending
+        number = request.form.get("business_whatsapp_number", "").strip()
 
-        if not instance or not token:
-            flash("يرجى إدخال Instance ID والـ Token.", "error")
+        # Basic validation: must have at least 7 digits
+        import re as _re
+        digits = _re.sub(r'\D', '', number)
+        if len(digits) < 7:
+            flash(t("wa_error_number", _lang), "error")
             return redirect(url_for("admin_connect_whatsapp"))
 
-        # Test credentials against UltraMsg status endpoint
-        ok = False
+        con = get_db_connection()
         try:
-            import requests as _req
-            resp = _req.get(
-                f"https://api.ultramsg.com/{instance}/instance/status",
-                params={"token": token},
-                timeout=8,
-            )
-            data = resp.json() if resp.content else {}
-            ok = resp.status_code == 200 and "error" not in data
-            print(f"[CONNECT_WA] test status={resp.status_code} ok={ok} body={str(data)[:120]}")
-        except Exception as _e:
-            print(f"[CONNECT_WA] test error: {repr(_e)}")
-            flash("تعذّر الاتصال بالخادم. تحقق من بياناتك وحاول مجدداً.", "error")
-            return redirect(url_for("admin_connect_whatsapp"))
-
-        if ok:
-            con = get_db_connection()
-            try:
-                con.execute("""
-                    UPDATE clients
-                    SET ultramsg_instance=?, ultramsg_token=?, whatsapp_connected=1
-                    WHERE id=?
-                """, (instance, token, cid))
-                con.commit()
-            finally:
-                con.close()
-            print(f"[CONNECT_WA] client={cid} connected instance={instance!r}")
-            flash("تم ربط واتساب بنجاح ✅", "success")
-        else:
-            flash("فشل التحقق من البيانات. تأكد من Instance ID والـ Token وحاول مجدداً.", "error")
-
+            con.execute("""
+                UPDATE clients
+                SET business_whatsapp_number=?,
+                    whatsapp_connection_status='pending',
+                    whatsapp_provider='ultramsg'
+                WHERE id=?
+            """, (number, cid))
+            con.commit()
+        finally:
+            con.close()
+        print(f"[CONNECT_WA] client={cid} number={number!r} → pending")
+        flash(t("wa_success_msg", _lang), "success")
         return redirect(url_for("admin_connect_whatsapp"))
 
     return render_template("admin/connect_whatsapp.html", client=client, active="whatsapp")
