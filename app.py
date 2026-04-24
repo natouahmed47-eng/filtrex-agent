@@ -299,12 +299,18 @@ def _migrate_saas():
             con.commit()
             print("[SAAS] migrated catalog_aliases → added lang column")
 
-        # clients: add whatsapp_connected column if missing
+        # clients: add whatsapp_connected + onboarding_step columns if missing
         _cli_cols = [r[1] for r in con.execute("PRAGMA table_info(clients)").fetchall()]
         if "whatsapp_connected" not in _cli_cols:
             con.execute("ALTER TABLE clients ADD COLUMN whatsapp_connected INTEGER DEFAULT 0")
             con.commit()
             print("[SAAS] migrated clients → added whatsapp_connected")
+        if "onboarding_step" not in _cli_cols:
+            con.execute("ALTER TABLE clients ADD COLUMN onboarding_step INTEGER DEFAULT 0")
+            # Existing clients (id=1) have already been configured — mark them done
+            con.execute("UPDATE clients SET onboarding_step=3 WHERE id=1")
+            con.commit()
+            print("[SAAS] migrated clients → added onboarding_step, existing client=1 marked done")
 
         # users: add email + client_id columns for multi-tenant auth
         _usr_cols = [r[1] for r in con.execute("PRAGMA table_info(users)").fetchall()]
@@ -571,6 +577,38 @@ def _billing_increment(client_id, field):
         con.commit()
     finally:
         con.close()
+
+
+def _check_activation(client_id):
+    """
+    If client has ≥1 catalog item AND ≥1 order, ensure is_active=1.
+    Advances onboarding_step to 3 (done) on first activation.
+    Logs [ACTIVATION].
+    """
+    con = get_db_connection()
+    try:
+        cat_count = con.execute(
+            "SELECT COUNT(*) FROM catalogs WHERE client_id=? AND is_active=1", (client_id,)
+        ).fetchone()[0]
+        ord_count = con.execute(
+            "SELECT COUNT(*) FROM bookings_or_orders WHERE client_id=?", (client_id,)
+        ).fetchone()[0]
+        if cat_count >= 1 and ord_count >= 1:
+            con.execute(
+                "UPDATE clients SET is_active=1, onboarding_step=3 WHERE id=?",
+                (client_id,)
+            )
+            con.commit()
+            print(f"[ACTIVATION] client={client_id} activated — catalogs={cat_count} orders={ord_count}")
+        else:
+            print(f"[ACTIVATION] client={client_id} not yet active — catalogs={cat_count} orders={ord_count}")
+    finally:
+        con.close()
+
+
+def _onboarding_complete(client):
+    """Return True if client has finished (or skipped) all onboarding steps."""
+    return int(client.get("onboarding_step") or 0) >= 3
 
 
 def find_catalog_match(client_id, msg, lang="ar"):
@@ -2138,6 +2176,9 @@ def wa_save_booking(phone, state, name):
     finally:
         con3.close()
 
+    # ── Activation check (order saved → may trigger is_active=1) ──────────
+    _check_activation(CLIENT_ID)
+
 _SERVICE_MAP = {
     "تنظيف": "تنظيف أسنان",
     "تبييض": "تبييض أسنان",
@@ -2237,12 +2278,21 @@ def whatsapp():
             print("[WHATSAPP] ignored non-chat or empty message")
             return "", 200
 
-        # ── BILLING: message limit check ──────────────────────────────────
+        # ── PAYWALL: message limit check ──────────────────────────────────
         _msg_allowed, _msg_sub = check_usage_limit(CLIENT_ID, "messages")
         if not _msg_allowed:
             _plan_n = (_msg_sub or {}).get("plan_name", "Free")
-            print(f"[BILLING_BLOCKED] WhatsApp message dropped — client={CLIENT_ID} plan={_plan_n!r}")
-            return "", 200  # silent drop; no reply to user
+            _used   = (_msg_sub or {}).get("messages_used", 0)
+            _limit  = (_msg_sub or {}).get("max_messages", 100)
+            print(f"[PAYWALL_TRIGGER] client={CLIENT_ID} plan={_plan_n!r} messages={_used}/{_limit}")
+            print(f"[BILLING_BLOCKED] WhatsApp reply blocked — sending upgrade notice to {sender!r}")
+            _paywall_msg = (
+                "⚠️ لقد وصلت إلى حد الرسائل الشهري في خطتك الحالية.\n"
+                "للمتابعة، يرجى ترقية خطتك على لوحة التحكم.\n\n"
+                "⚠️ You've reached your monthly message limit.\n"
+                "Please upgrade your plan to continue."
+            )
+            return wa_reply(sender, _paywall_msg)
         _billing_increment(CLIENT_ID, "messages_used")
 
         state = wa_load(sender)
@@ -2800,8 +2850,14 @@ def admin_dashboard():
     guard = _admin_guard()
     if guard:
         return guard
-    cid = _session_client_id()
+    cid    = _session_client_id()
     client = get_client(cid)
+
+    # ── Onboarding redirect — new clients go through setup first ─────────
+    if not _onboarding_complete(client):
+        print(f"[ONBOARDING_STEP] client={cid} step={client.get('onboarding_step', 0)} → redirect to onboarding")
+        return redirect(url_for("admin_onboarding"))
+
     con = get_db_connection()
     try:
         total_orders  = con.execute("SELECT COUNT(*) FROM orders WHERE client_id=?", (cid,)).fetchone()[0]
@@ -2821,10 +2877,98 @@ def admin_dashboard():
         ).fetchall()]
     finally:
         con.close()
+
+    sub = get_client_subscription(cid)
     stats = dict(total_orders=total_orders, today_orders=today_orders,
                  catalog_count=catalog_count, active_convos=active_convos)
     return render_template("admin/dashboard.html", client=client, stats=stats,
-                           recent_orders=recent_orders, active="dashboard")
+                           recent_orders=recent_orders, sub=sub, active="dashboard")
+
+# ── /admin/onboarding ─────────────────────────────────────────────────────────
+@app.route("/admin/onboarding", methods=["GET", "POST"])
+def admin_onboarding():
+    guard = _admin_guard()
+    if guard:
+        return guard
+    cid    = _session_client_id()
+    client = get_client(cid)
+
+    if request.method == "POST":
+        action = request.form.get("action", "")
+
+        if action == "skip_whatsapp":
+            # Advance from step 0→1 (skipped WhatsApp)
+            _new_step = max(int(client.get("onboarding_step") or 0), 1)
+            con = get_db_connection()
+            try:
+                con.execute("UPDATE clients SET onboarding_step=? WHERE id=?", (_new_step, cid))
+                con.commit()
+            finally:
+                con.close()
+            print(f"[ONBOARDING_STEP] client={cid} skipped WhatsApp → step={_new_step}")
+            return redirect(url_for("admin_onboarding"))
+
+        elif action == "skip_catalog":
+            _new_step = max(int(client.get("onboarding_step") or 0), 2)
+            con = get_db_connection()
+            try:
+                con.execute("UPDATE clients SET onboarding_step=? WHERE id=?", (_new_step, cid))
+                con.commit()
+            finally:
+                con.close()
+            print(f"[ONBOARDING_STEP] client={cid} skipped catalog → step={_new_step}")
+            return redirect(url_for("admin_onboarding"))
+
+        elif action == "complete":
+            # Step 3 = done — mark onboarding complete
+            con = get_db_connection()
+            try:
+                con.execute("UPDATE clients SET onboarding_step=3 WHERE id=?", (cid,))
+                con.commit()
+            finally:
+                con.close()
+            print(f"[ONBOARDING_STEP] client={cid} onboarding complete → step=3")
+            flash("Setup complete! Welcome to Filtrex AI.", "success")
+            return redirect(url_for("admin_dashboard"))
+
+        return redirect(url_for("admin_onboarding"))
+
+    # Refresh client after possible POST changes
+    client = get_client(cid)
+    step = int(client.get("onboarding_step") or 0)
+
+    # If already done, go to dashboard
+    if step >= 3:
+        return redirect(url_for("admin_dashboard"))
+
+    con = get_db_connection()
+    try:
+        catalog_count = con.execute(
+            "SELECT COUNT(*) FROM catalogs WHERE client_id=?", (cid,)
+        ).fetchone()[0]
+    finally:
+        con.close()
+
+    # Demo conversation for clients without WhatsApp connected
+    demo_messages = [
+        {"from": "customer", "text": "السلام عليكم"},
+        {"from": "bot",      "text": "وعليكم السلام! 👋 أهلاً بك. كيف يمكنني مساعدتك اليوم؟"},
+        {"from": "customer", "text": "أريد أعرف الخدمات"},
+        {"from": "bot",      "text": "بالطبع! لدينا:\n• تنظيف أسنان — 100 د.م\n• تبييض أسنان — 250 د.م\n• فحص أسنان — 50 د.م\nأي خدمة تريد؟"},
+        {"from": "customer", "text": "تنظيف أسنان"},
+        {"from": "bot",      "text": "ممتاز! 🦷 ما هو اليوم المناسب لك؟"},
+    ]
+
+    print(f"[ONBOARDING_STEP] client={cid} viewing onboarding step={step} catalog={catalog_count}")
+    return render_template(
+        "admin/onboarding.html",
+        client=client,
+        step=step,
+        catalog_count=catalog_count,
+        demo_messages=demo_messages,
+        active="dashboard"
+    )
+
 
 # ── /admin/catalog ────────────────────────────────────────────────────────────
 @app.route("/admin/catalog")
@@ -2895,6 +3039,8 @@ def admin_catalog_new():
                 con.commit()
             finally:
                 con.close()
+            # Activation check (first catalog item may complete activation)
+            _check_activation(cid)
             flash("Catalog item created.", "success")
             return redirect(url_for("admin_catalog"))
     return render_template("admin/catalog_form.html", item=None, aliases_str="",

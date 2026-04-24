@@ -1,0 +1,264 @@
+{% extends "admin/layout.html" %}
+{% block title %}Setup — Filtrex AI{% endblock %}
+{% block content %}
+<style>
+  .ob-wrap   { max-width: 720px; margin: 0 auto; padding: 0 4px 60px; }
+  .ob-header { text-align: center; margin-bottom: 40px; }
+  .ob-header h1 { font-size: 26px; font-weight: 800; color: #111; margin-bottom: 8px; }
+  .ob-header p  { font-size: 15px; color: #6b7280; }
+
+  /* Progress bar */
+  .ob-progress { display: flex; align-items: center; gap: 0; margin-bottom: 40px; }
+  .ob-step-dot {
+    width: 32px; height: 32px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700; flex-shrink: 0;
+    transition: all .2s;
+  }
+  .ob-step-dot.done    { background: #4f46e5; color: #fff; }
+  .ob-step-dot.active  { background: #fff; color: #4f46e5; border: 2.5px solid #4f46e5; }
+  .ob-step-dot.pending { background: #f3f4f6; color: #9ca3af; border: 2px solid #e5e7eb; }
+  .ob-step-line { flex: 1; height: 2px; background: #e5e7eb; }
+  .ob-step-line.done { background: #4f46e5; }
+  .ob-step-labels { display: flex; justify-content: space-between; margin-top: 8px; margin-bottom: 32px; }
+  .ob-step-lbl { font-size: 11px; font-weight: 600; color: #9ca3af; text-align: center; width: 100px; }
+  .ob-step-lbl.active  { color: #4f46e5; }
+  .ob-step-lbl.done    { color: #4f46e5; }
+
+  /* Step cards */
+  .ob-card {
+    background: #fff; border: 2px solid #e5e7eb; border-radius: 14px;
+    padding: 28px 28px; margin-bottom: 20px;
+    transition: border-color .2s;
+  }
+  .ob-card.active-card { border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79,70,229,.08); }
+  .ob-card.done-card   { border-color: #d1fae5; background: #f0fdf4; }
+  .ob-card.pending-card{ opacity: 0.55; pointer-events: none; }
+
+  .ob-card-head { display: flex; align-items: flex-start; gap: 14px; }
+  .ob-step-num  {
+    width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 14px;
+  }
+  .ob-step-num.done    { background: #4f46e5; color: #fff; }
+  .ob-step-num.active  { background: #ede9fe; color: #4f46e5; }
+  .ob-step-num.pending { background: #f3f4f6; color: #9ca3af; }
+
+  .ob-card-title { font-size: 16px; font-weight: 700; color: #111; margin-bottom: 4px; }
+  .ob-card-desc  { font-size: 13px; color: #6b7280; line-height: 1.5; }
+  .ob-card-body  { margin-top: 18px; padding-left: 50px; }
+
+  .btn-primary {
+    display: inline-block; padding: 10px 22px; background: #4f46e5; color: #fff;
+    border-radius: 8px; font-size: 14px; font-weight: 600; text-decoration: none;
+    border: none; cursor: pointer; transition: background .15s;
+  }
+  .btn-primary:hover { background: #4338ca; }
+  .btn-ghost-sm {
+    display: inline-block; padding: 8px 16px; color: #9ca3af; font-size: 13px;
+    border: 1px solid #e5e7eb; border-radius: 8px; background: #fff;
+    cursor: pointer; text-decoration: none; transition: all .15s;
+    margin-left: 8px;
+  }
+  .btn-ghost-sm:hover { color: #374151; border-color: #d1d5db; }
+  .done-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: #d1fae5; color: #065f46; font-size: 13px; font-weight: 700;
+    padding: 4px 12px; border-radius: 999px;
+  }
+
+  /* Demo chat */
+  .demo-chat {
+    background: #f0f2f5; border-radius: 12px; padding: 16px; max-width: 360px;
+    font-size: 13px; display: flex; flex-direction: column; gap: 8px;
+    margin-top: 16px;
+  }
+  .demo-bubble {
+    padding: 8px 12px; border-radius: 10px; max-width: 80%; line-height: 1.45;
+    white-space: pre-wrap;
+  }
+  .demo-bubble.bot      { background: #fff; color: #111; align-self: flex-start;
+                           border-bottom-left-radius: 2px; }
+  .demo-bubble.customer { background: #d9fdd3; color: #111; align-self: flex-end;
+                           border-bottom-right-radius: 2px; }
+  .demo-label { font-size: 11px; color: #9ca3af; font-weight: 600; margin-bottom: 2px; }
+  .demo-badge {
+    background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px;
+    padding: 10px 14px; font-size: 12px; color: #92400e; margin-top: 8px;
+  }
+</style>
+
+<div class="ob-wrap">
+  <div class="ob-header">
+    <h1>Welcome to Filtrex AI 🚀</h1>
+    <p>Let's get your WhatsApp AI sales engine up and running in 3 quick steps.</p>
+  </div>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <div class="alert alert-{{ category }}" style="margin-bottom:20px;padding:12px 16px;border-radius:8px;
+           background:{% if category=='success' %}#d1fae5{% else %}#fee2e2{% endif %};
+           color:{% if category=='success' %}#065f46{% else %}#991b1b{% endif %};font-size:14px;">
+        {{ message }}
+      </div>
+    {% endfor %}
+  {% endwith %}
+
+  <!-- Progress indicator -->
+  <div class="ob-progress">
+    <div class="ob-step-dot {% if step >= 1 %}done{% elif step == 0 %}active{% else %}pending{% endif %}">
+      {% if step >= 1 %}✓{% else %}1{% endif %}
+    </div>
+    <div class="ob-step-line {% if step >= 1 %}done{% endif %}"></div>
+    <div class="ob-step-dot {% if step >= 2 %}done{% elif step == 1 %}active{% else %}pending{% endif %}">
+      {% if step >= 2 %}✓{% else %}2{% endif %}
+    </div>
+    <div class="ob-step-line {% if step >= 2 %}done{% endif %}"></div>
+    <div class="ob-step-dot {% if step >= 3 %}done{% elif step == 2 %}active{% else %}pending{% endif %}">
+      {% if step >= 3 %}✓{% else %}3{% endif %}
+    </div>
+  </div>
+  <div class="ob-step-labels">
+    <span class="ob-step-lbl {% if step >= 1 %}done{% elif step == 0 %}active{% endif %}">Connect WhatsApp</span>
+    <span class="ob-step-lbl {% if step >= 2 %}done{% elif step == 1 %}active{% endif %}">Add Catalog</span>
+    <span class="ob-step-lbl {% if step >= 3 %}done{% elif step == 2 %}active{% endif %}">Launch</span>
+  </div>
+
+  <!-- ── STEP 1: Connect WhatsApp ── -->
+  <div class="ob-card
+    {% if step == 0 %}active-card
+    {% elif step >= 1 %}done-card
+    {% else %}pending-card{% endif %}">
+    <div class="ob-card-head">
+      <div class="ob-step-num {% if step >= 1 %}done{% elif step == 0 %}active{% else %}pending{% endif %}">
+        {% if step >= 1 %}✓{% else %}1{% endif %}
+      </div>
+      <div>
+        <div class="ob-card-title">Connect WhatsApp</div>
+        <div class="ob-card-desc">Link your UltraMsg account so your AI bot can send and receive messages.</div>
+      </div>
+      {% if step >= 1 %}
+        <div style="margin-left:auto"><span class="done-pill">✓ Done</span></div>
+      {% endif %}
+    </div>
+    {% if step == 0 %}
+    <div class="ob-card-body">
+      {% if client.whatsapp_connected %}
+        <span class="done-pill">✅ Already connected</span>
+        <form method="POST" style="display:inline;margin-left:12px;">
+          <input type="hidden" name="action" value="skip_whatsapp">
+          <button type="submit" class="btn-primary">Continue →</button>
+        </form>
+      {% else %}
+        <!-- Demo conversation preview -->
+        <div class="demo-chat">
+          {% for m in demo_messages %}
+            <div>
+              <div class="demo-label">{% if m.from == 'bot' %}🤖 Bot{% else %}👤 Customer{% endif %}</div>
+              <div class="demo-bubble {{ m.from }}">{{ m.text }}</div>
+            </div>
+          {% endfor %}
+        </div>
+        <div class="demo-badge">
+          This is a preview of how your AI bot will converse with customers over WhatsApp.
+        </div>
+        <div style="margin-top:16px; display:flex; align-items:center; flex-wrap:wrap; gap:8px;">
+          <a href="/admin/connect-whatsapp" class="btn-primary">Connect WhatsApp →</a>
+          <form method="POST" style="display:inline;">
+            <input type="hidden" name="action" value="skip_whatsapp">
+            <button type="submit" class="btn-ghost-sm">Skip for now</button>
+          </form>
+        </div>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- ── STEP 2: Add Catalog Item ── -->
+  <div class="ob-card
+    {% if step == 1 %}active-card
+    {% elif step >= 2 %}done-card
+    {% elif step < 1 %}pending-card{% endif %}">
+    <div class="ob-card-head">
+      <div class="ob-step-num {% if step >= 2 %}done{% elif step == 1 %}active{% else %}pending{% endif %}">
+        {% if step >= 2 %}✓{% else %}2{% endif %}
+      </div>
+      <div>
+        <div class="ob-card-title">Add your first catalog item</div>
+        <div class="ob-card-desc">
+          Add a service or product so the bot knows what to sell.
+          {% if catalog_count > 0 %}
+            You already have <strong>{{ catalog_count }} item{{ 's' if catalog_count != 1 }}</strong> in your catalog.
+          {% endif %}
+        </div>
+      </div>
+      {% if step >= 2 %}
+        <div style="margin-left:auto"><span class="done-pill">✓ Done</span></div>
+      {% endif %}
+    </div>
+    {% if step == 1 %}
+    <div class="ob-card-body">
+      {% if catalog_count > 0 %}
+        <div style="margin-bottom:14px;">
+          <span class="done-pill">✅ {{ catalog_count }} item{{ 's' if catalog_count != 1 }} added</span>
+        </div>
+        <form method="POST" style="display:inline;">
+          <input type="hidden" name="action" value="skip_catalog">
+          <button type="submit" class="btn-primary">Continue →</button>
+        </form>
+        <a href="/admin/catalog/new" class="btn-ghost-sm">Add another</a>
+      {% else %}
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <a href="/admin/catalog/new" class="btn-primary">Add catalog item →</a>
+          <form method="POST" style="display:inline;">
+            <input type="hidden" name="action" value="skip_catalog">
+            <button type="submit" class="btn-ghost-sm">Skip for now</button>
+          </form>
+        </div>
+        <p style="font-size:12px;color:#9ca3af;margin-top:10px;">
+          You can add items any time from the Catalog menu.
+        </p>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- ── STEP 3: Launch ── -->
+  <div class="ob-card
+    {% if step == 2 %}active-card
+    {% elif step >= 3 %}done-card
+    {% else %}pending-card{% endif %}">
+    <div class="ob-card-head">
+      <div class="ob-step-num {% if step >= 3 %}done{% elif step == 2 %}active{% else %}pending{% endif %}">
+        {% if step >= 3 %}✓{% else %}3{% endif %}
+      </div>
+      <div>
+        <div class="ob-card-title">You're ready to launch! 🎉</div>
+        <div class="ob-card-desc">
+          Your AI sales engine is configured. Go to your dashboard to monitor orders and conversations.
+        </div>
+      </div>
+    </div>
+    {% if step == 2 %}
+    <div class="ob-card-body">
+      <div style="background:#ede9fe;border-radius:10px;padding:14px 16px;font-size:13px;color:#4f46e5;margin-bottom:16px;">
+        <strong>What happens next:</strong><br>
+        Customers message your WhatsApp number → the AI bot greets them, shows your catalog, collects their order, and notifies you. All automatically.
+      </div>
+      {% if not client.whatsapp_connected %}
+        <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;
+             padding:10px 14px;font-size:13px;color:#92400e;margin-bottom:16px;">
+          ⚠️ WhatsApp is not connected yet. You can still launch and connect later.
+        </div>
+      {% endif %}
+      <form method="POST">
+        <input type="hidden" name="action" value="complete">
+        <button type="submit" class="btn-primary">Go to Dashboard →</button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}

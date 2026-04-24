@@ -1,6 +1,81 @@
 {% extends "admin/layout.html" %}
 {% block title %}Dashboard{% endblock %}
 {% block content %}
+<style>
+  .plan-banner {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 16px;
+    background: #fff; border: 1.5px solid #e5e7eb; border-radius: 12px;
+    padding: 14px 20px; margin-bottom: 22px;
+  }
+  .plan-banner.warn  { border-color: #fde68a; background: #fffbeb; }
+  .plan-banner.alert { border-color: #fca5a5; background: #fef2f2; }
+  .plan-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px;
+  }
+  .pill-free     { background:#f3f4f6; color:#374151; }
+  .pill-starter  { background:#dbeafe; color:#1d4ed8; }
+  .pill-pro      { background:#ede9fe; color:#6d28d9; }
+  .pill-business { background:#d1fae5; color:#065f46; }
+  .plan-stat     { font-size: 13px; color: #6b7280; }
+  .plan-stat strong { color: #111; }
+  .mini-bar-wrap { display:inline-block; width:80px; height:6px; background:#e5e7eb;
+                   border-radius:999px; vertical-align:middle; margin:0 6px; overflow:hidden; }
+  .mini-bar      { height:6px; border-radius:999px; background:#4f46e5; }
+  .mini-bar.warn { background:#f59e0b; }
+  .mini-bar.over { background:#ef4444; }
+  .btn-upgrade-sm {
+    margin-left:auto; padding:7px 16px; background:#4f46e5; color:#fff;
+    border-radius:8px; font-size:13px; font-weight:600; text-decoration:none;
+    white-space:nowrap; transition:background .15s;
+  }
+  .btn-upgrade-sm:hover { background:#4338ca; }
+</style>
+
+{% if sub %}
+  {% set pct_msg = ((sub.messages_used / sub.max_messages * 100)|int) if sub.max_messages > 0 else 0 %}
+  {% set pct_ord = ((sub.orders_used / sub.max_orders * 100)|int) if sub.max_orders > 0 else 0 %}
+  {% set near_limit = (pct_msg >= 80 or pct_ord >= 80) %}
+  {% set over_limit = (pct_msg >= 100 or pct_ord >= 100) %}
+  <div class="plan-banner {% if over_limit %}alert{% elif near_limit %}warn{% endif %}">
+    <span class="plan-pill pill-{{ sub.plan_name | lower }}">{{ sub.plan_name }}</span>
+
+    <span class="plan-stat">
+      Messages&nbsp;
+      <strong>{{ sub.messages_used }}</strong>
+      {% if sub.max_messages != -1 %}
+        / {{ sub.max_messages }}
+        <span class="mini-bar-wrap"><span class="mini-bar {% if pct_msg>=100 %}over{% elif pct_msg>=80 %}warn{% endif %}"
+          style="width:{{ [pct_msg,100]|min }}%"></span></span>
+      {% else %}
+        &nbsp;(∞)
+      {% endif %}
+    </span>
+
+    <span class="plan-stat">
+      Orders&nbsp;
+      <strong>{{ sub.orders_used }}</strong>
+      {% if sub.max_orders != -1 %}
+        / {{ sub.max_orders }}
+        <span class="mini-bar-wrap"><span class="mini-bar {% if pct_ord>=100 %}over{% elif pct_ord>=80 %}warn{% endif %}"
+          style="width:{{ [pct_ord,100]|min }}%"></span></span>
+      {% else %}
+        &nbsp;(∞)
+      {% endif %}
+    </span>
+
+    {% if over_limit %}
+      <span style="font-size:13px;color:#b91c1c;font-weight:600;">⚠️ Limit reached — bot paused</span>
+    {% elif near_limit %}
+      <span style="font-size:13px;color:#92400e;font-weight:600;">⚠️ Approaching limit</span>
+    {% endif %}
+
+    <a href="/admin/billing" class="btn-upgrade-sm">
+      {% if sub.plan_name == 'Free' %}Upgrade Plan{% else %}Manage Plan{% endif %}
+    </a>
+  </div>
+{% endif %}
+
 <div class="page-head">
   <div>
     <h1 class="page-title">Dashboard</h1>
