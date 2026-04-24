@@ -137,6 +137,9 @@ def _migrate_whatsapp_state():
         if "upsell_rejected" not in cols:
             con.execute("ALTER TABLE whatsapp_state ADD COLUMN upsell_rejected INTEGER DEFAULT 0")
             print("[DB] migration: added upsell_rejected")
+        if "completed" not in cols:
+            con.execute("ALTER TABLE whatsapp_state ADD COLUMN completed INTEGER DEFAULT 0")
+            print("[DB] migration: added completed")
         con.commit()
     finally:
         con.close()
@@ -570,7 +573,7 @@ def wa_load(phone):
     try:
         row = con.execute(
             """SELECT known_service, known_day, known_time, known_name,
-                      current_step, lang, upsell_offered, upsell_rejected
+                      current_step, lang, upsell_offered, upsell_rejected, completed
                FROM whatsapp_state WHERE phone = ?""",
             (phone,)
         ).fetchone()
@@ -596,6 +599,7 @@ def wa_load(phone):
             "lang":                   row["lang"] or "",
             "upsell_offered":         bool(row["upsell_offered"]),
             "upsell_rejected":        bool(row["upsell_rejected"]),
+            "completed":              bool(row["completed"]),
         }
     else:
         state = {
@@ -603,6 +607,7 @@ def wa_load(phone):
             "known_day": None, "known_time": None, "known_name": None,
             "current_step": "service", "lang": "",
             "upsell_offered": False, "upsell_rejected": False,
+            "completed": False,
         }
     # ── Load known_catalog_ids_json from conversations table ──────────────
     con2 = get_db_connection()
@@ -625,10 +630,10 @@ def wa_save(phone, state):
         _svc_to_save = state.get("known_service")
         if isinstance(_svc_to_save, list):
             _svc_to_save = json.dumps(_svc_to_save, ensure_ascii=False) if _svc_to_save else None
-        # ── whatsapp_state (legacy) ───────────────────────────────────────
+        # ── whatsapp_state ────────────────────────────────────────────────
         con.execute(
-            """INSERT INTO whatsapp_state (phone, known_service, known_day, known_time, known_name, current_step, lang, upsell_offered, upsell_rejected)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """INSERT INTO whatsapp_state (phone, known_service, known_day, known_time, known_name, current_step, lang, upsell_offered, upsell_rejected, completed)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(phone) DO UPDATE SET
                    known_service   = excluded.known_service,
                    known_day       = excluded.known_day,
@@ -637,7 +642,8 @@ def wa_save(phone, state):
                    current_step    = excluded.current_step,
                    lang            = CASE WHEN excluded.lang != '' THEN excluded.lang ELSE whatsapp_state.lang END,
                    upsell_offered  = excluded.upsell_offered,
-                   upsell_rejected = excluded.upsell_rejected""",
+                   upsell_rejected = excluded.upsell_rejected,
+                   completed       = excluded.completed""",
             (phone,
              _svc_to_save,
              state.get("known_day"),
@@ -646,7 +652,8 @@ def wa_save(phone, state):
              state.get("current_step", "service"),
              state.get("lang", ""),
              1 if state.get("upsell_offered") else 0,
-             1 if state.get("upsell_rejected") else 0)
+             1 if state.get("upsell_rejected") else 0,
+             1 if state.get("completed") else 0)
         )
         # ── conversations (spec table) ────────────────────────────────────
         _cat_ids_json = state.get("known_catalog_ids_json", "[]")
@@ -1545,7 +1552,12 @@ def is_price_question(msg):
     return any(kw in msg for kw in _WA_PRICE_KEYWORDS)
 
 def notify_admin_booking(phone, state, name):
-    """Admin WhatsApp notification — uses catalog titles and real prices."""
+    """Admin-only WhatsApp notification. NEVER sends to the customer."""
+    # Guard: skip if admin number not configured
+    if not ADMIN_WHATSAPP_NUMBER or not ADMIN_WHATSAPP_NUMBER.strip():
+        print("[ADMIN_NOTIFY] skipped — ADMIN_WHATSAPP_NUMBER not set")
+        return
+
     _ids   = json.loads(state.get("known_catalog_ids_json") or "[]")
     items  = get_catalog_items(CLIENT_ID, _ids)
     _cur   = get_client(CLIENT_ID).get("currency", "SAR")
@@ -1559,6 +1571,8 @@ def notify_admin_booking(phone, state, name):
         _svcs = ensure_svc_list(state.get("known_service"))
         item_lines = "\n".join(f"  • {s}" for s in _svcs) if _svcs else "  غير محدد"
         total_str = "-"
+
+    _admin_to = normalize_number(ADMIN_WHATSAPP_NUMBER.strip())
     msg = (
         f"📥 حجز جديد\n"
         f"الاسم: {name}\n"
@@ -1567,12 +1581,11 @@ def notify_admin_booking(phone, state, name):
         f"الإجمالي: {total_str}\n"
         f"الموعد: {state.get('known_day', '')} {state.get('known_time', '')}"
     )
-    print("[ADMIN_NOTIFY] sending notification...")
-    print(f"[ADMIN_NOTIFY] TO={ADMIN_WHATSAPP_NUMBER!r}")
+    print(f"[ADMIN_NOTIFY] sent_to_admin={_admin_to!r} customer={phone!r}")
     print(f"[ADMIN_NOTIFY] MSG={msg!r}")
     try:
-        resp = ultramsg_send(normalize_number(ADMIN_WHATSAPP_NUMBER), msg.strip())
-        print(f"[ADMIN_NOTIFY] status={resp.status_code} body={resp.text}")
+        resp = ultramsg_send(_admin_to, msg.strip())
+        print(f"[ADMIN_NOTIFY] status={resp.status_code if resp else 'N/A'} body={resp.text[:200] if resp else 'N/A'}")
     except Exception as e:
         print(f"[ADMIN_NOTIFY_ERROR] {e}")
 
@@ -1816,14 +1829,14 @@ def whatsapp():
         print(f"[COMPLETED] step={_step_early!r} is_done={_step_early == 'done'}")
 
         # ── COMPLETED LOCK — booking already done, offer new booking ─────────
-        if _step_early == "done":
-            print(f"[COMPLETED] booking already done — offering new booking")
+        if state.get("completed") or _step_early == "done":
+            _cl = state.get("lang") or "ar"
             _new_booking_q = {
                 "ar": "هل ترغب في حجز جديد؟",
                 "en": "Would you like to make a new booking?",
                 "fr": "Souhaitez-vous faire une nouvelle réservation?",
             }
-            _cl = state.get("lang") or "ar"
+            print(f"[COMPLETED] completed={state.get('completed')} step={_step_early!r} — offering new booking")
             return wa_reply(sender, _new_booking_q.get(_cl, _new_booking_q["ar"]))
 
         if is_noise_message(incoming_msg) and _step_early != "service":
@@ -2081,14 +2094,16 @@ def whatsapp():
                     _sc_ids.append(_sv_id)
             state["known_catalog_ids_json"] = json.dumps(_sc_ids)
             state["current_step"] = "done"
+            state["completed"]    = True
             wa_save_booking(sender, state, _sc_name)
             try:
-                notify_admin_booking(sender, state, _sc_name)
+                notify_admin_booking(sender, state, _sc_name)   # → ADMIN only
             except Exception as _ne:
-                print(f"[SHORTCUT_ADMIN_ERROR] {repr(_ne)}")
+                print(f"[ADMIN_NOTIFY_ERROR] {repr(_ne)}")
             _confirm = confirmation_message(state, _sc_name, lang, phone=None)
-            wa_save(sender, state)          # persist current_step="done" — locks state
-            print(f"[SHORTCUT FIRED] confirmed — step=done locked")
+            wa_save(sender, state)          # persist completed=True + step=done
+            print(f"[CONFIRMATION] sent_to_customer={sender!r}")
+            print(f"[STATE_COMPLETED] True")
             print(f"[FINAL STATE] {state}")
             return wa_reply(sender, _confirm)
 
@@ -2306,18 +2321,18 @@ def whatsapp():
             print("[DEBUG] name accepted — saving booking")
 
             state["current_step"] = "done"
+            state["completed"]    = True
             wa_save_booking(sender, state, name)
 
-            print("[WHATSAPP] booking saved — calling notify_admin_booking")
-
             try:
-                notify_admin_booking(sender, state, name)
+                notify_admin_booking(sender, state, name)       # → ADMIN only
             except Exception as _ne:
-                print(f"[ADMIN_NOTIFY_OUTER_ERROR] {repr(_ne)}")
+                print(f"[ADMIN_NOTIFY_ERROR] {repr(_ne)}")
 
             _confirm = confirmation_message(state, name, lang, phone=None)
-            wa_save(sender, state)          # persist current_step="done" — locks state
-            print(f"[STEP NAME DONE] step=done locked")
+            wa_save(sender, state)          # persist completed=True + step=done
+            print(f"[CONFIRMATION] sent_to_customer={sender!r}")
+            print(f"[STATE_COMPLETED] True")
             print(f"[FINAL STATE] {state}")
             return wa_reply(sender, _confirm)
 
