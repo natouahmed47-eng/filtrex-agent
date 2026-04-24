@@ -2711,12 +2711,42 @@ def admin_orders():
         return guard
     con = get_db_connection()
     try:
-        orders = [dict(r) for r in con.execute(
-            "SELECT * FROM orders WHERE client_id=? ORDER BY id DESC", (CLIENT_ID,)
+        rows = [dict(r) for r in con.execute(
+            "SELECT * FROM bookings_or_orders WHERE client_id=? ORDER BY id DESC",
+            (CLIENT_ID,)
         ).fetchall()]
     finally:
         con.close()
-    return render_template("admin/orders.html", orders=orders, active="orders")
+    # Parse items_json into readable list for template
+    for row in rows:
+        try:
+            row["items_parsed"] = json.loads(row.get("items_json") or "[]")
+        except Exception:
+            row["items_parsed"] = []
+    return render_template("admin/orders.html", orders=rows, active="orders")
+
+# ── /admin/orders/<id>/status ──────────────────────────────────────────────────
+@app.route("/admin/orders/<int:order_id>/status", methods=["POST"])
+def admin_order_status(order_id):
+    guard = _admin_guard()
+    if guard:
+        return guard
+    ALLOWED = {"new", "confirmed", "done", "cancelled"}
+    new_status = (request.form.get("status") or "").strip().lower()
+    if new_status not in ALLOWED:
+        flash(f"Invalid status: {new_status!r}", "error")
+        return redirect(url_for("admin_orders"))
+    con = get_db_connection()
+    try:
+        con.execute(
+            "UPDATE bookings_or_orders SET status=? WHERE id=? AND client_id=?",
+            (new_status, order_id, CLIENT_ID)
+        )
+        con.commit()
+    finally:
+        con.close()
+    flash(f"Order #{order_id} marked as {new_status}.", "success")
+    return redirect(url_for("admin_orders"))
 
 # ── /admin/settings ───────────────────────────────────────────────────────────
 @app.route("/admin/settings", methods=["GET", "POST"])
