@@ -717,6 +717,16 @@ def _migrate_saas():
             con.commit()
             print("[BILLING] migrated client_subscriptions → added paypal_subscription_id")
 
+        # clients: plan shortcut + raw subscription_id for quick lookups
+        if "plan" not in _cli_cols:
+            con.execute("ALTER TABLE clients ADD COLUMN plan TEXT DEFAULT 'free'")
+            con.commit()
+            print("[BILLING] migrated clients → added plan")
+        if "subscription_id" not in _cli_cols:
+            con.execute("ALTER TABLE clients ADD COLUMN subscription_id TEXT")
+            con.commit()
+            print("[BILLING] migrated clients → added subscription_id")
+
         # ── STEP 7d: api_keys ─────────────────────────────────────────────
         con.execute("""
             CREATE TABLE IF NOT EXISTS api_keys (
@@ -3990,11 +4000,21 @@ def paypal_subscription_success():
     if not plan or not subscription_id:
         return {"ok": False, "error": "missing_fields"}, 400
 
-    ok = upgrade_client_plan(client_id, plan, subscription_id)
-    if not ok:
-        return {"ok": False, "error": "plan_not_found"}, 400
+    # Update clients table directly (fast path + simple lookup)
+    con = get_db_connection()
+    try:
+        con.execute(
+            "UPDATE clients SET plan=?, subscription_id=? WHERE id=?",
+            (plan, subscription_id, client_id)
+        )
+        con.commit()
+    finally:
+        con.close()
 
-    print(f"[PAYPAL_SUCCESS] client={client_id} plan={plan!r} sub={subscription_id!r}")
+    # Also activate via client_subscriptions for limits/usage tracking
+    upgrade_client_plan(client_id, plan, subscription_id)
+
+    print(f"[PAYPAL] Activated plan={plan!r} for client={client_id} sub={subscription_id!r}")
     return {"ok": True}
 
 

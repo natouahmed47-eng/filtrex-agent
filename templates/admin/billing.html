@@ -315,13 +315,13 @@
         .then(function(r) { return r.json(); })
         .then(function(res) {
           if (res.ok) {
-            window.location.href = '/admin/billing?success=1';
+            window.location.href = '/admin?upgraded=1';
           } else {
             alert('Something went wrong activating your plan. Please contact support.');
           }
         })
         .catch(function() {
-          window.location.href = '/admin/billing?success=1';
+          window.location.href = '/admin?upgraded=1';
         });
       },
       onError: function(err) {
