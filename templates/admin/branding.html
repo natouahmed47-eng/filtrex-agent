@@ -1,0 +1,147 @@
+{% extends "admin/layout.html" %}
+{% block title %}Branding{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="page-title">White-label Branding</div>
+    <div class="page-sub">Customize the platform with your brand identity</div>
+  </div>
+</div>
+
+{% if error %}
+<div class="alert alert-error">{{ error }}</div>
+{% endif %}
+
+<form method="POST" enctype="multipart/form-data">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start;">
+
+    <!-- ── Left column ── -->
+    <div class="form-card" style="max-width:100%">
+
+      <!-- Enable toggle -->
+      <div class="form-row">
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+          <input type="checkbox" name="white_label_enabled" value="1"
+                 {% if client and client['white_label_enabled'] %}checked{% endif %}
+                 style="width:18px;height:18px;accent-color:{{ branding.primary_color }};cursor:pointer;" />
+          <span>Enable white-label mode</span>
+        </label>
+        <div class="form-hint">When enabled, the platform displays your brand instead of Filtrex AI.</div>
+      </div>
+
+      <!-- Brand name -->
+      <div class="form-row">
+        <label for="brand_name">Brand Name</label>
+        <input type="text" id="brand_name" name="brand_name"
+               value="{{ client['brand_name'] or '' if client else '' }}"
+               placeholder="e.g. Acme Sales Hub" maxlength="80" />
+        <div class="form-hint">Replaces "Filtrex AI" across the entire interface.</div>
+      </div>
+
+      <!-- Primary colour -->
+      <div class="form-row">
+        <label for="primary_color">Primary Color</label>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <input type="color" id="primary_color" name="primary_color"
+                 value="{{ client['primary_color'] or '#4f46e5' if client else '#4f46e5' }}"
+                 style="width:48px;height:38px;padding:2px;border:1.5px solid #e5e7eb;
+                        border-radius:8px;cursor:pointer;background:#fff;" />
+          <input type="text" id="primary_color_hex" placeholder="#4f46e5" maxlength="7"
+                 value="{{ client['primary_color'] or '#4f46e5' if client else '#4f46e5' }}"
+                 style="width:110px;"
+                 oninput="document.getElementById('primary_color').value=this.value" />
+        </div>
+        <div class="form-hint">Used for buttons, active nav links, and accents.</div>
+      </div>
+
+      <!-- Custom domain -->
+      <div class="form-row">
+        <label for="custom_domain">Custom Domain</label>
+        <input type="text" id="custom_domain" name="custom_domain"
+               value="{{ client['custom_domain'] or '' if client else '' }}"
+               placeholder="e.g. app.acmecorp.com" maxlength="253" />
+        <div class="form-hint">
+          Point this domain's DNS to this server. Supports subdomains
+          (<code>app.yourdomain.com</code>) and apex domains (<code>yourdomain.com</code>).
+          Leave blank to disable.
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary">Save Branding</button>
+        <a href="/admin/dashboard" class="btn btn-ghost">Cancel</a>
+      </div>
+    </div>
+
+    <!-- ── Right column: logo ── -->
+    <div>
+      <!-- Current logo preview -->
+      <div class="form-card" style="max-width:100%;margin-bottom:16px;">
+        <div style="font-size:13px;font-weight:600;color:#374151;margin-bottom:12px;">Logo</div>
+        {% if client and client['logo_url'] %}
+        <div style="background:#f9fafb;border:1.5px solid #e5e7eb;border-radius:8px;
+                    padding:16px;text-align:center;margin-bottom:14px;">
+          <img src="{{ client['logo_url'] }}" alt="Current logo"
+               style="max-height:80px;max-width:100%;object-fit:contain;" />
+        </div>
+        {% endif %}
+
+        <div class="form-row">
+          <label>Upload Logo File</label>
+          <input type="file" name="logo_file" accept=".png,.jpg,.jpeg,.gif,.webp,.svg"
+                 style="font-size:13px;color:#374151;" />
+          <div class="form-hint">PNG, JPG, SVG, WebP or GIF. Max recommended size: 200 × 80 px.</div>
+        </div>
+
+        <div class="form-row" style="margin-bottom:0">
+          <label for="logo_url_field">— or paste a Logo URL</label>
+          <input type="url" id="logo_url_field" name="logo_url_field"
+                 value="{{ client['logo_url'] or '' if (client and client['logo_url'] and not client['logo_url'].startswith('/static/')) else '' }}"
+                 placeholder="https://cdn.example.com/logo.png" />
+          <div class="form-hint">Leave blank if uploading a file above.</div>
+        </div>
+      </div>
+
+      <!-- Live preview -->
+      <div class="form-card" style="max-width:100%;">
+        <div style="font-size:13px;font-weight:600;color:#374151;margin-bottom:12px;">Live Preview</div>
+        <div id="preview-bar"
+             style="background:#fff;border:1.5px solid #e5e7eb;border-radius:10px;
+                    padding:14px 18px;display:flex;align-items:center;gap:12px;">
+          <div id="preview-logo-wrap" style="font-size:16px;font-weight:700;letter-spacing:-.4px;"></div>
+          <div style="flex:1"></div>
+          <div id="preview-btn"
+               style="padding:6px 14px;border-radius:7px;font-size:12px;font-weight:700;color:#fff;display:inline-block;">
+            Save
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</form>
+
+<script>
+(function(){
+  var nameEl  = document.getElementById("brand_name");
+  var colorEl = document.getElementById("primary_color");
+  var hexEl   = document.getElementById("primary_color_hex");
+  var logoWrap= document.getElementById("preview-logo-wrap");
+  var btn     = document.getElementById("preview-btn");
+
+  function update(){
+    var name  = nameEl.value.trim() || "Filtrex AI";
+    var color = colorEl.value || "#4f46e5";
+    hexEl.value = color;
+    logoWrap.textContent = name;
+    logoWrap.style.color = color;
+    btn.style.background = color;
+  }
+  colorEl.addEventListener("input", function(){hexEl.value=colorEl.value;update();});
+  hexEl.addEventListener("input",   function(){
+    if(/^#[0-9a-fA-F]{6}$/.test(hexEl.value)){colorEl.value=hexEl.value;}update();
+  });
+  nameEl.addEventListener("input",  update);
+  update();
+})();
+</script>
+{% endblock %}

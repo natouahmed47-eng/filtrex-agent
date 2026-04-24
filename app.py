@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template, session, redirect, url_for, flash
+from flask import Flask, request, jsonify, render_template, session, redirect, url_for, flash, g
 from werkzeug.security import generate_password_hash, check_password_hash
 import requests
 import os
@@ -55,6 +55,77 @@ app.secret_key = _session_secret
 
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+
+# ── White-label: resolve branding once per request ────────────────────────────
+_SKIP_BRANDING_PREFIXES = ("/static/", "/webhook")
+
+@app.before_request
+def _resolve_branding():
+    if any(request.path.startswith(p) for p in _SKIP_BRANDING_PREFIXES):
+        g.branding = {"brand_name": "Filtrex AI", "logo_url": None,
+                      "primary_color": "#4f46e5", "white_label_enabled": 0}
+        return
+
+    host = request.host.split(":")[0].lower()
+    _local_hosts = {"localhost", "127.0.0.1", "0.0.0.0"}
+    _replit_suffixes = (".replit.dev", ".repl.co", ".replit.app")
+
+    g.branding = {"brand_name": "Filtrex AI", "logo_url": None,
+                  "primary_color": "#4f46e5", "white_label_enabled": 0}
+
+    # 1. Custom-domain match (strict — only non-local, non-Replit hosts)
+    is_custom_host = (
+        host not in _local_hosts
+        and not any(host.endswith(s) for s in _replit_suffixes)
+    )
+    if is_custom_host:
+        _con = sqlite3.connect("bookings.db", timeout=10)
+        _con.row_factory = sqlite3.Row
+        try:
+            _row = _con.execute(
+                "SELECT * FROM clients WHERE custom_domain=? AND white_label_enabled=1",
+                (host,)
+            ).fetchone()
+        finally:
+            _con.close()
+        if _row:
+            g.domain_client_id = _row["id"]
+            g.branding = {
+                "brand_name":          _row["brand_name"]    or "Filtrex AI",
+                "logo_url":            _row["logo_url"]      or None,
+                "primary_color":       _row["primary_color"] or "#4f46e5",
+                "white_label_enabled": 1,
+            }
+            print(f"[DOMAIN_MATCH] host={host!r} client_id={_row['id']}")
+            print(f"[WHITE_LABEL_APPLIED] client_id={_row['id']} brand={g.branding['brand_name']!r}")
+            return
+
+    # 2. Authenticated session — load branding for that client
+    cid = session.get("client_id")
+    if cid:
+        _con = sqlite3.connect("bookings.db", timeout=10)
+        _con.row_factory = sqlite3.Row
+        try:
+            _row = _con.execute("SELECT * FROM clients WHERE id=?", (cid,)).fetchone()
+        finally:
+            _con.close()
+        if _row and _row["white_label_enabled"]:
+            g.branding = {
+                "brand_name":          _row["brand_name"]    or "Filtrex AI",
+                "logo_url":            _row["logo_url"]      or None,
+                "primary_color":       _row["primary_color"] or "#4f46e5",
+                "white_label_enabled": 1,
+            }
+            print(f"[BRAND_LOADED] client_id={cid} brand={g.branding['brand_name']!r}")
+
+
+@app.context_processor
+def _inject_branding():
+    return {"branding": getattr(g, "branding", {"brand_name": "Filtrex AI",
+                                                  "logo_url": None,
+                                                  "primary_color": "#4f46e5",
+                                                  "white_label_enabled": 0})}
+
 
 DB_FILE = "bookings.db"
 
@@ -312,6 +383,15 @@ def _migrate_saas():
             con.execute("UPDATE clients SET onboarding_step=3 WHERE id=1")
             con.commit()
             print("[SAAS] migrated clients → added onboarding_step, existing client=1 marked done")
+        if "white_label_enabled" not in _cli_cols:
+            con.execute("ALTER TABLE clients ADD COLUMN brand_name          TEXT")
+            con.execute("ALTER TABLE clients ADD COLUMN logo_url            TEXT")
+            con.execute("ALTER TABLE clients ADD COLUMN primary_color       TEXT DEFAULT '#4f46e5'")
+            con.execute("ALTER TABLE clients ADD COLUMN custom_domain       TEXT")
+            con.execute("ALTER TABLE clients ADD COLUMN white_label_enabled INTEGER DEFAULT 0")
+            con.commit()
+            print("[WHITE_LABEL] migrated clients → brand_name, logo_url, primary_color, custom_domain, white_label_enabled")
+
         if "referral_code" not in _cli_cols:
             con.execute("ALTER TABLE clients ADD COLUMN referral_code   TEXT")
             con.execute("ALTER TABLE clients ADD COLUMN referred_by     INTEGER")
@@ -605,6 +685,28 @@ def generate_referral_code(client_id):
     """Generate a unique referral code for a client."""
     digits = random.randint(1000, 9999)
     return f"REF{client_id}{digits}"
+
+
+_APP_DEFAULT_BRAND = {
+    "brand_name":          "Filtrex AI",
+    "logo_url":            None,
+    "primary_color":       "#4f46e5",
+    "white_label_enabled": 0,
+}
+
+
+def _default_branding():
+    return dict(_APP_DEFAULT_BRAND)
+
+
+def _build_branding(row):
+    """Return a branding dict from a clients row."""
+    brand = _default_branding()
+    brand["brand_name"]          = row["brand_name"]  or brand["brand_name"]
+    brand["logo_url"]            = row["logo_url"]     or None
+    brand["primary_color"]       = row["primary_color"] or brand["primary_color"]
+    brand["white_label_enabled"] = row["white_label_enabled"] or 0
+    return brand
 
 
 def _apply_referral_reward(referrer_id, new_count):
@@ -3446,6 +3548,87 @@ def admin_billing():
         all_plans=plans_list,
         active="billing"
     )
+
+
+# ── /admin/branding ───────────────────────────────────────────────────────────
+ALLOWED_LOGO_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "svg"}
+
+@app.route("/admin/branding", methods=["GET", "POST"])
+def admin_branding():
+    guard = _admin_guard()
+    if guard:
+        return guard
+    cid = _session_client_id()
+    con = get_db_connection()
+    try:
+        client = con.execute("SELECT * FROM clients WHERE id=?", (cid,)).fetchone()
+    finally:
+        con.close()
+
+    error = None
+    success = None
+
+    if request.method == "POST":
+        brand_name    = request.form.get("brand_name",    "").strip()
+        primary_color = request.form.get("primary_color", "#4f46e5").strip()
+        custom_domain = request.form.get("custom_domain", "").strip().lower().lstrip("https://").lstrip("http://").strip("/")
+        wl_enabled    = 1 if request.form.get("white_label_enabled") else 0
+        logo_url      = client["logo_url"] if client else None
+
+        # ── File upload ───────────────────────────────────────────────────
+        upload = request.files.get("logo_file")
+        if upload and upload.filename:
+            ext = upload.filename.rsplit(".", 1)[-1].lower()
+            if ext not in ALLOWED_LOGO_EXTS:
+                error = f"Unsupported file type .{ext}. Allowed: {', '.join(sorted(ALLOWED_LOGO_EXTS))}"
+            else:
+                save_dir  = os.path.join("static", "uploads", "logos")
+                os.makedirs(save_dir, exist_ok=True)
+                filename  = f"client_{cid}.{ext}"
+                save_path = os.path.join(save_dir, filename)
+                upload.save(save_path)
+                logo_url  = f"/static/uploads/logos/{filename}"
+                print(f"[WHITE_LABEL] client={cid} logo saved → {save_path!r}")
+        elif request.form.get("logo_url_field", "").strip():
+            logo_url = request.form.get("logo_url_field", "").strip()
+
+        # ── Domain uniqueness check ───────────────────────────────────────
+        if not error and custom_domain:
+            con = get_db_connection()
+            try:
+                conflict = con.execute(
+                    "SELECT id FROM clients WHERE custom_domain=? AND id!=?",
+                    (custom_domain, cid)
+                ).fetchone()
+            finally:
+                con.close()
+            if conflict:
+                error = "That custom domain is already registered by another account."
+
+        if not error:
+            con = get_db_connection()
+            try:
+                con.execute("""
+                    UPDATE clients
+                    SET brand_name=?, logo_url=?, primary_color=?,
+                        custom_domain=?, white_label_enabled=?
+                    WHERE id=?
+                """, (brand_name or None, logo_url, primary_color,
+                      custom_domain or None, wl_enabled, cid))
+                con.commit()
+            finally:
+                con.close()
+            print(f"[WHITE_LABEL_APPLIED] client={cid} brand={brand_name!r} domain={custom_domain!r} enabled={wl_enabled}")
+            flash("Branding saved.", "success")
+            return redirect(url_for("admin_branding"))
+
+    con = get_db_connection()
+    try:
+        client = con.execute("SELECT * FROM clients WHERE id=?", (cid,)).fetchone()
+    finally:
+        con.close()
+    return render_template("admin/branding.html", client=client,
+                           error=error, active="branding")
 
 
 # ── /admin/bookings ──────────────────────────────────────────────────────────── (legacy)
