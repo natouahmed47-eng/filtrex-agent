@@ -505,6 +505,19 @@ def _inject_lang():
     return {"lang": lang, "t": t}
 
 
+@app.context_processor
+def _inject_trial_info():
+    """Inject trial_info into every admin template so the banner shows everywhere."""
+    try:
+        cid = session.get("client_id")
+        if cid:
+            _client = get_client(cid)
+            return {"trial_info": get_trial_status(_client)}
+    except Exception:
+        pass
+    return {"trial_info": None}
+
+
 DB_FILE = "bookings.db"
 
 def get_db_connection():
@@ -839,11 +852,15 @@ def _migrate_saas():
 
         # ── Trial columns ─────────────────────────────────────────────────────
         if "is_trial" not in _cli_cols:
-            con.execute("ALTER TABLE clients ADD COLUMN is_trial          INTEGER DEFAULT 0")
-            con.execute("ALTER TABLE clients ADD COLUMN trial_started_at  TEXT")
-            con.execute("ALTER TABLE clients ADD COLUMN trial_ends_at     TEXT")
+            con.execute("ALTER TABLE clients ADD COLUMN is_trial            INTEGER DEFAULT 0")
+            con.execute("ALTER TABLE clients ADD COLUMN trial_started_at    TEXT")
+            con.execute("ALTER TABLE clients ADD COLUMN trial_ends_at       TEXT")
             con.commit()
             print("[TRIAL] migrated clients → added is_trial, trial_started_at, trial_ends_at")
+        if "trial_reminder_day" not in _cli_cols:
+            con.execute("ALTER TABLE clients ADD COLUMN trial_reminder_day  INTEGER DEFAULT 0")
+            con.commit()
+            print("[TRIAL] migrated clients → added trial_reminder_day")
 
         # ── conversations: add collected_data column ──────────────────────────
         _conv_cols = [r[1] for r in con.execute("PRAGMA table_info(conversations)").fetchall()]
@@ -4119,10 +4136,11 @@ def whatsapp():
 
         # ── TRIAL CHECK ────────────────────────────────────────────────────
         if expire_trial_if_needed(CLIENT_ID):
+            print(f"[TRIAL_EXPIRED] client={CLIENT_ID} blocked WA reply from sender={sender!r}")
             _trial_msg = (
-                "⏰ انتهت التجربة المجانية — يرجى الاشتراك للاستمرار 👇\n"
-                "https://filtrex.ai/admin/billing\n\n"
-                "⏰ Free trial expired — please subscribe to continue 👇"
+                "🚫 انتهت التجربة المجانية — اشترك الآن للاستمرار 👇\n"
+                "https://filtrex.ai/pay/subscription\n\n"
+                "🚫 Free trial expired — subscribe now to continue 👇"
             )
             return wa_reply(sender, _trial_msg)
 
@@ -4137,7 +4155,7 @@ def whatsapp():
             _pw = handle_limit_exceeded(CLIENT_ID, "messages")
             _paywall_msg = (
                 f"{_pw['message_ar']} قم بالترقية للاستمرار 👇\n"
-                f"https://filtrex.ai/admin/billing\n\n"
+                f"https://filtrex.ai/pay/subscription\n\n"
                 f"{_pw['message_en']} Upgrade to continue 👇"
             )
             return wa_reply(sender, _paywall_msg)
@@ -4897,11 +4915,29 @@ def admin_onboarding():
             print(f"[ONBOARDING_STEP_COMPLETED] client={cid} step=3 (whatsapp) action={action!r}")
             return redirect(url_for("admin_onboarding"))
 
-        # ── Step 4 → 5: Final completion ──────────────────────────────────
+        # ── Step 4 → 5: Final completion + trial start ────────────────────
         elif action == "complete":
+            _now       = datetime.datetime.now()
+            _trial_end = _now + datetime.timedelta(days=3)
+            _now_iso   = _now.isoformat(timespec="seconds")
+            _end_iso   = _trial_end.isoformat(timespec="seconds")
             con = get_db_connection()
             try:
-                con.execute("UPDATE clients SET onboarding_step=5 WHERE id=?", (cid,))
+                # Only start trial if not already on one (idempotent)
+                _existing = con.execute(
+                    "SELECT is_trial, trial_started_at FROM clients WHERE id=?", (cid,)
+                ).fetchone()
+                if _existing and not _existing["is_trial"]:
+                    con.execute("""
+                        UPDATE clients
+                        SET onboarding_step=5,
+                            is_trial=1, is_active=1,
+                            trial_started_at=?, trial_ends_at=?
+                        WHERE id=?
+                    """, (_now_iso, _end_iso, cid))
+                    print(f"[TRIAL_STARTED] client={cid} ends_at={_end_iso}")
+                else:
+                    con.execute("UPDATE clients SET onboarding_step=5 WHERE id=?", (cid,))
                 con.commit()
             finally:
                 con.close()
@@ -5676,8 +5712,15 @@ def upgrade_client_plan(client_id, plan_name, subscription_id=None):
                 VALUES (?, ?, 'active', ?, ?)
             """, (client_id, plan_id, now, subscription_id))
 
+        # Clear trial flag → client is now a paying subscriber
+        con.execute("""
+            UPDATE clients
+            SET is_trial=0, is_active=1, plan=?, subscription_status='active'
+            WHERE id=?
+        """, (plan_name, client_id))
         con.commit()
         print(f"[UPGRADE] client={client_id} → plan={plan_name!r} sub_id={subscription_id!r}")
+        print(f"[USER_CONVERTED] client={client_id} plan={plan_name!r}")
         return True
     except Exception as _e:
         print(f"[UPGRADE] ERROR: {repr(_e)}")
@@ -5770,6 +5813,117 @@ def admin_upgrade_click():
     cid    = _session_client_id()
     print(f"[UPGRADE_CLICKED] client={cid} from={source!r}")
     return redirect(url_for("admin_billing"))
+
+
+# ── /pay/subscription — upgrade shortlink (used in WA messages + onboarding) ──
+@app.route("/pay/subscription")
+def pay_subscription():
+    """Short upgrade link — redirect to billing page."""
+    cid = session.get("client_id")
+    print(f"[UPGRADE_CLICKED] client={cid} from=pay_subscription_link")
+    if session.get("logged_in"):
+        return redirect(url_for("admin_billing"))
+    return redirect(url_for("login"))
+
+
+# ── /api/cron/trial-reminders — call once per day (e.g. via cron or ping) ─────
+@app.route("/api/cron/trial-reminders", methods=["GET", "POST"])
+def cron_trial_reminders():
+    """
+    Sends timed WhatsApp reminder messages to trial clients.
+    Day 1: Engagement nudge
+    Day 2: Feature highlight
+    Day 3: Expiry warning
+
+    Tracks which day was last sent in clients.trial_reminder_day.
+    Logs [TRIAL_REMINDER_SENT] for each message sent.
+    """
+    _secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+    _expected = os.getenv("CRON_SECRET", "filtrex-cron")
+    if _secret != _expected:
+        return {"error": "unauthorized"}, 401
+
+    con = get_db_connection()
+    try:
+        _trial_clients = con.execute("""
+            SELECT id, name, admin_whatsapp, default_language,
+                   trial_started_at, trial_ends_at, trial_reminder_day
+            FROM clients
+            WHERE is_trial=1 AND trial_started_at IS NOT NULL
+        """).fetchall()
+    finally:
+        con.close()
+
+    _now    = datetime.datetime.now()
+    _sent   = 0
+    _skipped = 0
+
+    _msgs = {
+        1: {
+            "ar": "👋 مرحباً! هل جربت البوت حتى الآن؟\nأرسل رسالة على رقم واتساب نشاطك وشاهد الذكاء الاصطناعي يرد تلقائياً 🚀",
+            "en": "👋 Hi! Have you tried your AI bot yet?\nSend a message to your WhatsApp number and watch the AI reply automatically 🚀",
+        },
+        2: {
+            "ar": "🔥 هل تعلمت أن البوت يمكنه تحويل المحادثات إلى طلبات تلقائياً؟\nأضف خدمات أو منتجات من لوحة التحكم وابدأ البيع الآن 📦",
+            "en": "🔥 Did you know your bot can automatically convert conversations into orders?\nAdd services or products from your dashboard and start selling now 📦",
+        },
+        3: {
+            "ar": "⏳ تجربتك المجانية تنتهي قريباً!\nاشترك الآن للاستمرار في استخدام الذكاء الاصطناعي لمبيعاتك 👇\nhttps://filtrex.ai/pay/subscription",
+            "en": "⏳ Your free trial is ending soon!\nSubscribe now to keep your AI sales engine running 👇\nhttps://filtrex.ai/pay/subscription",
+        },
+    }
+
+    for _row in _trial_clients:
+        _cid        = _row["id"]
+        _phone      = (_row["admin_whatsapp"] or "").strip()
+        _lang       = _row["default_language"] or "ar"
+        _started_str= _row["trial_started_at"]
+        _last_day   = int(_row["trial_reminder_day"] or 0)
+
+        if not _phone or not _started_str:
+            _skipped += 1
+            continue
+
+        try:
+            _started = datetime.datetime.fromisoformat(_started_str)
+        except (ValueError, TypeError):
+            _skipped += 1
+            continue
+
+        _elapsed_days = (_now - _started).total_seconds() / 86400
+        _target_day   = min(3, int(_elapsed_days) + 1)   # which day reminder to send
+
+        if _target_day <= _last_day:
+            _skipped += 1
+            continue
+
+        _msg_template = _msgs.get(_target_day, {})
+        _msg = _msg_template.get(_lang) or _msg_template.get("ar", "")
+        if not _msg:
+            _skipped += 1
+            continue
+
+        # Send via platform UltraMsg
+        _resp = ultramsg_send(_phone, _msg)
+        _status = getattr(_resp, "status_code", "N/A")
+
+        # Update reminder day tracker
+        _ucon = get_db_connection()
+        try:
+            _ucon.execute(
+                "UPDATE clients SET trial_reminder_day=? WHERE id=?",
+                (_target_day, _cid)
+            )
+            _ucon.commit()
+        finally:
+            _ucon.close()
+
+        print(f"[TRIAL_REMINDER_SENT] client={_cid} day={_target_day} "
+              f"phone={_phone!r} lang={_lang!r} status={_status}")
+        _sent += 1
+
+    print(f"[TRIAL_REMINDERS_RUN] sent={_sent} skipped={_skipped} total={len(_trial_clients)}")
+    return {"ok": True, "sent": _sent, "skipped": _skipped}, 200
 
 
 @app.route("/admin/billing")
