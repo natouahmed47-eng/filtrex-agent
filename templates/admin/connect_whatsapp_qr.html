@@ -1,0 +1,596 @@
+{% extends "admin/layout.html" %}
+{% block title %}
+  {% if lang == "ar" %}ربط واتساب — مسح رمز QR{% else %}Connect WhatsApp — Scan QR Code{% endif %}
+{% endblock %}
+
+{% block content %}
+{% set dir = "rtl" if lang == "ar" else "ltr" %}
+
+<style>
+  /* ── Page wrapper ───────────────────────────── */
+  .qr-page {
+    max-width: 900px;
+    margin: 0 auto;
+    direction: {{ dir }};
+  }
+  .qr-page-head {
+    margin-bottom: 32px;
+  }
+  .qr-page-head h1 {
+    font-size: 24px; font-weight: 800; color: #0f172a; margin-bottom: 6px;
+  }
+  .qr-page-head p {
+    font-size: 14px; color: #64748b; line-height: 1.6;
+  }
+
+  /* ── Two-column layout ──────────────────────── */
+  .qr-layout {
+    display: flex;
+    gap: 28px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  /* ── QR card (left) ─────────────────────────── */
+  .qr-card {
+    flex: 0 0 300px;
+    background: #fff;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 20px;
+    padding: 28px 24px;
+    box-shadow: 0 4px 20px rgba(0,0,0,.06);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+  }
+
+  /* QR display box */
+  .qr-box {
+    width: 220px; height: 220px;
+    border-radius: 14px;
+    border: 2px solid #e2e8f0;
+    display: flex; align-items: center; justify-content: center;
+    background: #f8fafc;
+    position: relative;
+    overflow: hidden;
+  }
+  .qr-box img {
+    width: 100%; height: 100%;
+    object-fit: contain;
+    display: none;
+    border-radius: 12px;
+  }
+  .qr-box img.visible { display: block; }
+
+  /* Loading skeleton */
+  .qr-skeleton {
+    display: flex; flex-direction: column;
+    align-items: center; gap: 10px;
+    padding: 20px;
+    text-align: center;
+  }
+  .qr-spinner {
+    width: 36px; height: 36px;
+    border: 3px solid #e2e8f0;
+    border-top-color: #25d366;
+    border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .qr-skeleton-text {
+    font-size: 12px; color: #94a3b8; font-weight: 500;
+  }
+
+  /* Overlay states */
+  .qr-overlay {
+    display: none;
+    position: absolute; inset: 0;
+    border-radius: 12px;
+    align-items: center; justify-content: center;
+    flex-direction: column;
+    gap: 8px; text-align: center; padding: 16px;
+  }
+  .qr-overlay.visible { display: flex; }
+  .qr-overlay.connected-overlay { background: rgba(220,252,231,.95); }
+  .qr-overlay.expired-overlay   { background: rgba(241,245,249,.95); }
+  .qr-overlay-icon { font-size: 40px; line-height: 1; }
+  .qr-overlay-text { font-size: 12px; font-weight: 700; color: #0f172a; }
+  .qr-overlay-sub  { font-size: 11px; color: #64748b; }
+
+  /* Status badge */
+  .qr-status-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 8px 14px; border-radius: 20px;
+    font-size: 12px; font-weight: 600;
+    transition: all .3s;
+  }
+  .qr-status-badge .dot {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  }
+  .badge-waiting  { background: #fef9c3; color: #854d0e; }
+  .badge-waiting  .dot { background: #d97706; animation: pulse-y 1.8s infinite; }
+  .badge-connected { background: #dcfce7; color: #15803d; }
+  .badge-connected .dot { background: #16a34a; animation: pulse-g 1.8s infinite; }
+  .badge-expired   { background: #f1f5f9; color: #475569; }
+  .badge-expired   .dot { background: #94a3b8; }
+  .badge-error     { background: #fee2e2; color: #991b1b; }
+  .badge-error     .dot { background: #dc2626; }
+
+  @keyframes pulse-y { 0%,100%{ box-shadow:0 0 0 2px #fde68a; } 50%{ box-shadow:0 0 0 5px rgba(217,119,6,.15); } }
+  @keyframes pulse-g { 0%,100%{ box-shadow:0 0 0 2px #bbf7d0; } 50%{ box-shadow:0 0 0 5px rgba(22,163,74,.15); } }
+
+  /* Buttons */
+  .qr-btn-row { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+  .btn-qr-refresh {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 11px 20px; background: #25d366; color: #fff;
+    border: none; border-radius: 10px; font-size: 13px; font-weight: 700;
+    cursor: pointer; width: 100%; transition: opacity .15s, transform .1s;
+    box-shadow: 0 2px 10px rgba(37,211,102,.30);
+  }
+  .btn-qr-refresh:hover  { opacity: .88; transform: translateY(-1px); }
+  .btn-qr-refresh:active { transform: translateY(0); }
+
+  .btn-qr-check {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 10px 20px; background: #fff; color: #4f46e5;
+    border: 1.5px solid #c7d2fe; border-radius: 10px;
+    font-size: 13px; font-weight: 600; cursor: pointer; width: 100%;
+    transition: all .15s;
+  }
+  .btn-qr-check:hover { background: #eef2ff; border-color: #a5b4fc; }
+
+  .btn-qr-dashboard {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 11px 20px; background: #4f46e5; color: #fff;
+    border: none; border-radius: 10px; font-size: 13px; font-weight: 700;
+    cursor: pointer; width: 100%; text-decoration: none;
+    transition: opacity .15s; box-shadow: 0 2px 8px rgba(79,70,229,.25);
+  }
+  .btn-qr-dashboard:hover { opacity: .88; }
+
+  /* ── Instructions card (right) ──────────────── */
+  .qr-instructions {
+    flex: 1 1 280px;
+    background: #fff;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 20px;
+    padding: 28px 28px;
+    box-shadow: 0 4px 20px rgba(0,0,0,.06);
+  }
+  .qr-instructions-title {
+    font-size: 16px; font-weight: 800; color: #0f172a; margin-bottom: 6px;
+  }
+  .qr-instructions-sub {
+    font-size: 13px; color: #64748b; margin-bottom: 24px; line-height: 1.5;
+  }
+  .qr-steps { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 18px; }
+  .qr-step  { display: flex; gap: 14px; align-items: flex-start; }
+  .qr-step-num {
+    width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%;
+    background: #25d366; color: #fff; font-size: 14px; font-weight: 800;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .qr-step-body { padding-top: 4px; }
+  .qr-step-body strong { font-size: 14px; color: #0f172a; display: block; margin-bottom: 2px; }
+  .qr-step-body span   { font-size: 13px; color: #64748b; line-height: 1.55; }
+
+  .qr-divider { border: none; border-top: 1.5px solid #f1f5f9; margin: 24px 0; }
+
+  /* Connected success box */
+  .qr-success-box {
+    display: none;
+    background: #dcfce7; border: 1.5px solid #86efac; border-radius: 14px;
+    padding: 18px 20px; gap: 14px; align-items: flex-start;
+    margin-top: 24px;
+  }
+  .qr-success-box.visible { display: flex; }
+  .qr-success-icon { font-size: 28px; flex-shrink: 0; }
+  .qr-success-text strong { font-size: 14px; font-weight: 800; color: #15803d; display: block; margin-bottom: 4px; }
+  .qr-success-text span   { font-size: 13px; color: #166534; line-height: 1.5; }
+
+  /* Poll indicator */
+  .qr-poll-indicator {
+    display: none; align-items: center; gap: 8px;
+    font-size: 12px; color: #6366f1; margin-top: 12px;
+  }
+  .qr-poll-indicator.visible { display: flex; }
+  .poll-spinner {
+    width: 12px; height: 12px;
+    border: 2px solid #c7d2fe; border-top-color: #6366f1;
+    border-radius: 50%; animation: spin .7s linear infinite;
+  }
+
+  /* ── Responsive ──────────────────────────────── */
+  @media (max-width: 640px) {
+    .qr-layout { flex-direction: column; }
+    .qr-card   { flex: 1 1 100%; width: 100%; max-width: 100%; }
+    .qr-card   { align-items: center; }
+    .qr-instructions { flex: 1 1 100%; width: 100%; }
+  }
+</style>
+
+<div class="qr-page">
+
+  <!-- Page header -->
+  <div class="qr-page-head">
+    <h1>📱 {% if lang == "ar" %}ربط واتساب عبر رمز QR{% else %}Connect WhatsApp via QR Code{% endif %}</h1>
+    <p>
+      {% if lang == "ar" %}
+        افتح واتساب على هاتفك، امسح الرمز أدناه، وسيتصل البوت فوراً.
+      {% else %}
+        Open WhatsApp on your phone, scan the code below, and your bot connects instantly.
+      {% endif %}
+    </p>
+  </div>
+
+  <div class="qr-layout">
+
+    <!-- ══════════════════════════════════════
+         LEFT: QR card
+         ══════════════════════════════════════ -->
+    <div class="qr-card">
+
+      <!-- QR display box -->
+      <div class="qr-box" id="qr-box">
+        <!-- Loading skeleton (shown while fetching) -->
+        <div class="qr-skeleton" id="qr-skeleton">
+          <div class="qr-spinner"></div>
+          <div class="qr-skeleton-text">
+            {% if lang == "ar" %}جاري تحميل الرمز...{% else %}Loading code…{% endif %}
+          </div>
+        </div>
+
+        <!-- QR image (shown once loaded) -->
+        <img id="qr-img" src="" alt="QR Code" />
+
+        <!-- Connected overlay -->
+        <div class="qr-overlay connected-overlay" id="qr-connected-overlay">
+          <div class="qr-overlay-icon">✅</div>
+          <div class="qr-overlay-text">
+            {% if lang == "ar" %}تم الربط!{% else %}Linked!{% endif %}
+          </div>
+          <div class="qr-overlay-sub">
+            {% if lang == "ar" %}واتساب مرتبط بنجاح{% else %}WhatsApp connected{% endif %}
+          </div>
+        </div>
+
+        <!-- Expired overlay -->
+        <div class="qr-overlay expired-overlay" id="qr-expired-overlay">
+          <div class="qr-overlay-icon">⏰</div>
+          <div class="qr-overlay-text">
+            {% if lang == "ar" %}انتهت صلاحية الرمز{% else %}Code Expired{% endif %}
+          </div>
+          <div class="qr-overlay-sub">
+            {% if lang == "ar" %}اضغط تحديث{% else %}Tap Refresh{% endif %}
+          </div>
+        </div>
+      </div>
+
+      <!-- Status badge -->
+      <div class="qr-status-badge badge-waiting" id="status-badge">
+        <div class="dot"></div>
+        <span id="status-text">
+          {% if lang == "ar" %}⏳ في انتظار المسح{% else %}⏳ Waiting for scan{% endif %}
+        </span>
+      </div>
+
+      <!-- Poll indicator -->
+      <div class="qr-poll-indicator visible" id="poll-indicator">
+        <div class="poll-spinner"></div>
+        <span>{% if lang == "ar" %}يتحقق تلقائياً...{% else %}Checking automatically…{% endif %}</span>
+      </div>
+
+      <!-- Buttons -->
+      <div class="qr-btn-row" id="action-btns">
+        <button class="btn-qr-refresh" id="btn-refresh" onclick="refreshQR()">
+          🔄 {% if lang == "ar" %}تحديث رمز QR{% else %}Refresh QR Code{% endif %}
+        </button>
+        <button class="btn-qr-check" id="btn-check" onclick="checkStatus()">
+          ⚡ {% if lang == "ar" %}التحقق من الربط{% else %}Check Linking Status{% endif %}
+        </button>
+      </div>
+
+      <!-- Dashboard button (shown when connected) -->
+      <a href="{{ url_for('admin_dashboard') }}" class="btn-qr-dashboard" id="btn-dashboard" style="display:none;">
+        🏠 {% if lang == "ar" %}الذهاب للوحة التحكم{% else %}Go to Dashboard{% endif %}
+      </a>
+
+    </div>
+
+    <!-- ══════════════════════════════════════
+         RIGHT: Instructions card
+         ══════════════════════════════════════ -->
+    <div class="qr-instructions">
+      <div class="qr-instructions-title">
+        {% if lang == "ar" %}كيف تربط واتساب في 3 خطوات{% else %}How to connect in 3 steps{% endif %}
+      </div>
+      <div class="qr-instructions-sub">
+        {% if lang == "ar" %}
+          مثل واتساب ويب — بسيط وسريع ⚡
+        {% else %}
+          Just like WhatsApp Web — fast and simple ⚡
+        {% endif %}
+      </div>
+
+      <ul class="qr-steps">
+        <li class="qr-step">
+          <div class="qr-step-num">1</div>
+          <div class="qr-step-body">
+            <strong>
+              {% if lang == "ar" %}افتح واتساب على هاتفك{% else %}Open WhatsApp on your phone{% endif %}
+            </strong>
+            <span>
+              {% if lang == "ar" %}
+                اضغط على القائمة ← الأجهزة المرتبطة ← ربط جهاز.
+              {% else %}
+                Tap Menu → Linked Devices → Link a Device.
+              {% endif %}
+            </span>
+          </div>
+        </li>
+        <li class="qr-step">
+          <div class="qr-step-num">2</div>
+          <div class="qr-step-body">
+            <strong>
+              {% if lang == "ar" %}وجّه الكاميرا نحو الرمز{% else %}Point your camera at the code{% endif %}
+            </strong>
+            <span>
+              {% if lang == "ar" %}
+                امسح رمز QR الظاهر على اليسار. الرمز يتجدد كل دقيقة.
+              {% else %}
+                Scan the QR code shown on the left. The code refreshes every minute.
+              {% endif %}
+            </span>
+          </div>
+        </li>
+        <li class="qr-step">
+          <div class="qr-step-num">3</div>
+          <div class="qr-step-body">
+            <strong>
+              {% if lang == "ar" %}✅ البوت يعمل فوراً{% else %}✅ Your bot goes live instantly{% endif %}
+            </strong>
+            <span>
+              {% if lang == "ar" %}
+                بمجرد الربط، يبدأ البوت باستقبال الرسائل تلقائياً. لا إعداد إضافي.
+              {% else %}
+                Once connected, the bot starts receiving messages automatically. No extra setup.
+              {% endif %}
+            </span>
+          </div>
+        </li>
+      </ul>
+
+      <hr class="qr-divider">
+
+      <!-- Tips -->
+      <div style="font-size:13px;color:#64748b;line-height:1.7;">
+        <div style="font-weight:700;color:#374151;margin-bottom:8px;">
+          💡 {% if lang == "ar" %}نصائح مفيدة{% else %}Helpful tips{% endif %}
+        </div>
+        <ul style="padding-{{ 'right' if lang == 'ar' else 'left' }}:18px;margin:0;display:flex;flex-direction:column;gap:6px;">
+          <li>
+            {% if lang == "ar" %}
+              تأكد أن هاتفك متصل بالإنترنت أثناء المسح.
+            {% else %}
+              Make sure your phone has an internet connection while scanning.
+            {% endif %}
+          </li>
+          <li>
+            {% if lang == "ar" %}
+              إذا انتهت صلاحية الرمز، اضغط "تحديث" للحصول على رمز جديد.
+            {% else %}
+              If the code expires, tap "Refresh" to get a new one.
+            {% endif %}
+          </li>
+          <li>
+            {% if lang == "ar" %}
+              يمكنك الربط وإلغاء الربط في أي وقت من إعدادات واتساب.
+            {% else %}
+              You can link and unlink anytime from your WhatsApp settings.
+            {% endif %}
+          </li>
+        </ul>
+      </div>
+
+      <!-- Connected success box (hidden until connected) -->
+      <div class="qr-success-box" id="success-box">
+        <div class="qr-success-icon">🎉</div>
+        <div class="qr-success-text">
+          <strong>
+            {% if lang == "ar" %}تم الربط بنجاح!{% else %}Successfully connected!{% endif %}
+          </strong>
+          <span>
+            {% if lang == "ar" %}
+              البوت يعمل الآن ويستقبل رسائل عملائك. اذهب للوحة التحكم لمتابعة المحادثات.
+            {% else %}
+              Your bot is now live and receiving customer messages. Head to the dashboard to follow conversations.
+            {% endif %}
+          </span>
+        </div>
+      </div>
+
+    </div>
+    <!-- /instructions card -->
+
+  </div>
+  <!-- /qr-layout -->
+
+</div>
+
+<script>
+(function () {
+  var LANG        = "{{ lang }}";
+  var QR_URL      = "{{ url_for('admin_qr_code') }}";
+  var STATUS_URL  = "{{ url_for('admin_qr_status') }}";
+  var DASH_URL    = "{{ url_for('admin_dashboard') }}";
+
+  var _state      = "loading";   // loading | waiting | connected | expired | error
+  var _pollTimer  = null;
+  var _qrTimer    = null;
+  var _qrTtl      = 55;          // seconds before auto-refresh QR (UltraMsg QRs last ~60s)
+  var _pollCount  = 0;
+
+  /* ── DOM refs ────────────────────────────────── */
+  var elSkeleton    = document.getElementById("qr-skeleton");
+  var elImg         = document.getElementById("qr-img");
+  var elConnOvl     = document.getElementById("qr-connected-overlay");
+  var elExpOvl      = document.getElementById("qr-expired-overlay");
+  var elBadge       = document.getElementById("status-badge");
+  var elStatusText  = document.getElementById("status-text");
+  var elPollInd     = document.getElementById("poll-indicator");
+  var elActionBtns  = document.getElementById("action-btns");
+  var elBtnDash     = document.getElementById("btn-dashboard");
+  var elSuccessBox  = document.getElementById("success-box");
+
+  /* ── Text strings ────────────────────────────── */
+  var TXT = {
+    waiting:   LANG === "ar" ? "⏳ في انتظار المسح"        : "⏳ Waiting for scan",
+    connected: LANG === "ar" ? "✅ تم الربط بنجاح"          : "✅ Successfully linked",
+    expired:   LANG === "ar" ? "⏰ انتهت صلاحية الرمز"     : "⏰ Code expired",
+    loading:   LANG === "ar" ? "⏳ جاري التحميل..."         : "⏳ Loading…",
+    error:     LANG === "ar" ? "⚠️ تعذّر التحميل"           : "⚠️ Could not load",
+    checking:  LANG === "ar" ? "يتحقق تلقائياً..."          : "Checking automatically…",
+  };
+
+  /* ── State machine ───────────────────────────── */
+  function setState(s) {
+    _state = s;
+    elBadge.className = "qr-status-badge";
+
+    if (s === "waiting") {
+      elBadge.classList.add("badge-waiting");
+      elStatusText.textContent = TXT.waiting;
+      elConnOvl.classList.remove("visible");
+      elExpOvl.classList.remove("visible");
+      elPollInd.classList.add("visible");
+      elActionBtns.style.display = "flex";
+      elBtnDash.style.display = "none";
+      elSuccessBox.classList.remove("visible");
+
+    } else if (s === "connected") {
+      elBadge.classList.add("badge-connected");
+      elStatusText.textContent = TXT.connected;
+      elConnOvl.classList.add("visible");
+      elExpOvl.classList.remove("visible");
+      elPollInd.classList.remove("visible");
+      elActionBtns.style.display = "none";
+      elBtnDash.style.display = "flex";
+      elSuccessBox.classList.add("visible");
+      stopPolling();
+      stopQrTimer();
+
+    } else if (s === "expired") {
+      elBadge.classList.add("badge-expired");
+      elStatusText.textContent = TXT.expired;
+      elConnOvl.classList.remove("visible");
+      elExpOvl.classList.add("visible");
+      elPollInd.classList.remove("visible");
+      elActionBtns.style.display = "flex";
+      elBtnDash.style.display = "none";
+      elSuccessBox.classList.remove("visible");
+
+    } else if (s === "error") {
+      elBadge.classList.add("badge-error");
+      elStatusText.textContent = TXT.error;
+      elConnOvl.classList.remove("visible");
+      elExpOvl.classList.remove("visible");
+      elPollInd.classList.remove("visible");
+    }
+  }
+
+  /* ── Load QR image ───────────────────────────── */
+  function loadQR() {
+    elSkeleton.style.display = "flex";
+    elImg.classList.remove("visible");
+    elExpOvl.classList.remove("visible");
+    elConnOvl.classList.remove("visible");
+    elStatusText.textContent = TXT.loading;
+
+    fetch(QR_URL)
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.qr) {
+          var src = data.qr;
+          // If raw base64 (no prefix), add prefix
+          if (!src.startsWith("data:") && !src.startsWith("http")) {
+            src = "data:image/png;base64," + src;
+          }
+          elImg.src = src;
+          elImg.onload = function () {
+            elSkeleton.style.display = "none";
+            elImg.classList.add("visible");
+            if (_state !== "connected") setState("waiting");
+          };
+          elImg.onerror = function () {
+            elSkeleton.style.display = "flex";
+            setState("error");
+          };
+          // Auto-expire the displayed QR after TTL
+          stopQrTimer();
+          _qrTimer = setTimeout(function () {
+            if (_state === "waiting") {
+              setState("expired");
+            }
+          }, _qrTtl * 1000);
+        } else {
+          elSkeleton.style.display = "flex";
+          if (_state !== "connected") setState("waiting");
+        }
+      })
+      .catch(function () {
+        elSkeleton.style.display = "flex";
+        setState("error");
+      });
+  }
+
+  /* ── Poll status ─────────────────────────────── */
+  function pollStatus() {
+    _pollCount++;
+    fetch(STATUS_URL)
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.status === "connected") {
+          setState("connected");
+          console.log("[QR_PAGE] status=connected via poll #" + _pollCount);
+        }
+      })
+      .catch(function () {});
+  }
+
+  function startPolling() {
+    stopPolling();
+    pollStatus(); // immediate first check
+    _pollTimer = setInterval(pollStatus, 5000);
+  }
+
+  function stopPolling() {
+    if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+  }
+
+  function stopQrTimer() {
+    if (_qrTimer) { clearTimeout(_qrTimer); _qrTimer = null; }
+  }
+
+  /* ── Public button handlers ──────────────────── */
+  window.refreshQR = function () {
+    console.log("[QR_PAGE] manual refresh");
+    stopQrTimer();
+    loadQR();
+  };
+
+  window.checkStatus = function () {
+    console.log("[QR_PAGE] manual status check");
+    pollStatus();
+  };
+
+  /* ── Boot ────────────────────────────────────── */
+  loadQR();
+  startPolling();
+  console.log("[QR_PAGE] initialised lang=" + LANG);
+
+})();
+</script>
+
+{% endblock %}

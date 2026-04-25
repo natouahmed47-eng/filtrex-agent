@@ -5443,6 +5443,68 @@ def admin_connect_whatsapp():
     )
 
 
+# ── /admin/connect-whatsapp/qr  (WhatsApp Web-style QR scan page) ─────────────
+@app.route("/admin/connect-whatsapp/qr")
+def admin_connect_whatsapp_qr():
+    guard = _admin_guard()
+    if guard:
+        return guard
+    cid    = _session_client_id()
+    client = get_client(cid)
+    _lang  = client.get("default_language") or "en"
+    return render_template(
+        "admin/connect_whatsapp_qr.html",
+        client=client,
+        active="whatsapp",
+    )
+
+
+@app.route("/admin/connect-whatsapp/qr/status")
+def admin_qr_status():
+    """JSON API — polls UltraMsg instance status. Never exposes credentials."""
+    guard = _admin_guard()
+    if guard:
+        return jsonify({"error": "unauthorized"}), 403
+    _instance = os.getenv("ULTRAMSG_INSTANCE", "")
+    _token    = os.getenv("ULTRAMSG_TOKEN", "")
+    if not _instance or not _token:
+        return jsonify({"status": "not_configured"})
+    try:
+        url  = f"https://api.ultramsg.com/{_instance}/instance/status"
+        resp = requests.get(url, params={"token": _token}, timeout=8)
+        data = resp.json()
+        raw  = (data.get("status") or data.get("instanceStatus") or "").lower()
+        if raw in ("connected", "authenticated"):
+            return jsonify({"status": "connected"})
+        if raw in ("qr", "loading", "init", "initializing"):
+            return jsonify({"status": "qr_pending"})
+        return jsonify({"status": "disconnected", "raw": raw})
+    except Exception as _e:
+        print(f"[QR_STATUS_ERROR] {_e!r}")
+        return jsonify({"status": "error"})
+
+
+@app.route("/admin/connect-whatsapp/qr/code")
+def admin_qr_code():
+    """JSON API — fetches current QR code from UltraMsg. Never exposes credentials."""
+    guard = _admin_guard()
+    if guard:
+        return jsonify({"error": "unauthorized"}), 403
+    _instance = os.getenv("ULTRAMSG_INSTANCE", "")
+    _token    = os.getenv("ULTRAMSG_TOKEN", "")
+    if not _instance or not _token:
+        return jsonify({"qr": None, "status": "not_configured"})
+    try:
+        url  = f"https://api.ultramsg.com/{_instance}/instance/qrCode"
+        resp = requests.get(url, params={"token": _token}, timeout=10)
+        data = resp.json()
+        qr_val = data.get("qrCode") or data.get("qr") or None
+        return jsonify({"qr": qr_val})
+    except Exception as _e:
+        print(f"[QR_CODE_ERROR] {_e!r}")
+        return jsonify({"qr": None, "status": "error"})
+
+
 # ── /admin/whatsapp-requests  (platform owner: client_id == 1 only) ───────────
 @app.route("/admin/whatsapp-requests")
 def admin_whatsapp_requests():
