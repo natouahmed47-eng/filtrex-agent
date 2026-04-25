@@ -1,17 +1,7 @@
 {% extends "admin/layout.html" %}
 {% block content %}
 
-{#
-  PayPal plan-ID map — edit here when new plan IDs are created in PayPal Dashboard.
-  Empty string  → plan shows "Contact Sales" button instead of PayPal button.
-#}
-{% set PAYPAL_PLANS = {
-  'starter':  'P-2U68430732155245WNHV6LMA',
-  'pro':      '',
-  'business': ''
-} %}
-
-<!-- PayPal SDK — vault=true + intent=subscription required for recurring billing -->
+<!-- PayPal SDK — loaded once, vault=true + intent=subscription for recurring billing -->
 <script src="https://www.paypal.com/sdk/js?client-id=AXII0NIu0wnEJwazRqZ5UsowkdJWxJdVYxrxUT84kYljpayOSUFC76fMRyvJbIFMuzYjZMv3gP53U4C3&vault=true&intent=subscription"
         data-sdk-integration-source="button-factory"
         defer></script>
@@ -90,20 +80,9 @@
     border: 1.5px solid #e5e7eb; color: #9ca3af; background: #f9fafb;
     cursor: default; margin-top: auto;
   }
-  .btn-contact-sales {
-    display: block; text-align: center; padding: 10px 14px;
-    border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer;
-    border: 1.5px solid #6d28d9; color: #6d28d9; background: #fff;
-    text-decoration: none; transition: all .15s; margin-top: auto;
-  }
-  .btn-contact-sales:hover { background: #6d28d9; color: #fff; }
 
   /* ── PayPal button wrapper ───────────────────────── */
-  .paypal-btn-wrap { margin-top: auto; }
-  .paypal-loading {
-    text-align: center; font-size: 12px; color: #9ca3af;
-    padding: 10px 0;
-  }
+  .paypal-btn-wrap { margin-top: auto; min-height: 42px; }
 
   /* ── Info note ───────────────────────────────────── */
   .info-note {
@@ -123,7 +102,7 @@
     <p>Monitor your usage and manage your subscription plan.</p>
   </div>
 
-  <!-- Success banner (shown after PayPal redirect) -->
+  <!-- Success banner -->
   {% if request.args.get('success') == '1' %}
   <div class="billing-success">
     <div class="billing-success-icon">🎉</div>
@@ -175,7 +154,7 @@
           <div class="stat-value">{{ sub.messages_used }}</div>
           <div class="stat-sub">Unlimited</div>
         {% else %}
-          <div class="stat-value">{{ sub.messages_used }} <span style="font-size:16px; color:#9ca3af;">/ {{ sub.max_messages }}</span></div>
+          <div class="stat-value">{{ sub.messages_used }} <span style="font-size:16px;color:#9ca3af;">/ {{ sub.max_messages }}</span></div>
           <div class="progress-bar-wrap">
             <div class="progress-bar {% if pct_msg >= 90 %}over{% elif pct_msg >= 70 %}warn{% endif %}"
                  style="width:{{ [pct_msg, 100] | min }}%"></div>
@@ -191,7 +170,7 @@
           <div class="stat-value">{{ sub.orders_used }}</div>
           <div class="stat-sub">Unlimited</div>
         {% else %}
-          <div class="stat-value">{{ sub.orders_used }} <span style="font-size:16px; color:#9ca3af;">/ {{ sub.max_orders }}</span></div>
+          <div class="stat-value">{{ sub.orders_used }} <span style="font-size:16px;color:#9ca3af;">/ {{ sub.max_orders }}</span></div>
           <div class="progress-bar-wrap">
             <div class="progress-bar {% if pct_ord >= 90 %}over{% elif pct_ord >= 70 %}warn{% endif %}"
                  style="width:{{ [pct_ord, 100] | min }}%"></div>
@@ -207,7 +186,7 @@
           <div class="stat-value">{{ catalog_count }}</div>
           <div class="stat-sub">Unlimited</div>
         {% else %}
-          <div class="stat-value">{{ catalog_count }} <span style="font-size:16px; color:#9ca3af;">/ {{ sub.max_catalog_items }}</span></div>
+          <div class="stat-value">{{ catalog_count }} <span style="font-size:16px;color:#9ca3af;">/ {{ sub.max_catalog_items }}</span></div>
           <div class="progress-bar-wrap">
             <div class="progress-bar {% if pct_cat >= 90 %}over{% elif pct_cat >= 70 %}warn{% endif %}"
                  style="width:{{ [pct_cat, 100] | min }}%"></div>
@@ -229,9 +208,8 @@
 
   <div class="plans-grid">
     {% for plan in all_plans %}
-      {% set plan_slug = plan.name | lower %}
+      {% set plan_slug  = plan.name | lower %}
       {% set is_current = sub and sub.plan_id == plan.id %}
-      {% set pp_id = PAYPAL_PLANS.get(plan_slug, '') %}
 
       <div class="plan-card {% if is_current %}current{% endif %}">
         {% if is_current %}<div class="plan-card-current-label">Current Plan</div>{% endif %}
@@ -255,29 +233,20 @@
 
         {# ── Button area ── #}
         {% if is_current %}
-          {# Already on this plan #}
           <div class="btn-current-plan">✓ Current Plan</div>
 
         {% elif plan_slug == 'free' %}
-          {# Free is the base plan — no upgrade button for downgrade #}
           <div class="btn-current-plan" style="color:#d1d5db;">Free Tier</div>
 
-        {% elif pp_id %}
-          {# Live PayPal plan ID exists → render PayPal subscription button #}
-          <div class="paypal-btn-wrap">
-            <div id="paypal-btn-{{ plan_slug }}"
-                 data-plan-id="{{ pp_id }}"
-                 data-plan-name="{{ plan_slug }}">
-              <div class="paypal-loading">Loading payment…</div>
-            </div>
-          </div>
-
         {% else %}
-          {# No PayPal plan ID configured yet → show Contact Sales #}
-          <a href="mailto:sales@filtrex.ai?subject=Upgrade%20to%20{{ plan.name }}%20Plan"
-             class="btn-contact-sales">
-            Contact Sales →
-          </a>
+          {#
+            Paid plan: always render the PayPal container.
+            JS renderPayPalButton() fills it if a plan_id exists,
+            and silently skips it if not — no placeholder text shown.
+          #}
+          <div class="paypal-btn-wrap">
+            <div id="paypal-button-{{ plan_slug }}"></div>
+          </div>
 
         {% endif %}
 
@@ -293,86 +262,90 @@
 
 </div>
 
-<!-- ═══ PayPal Subscription Buttons — auto-initialised for every plan with a plan_id ═══ -->
+<!-- ═══ PayPal Dynamic Subscription Buttons ════════════════════════════════ -->
 <script>
-(function () {
-  'use strict';
+'use strict';
 
-  /* Collect every container that declares a PayPal plan ID */
-  var containers = Array.from(
-    document.querySelectorAll('[id^="paypal-btn-"][data-plan-id]')
-  ).filter(function (el) {
-    return el.dataset.planId && el.dataset.planId.length > 0;
-  });
+/* ── Plan ID mapping — add/update plan IDs here when created in PayPal Dashboard ── */
+var PAYPAL_PLANS = {
+  starter:  'P-2U68430732155245WNHV6LMA',
+  pro:      'P-38W13773TC442671ENHWAFNY',
+  business: ''   /* set when Business plan is created in PayPal */
+};
 
-  if (!containers.length) return;   /* nothing to render on this page */
+/* ── Core render function ─────────────────────────────────────────────────── */
+function renderPayPalButton(planKey, containerId) {
+  var planId = PAYPAL_PLANS[planKey];
 
-  /* Retry until the PayPal SDK is ready, then render all buttons */
-  function initAll() {
-    if (typeof paypal === 'undefined') {
-      setTimeout(initAll, 250);
-      return;
-    }
-    containers.forEach(renderOne);
+  if (!planId) {
+    console.log('[PAYPAL_RENDER] plan=' + planKey + ' — no plan_id configured, skipping');
+    return;
   }
 
-  function renderOne(el) {
-    var planId   = el.dataset.planId;
-    var planName = el.dataset.planName;
-    var selector = '#' + el.id;
+  var container = document.getElementById(containerId);
+  if (!container) {
+    console.log('[PAYPAL_RENDER] plan=' + planKey + ' — container #' + containerId + ' not on page, skipping');
+    return;
+  }
 
-    el.innerHTML = '';   /* clear "Loading payment…" text */
+  console.log('[PAYPAL_RENDER] plan=' + planKey);
 
-    paypal.Buttons({
-      style: {
-        shape:  'rect',
-        color:  'gold',
-        layout: 'vertical',
-        label:  'subscribe'
-      },
+  paypal.Buttons({
+    style: {
+      shape:  'rect',
+      color:  'gold',
+      layout: 'vertical',
+      label:  'subscribe'
+    },
 
-      createSubscription: function (data, actions) {
-        return actions.subscription.create({ plan_id: planId });
-      },
+    createSubscription: function (data, actions) {
+      return actions.subscription.create({ plan_id: planId });
+    },
 
-      onApprove: function (data) {
-        return fetch('/paypal/subscription-success', {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({
-            plan:            planName,
-            subscription_id: data.subscriptionID
-          })
+    onApprove: function (data) {
+      console.log('[PAYPAL_SUCCESS] subscriptionID=' + data.subscriptionID + ' plan=' + planKey);
+
+      return fetch('/paypal/subscription-success', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          subscriptionID: data.subscriptionID,
+          plan:           planKey
         })
-        .then(function (r) { return r.json(); })
-        .then(function (res) {
-          if (res.ok) {
-            window.location.href = '/admin/billing?success=1';
-          } else {
-            alert('Plan activation failed. Please contact support.');
-          }
-        })
-        .catch(function () {
-          /* Network hiccup — still try to navigate so the webhook can activate */
+      })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (res.ok) {
           window.location.href = '/admin/billing?success=1';
-        });
-      },
-
-      onError: function (err) {
-        console.error('[PayPal error] plan=' + planName, err);
-        var wrap = document.getElementById('paypal-btn-' + planName);
-        if (wrap) {
-          wrap.innerHTML =
-            '<p style="color:#b91c1c;font-size:13px;text-align:center;padding:8px 0;">' +
-            '⚠️ Could not load payment button. Please refresh or contact support.' +
-            '</p>';
+        } else {
+          alert('Subscription recorded but activation may be delayed. Please refresh in a moment.');
         }
-      }
-    }).render(selector);
-  }
+      })
+      .catch(function () {
+        /* Network error — navigate anyway; webhook will activate the plan */
+        window.location.href = '/admin/billing?success=1';
+      });
+    },
 
-  initAll();
-})();
+    onError: function (err) {
+      console.error('[PAYPAL_ERROR] plan=' + planKey, err);
+    }
+
+  }).render('#' + containerId);
+}
+
+/* ── Wait for SDK then render all plan buttons ────────────────────────────── */
+function initPayPal() {
+  if (typeof paypal === 'undefined') {
+    setTimeout(initPayPal, 250);
+    return;
+  }
+  renderPayPalButton('starter',  'paypal-button-starter');
+  renderPayPalButton('pro',      'paypal-button-pro');
+  renderPayPalButton('business', 'paypal-button-business');
+}
+
+initPayPal();
 </script>
 
 {% endblock %}

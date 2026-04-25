@@ -4103,9 +4103,10 @@ def admin_settings():
 # ── PayPal plan-ID → internal plan name map ──────────────────────────────────
 PAYPAL_PLAN_MAP = {
     "P-2U68430732155245WNHV6LMA": "starter",   # live Starter plan
+    "P-38W13773TC442671ENHWAFNY":  "pro",       # live Pro plan
     "P-STARTER":                   "starter",   # test alias
-    "P-PRO":                       "pro",
-    "P-BUSINESS":                  "business",
+    "P-PRO":                       "pro",       # test alias
+    "P-BUSINESS":                  "business",  # test alias
 }
 
 
@@ -4277,7 +4278,8 @@ def upgrade_client_plan(client_id, plan_name, subscription_id=None):
 @app.route("/paypal/subscription-success", methods=["POST"])
 def paypal_subscription_success():
     data            = request.get_json() or {}
-    subscription_id = data.get("subscription_id")
+    # Accept both camelCase (new JS) and snake_case (legacy) keys
+    subscription_id = data.get("subscriptionID") or data.get("subscription_id")
     plan            = data.get("plan", "").strip().lower()
 
     client_id = session.get("client_id")
