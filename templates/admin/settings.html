@@ -57,9 +57,11 @@
       <div class="form-row">
         <label>Default Language</label>
         <select name="default_language">
-          <option value="ar" {{ 'selected' if client.default_language=='ar' }}>Arabic (ar)</option>
+          <option value="ar" {{ 'selected' if client.default_language=='ar' }}>العربية (ar)</option>
+          <option value="fr" {{ 'selected' if client.default_language=='fr' }}>Français (fr)</option>
           <option value="en" {{ 'selected' if client.default_language=='en' }}>English (en)</option>
-          <option value="fr" {{ 'selected' if client.default_language=='fr' }}>French (fr)</option>
+          <option value="es" {{ 'selected' if client.default_language=='es' }}>Español (es)</option>
+          <option value="it" {{ 'selected' if client.default_language=='it' }}>Italiano (it)</option>
         </select>
       </div>
     </div>

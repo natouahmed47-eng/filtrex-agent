@@ -2077,9 +2077,79 @@ def detect_lang(msg):
     print("[LANG_DETECT] rule=ar (default)")
     return "ar"
 
+
+def detect_customer_language(message):
+    """Confident language detection — returns ar/fr/en/es/it or None if unsure.
+    Unlike detect_lang, this never forces a default so callers can fall back
+    to client.default_language instead.
+    """
+    import re as _dlre
+    msg_lower = message.lower().strip()
+
+    # Arabic script characters — high confidence
+    if _dlre.search(r'[\u0600-\u06FF]', message):
+        print("[CUSTOMER_LANGUAGE_DETECTED] script=arabic → ar")
+        return "ar"
+
+    # English
+    if any(w in msg_lower for w in [
+        "hello", "hi ", "hey", "good morning", "good evening",
+        "how are you", "i want", "i need", "please", "thank", "yes", "no"
+    ]):
+        print("[CUSTOMER_LANGUAGE_DETECTED] rule=en")
+        return "en"
+
+    # French
+    if any(w in msg_lower for w in [
+        "bonjour", "salut", "bonsoir", "merci", "je veux",
+        "je voudrais", "s'il vous", "excusez"
+    ]):
+        print("[CUSTOMER_LANGUAGE_DETECTED] rule=fr")
+        return "fr"
+
+    # Spanish
+    if any(w in msg_lower for w in [
+        "hola", "buenos", "gracias", "quiero", "necesito",
+        "por favor", "buenas"
+    ]):
+        print("[CUSTOMER_LANGUAGE_DETECTED] rule=es")
+        return "es"
+
+    # Italian
+    if any(w in msg_lower for w in [
+        "ciao", "buongiorno", "buonasera", "grazie", "voglio",
+        "vorrei", "salve", "prego"
+    ]):
+        print("[CUSTOMER_LANGUAGE_DETECTED] rule=it")
+        return "it"
+
+    print("[CUSTOMER_LANGUAGE_DETECTED] not confident → None")
+    return None
+
+
+def get_reply_language(client, incoming_msg):
+    """Determine the language to reply in.
+    1. Use detected customer language if confident.
+    2. Otherwise fall back to client.default_language.
+    3. Final fallback: 'ar'.
+    """
+    client_default = (client or {}).get("default_language") or "ar"
+    print(f"[CLIENT_DEFAULT_LANGUAGE] {client_default!r}")
+    detected = detect_customer_language(incoming_msg)
+    reply_lang = detected or client_default
+    print(f"[REPLY_LANGUAGE] detected={detected!r} client_default={client_default!r} → using={reply_lang!r}")
+    return reply_lang
+
 def openai_chat(user_message, lang="ar"):
     print(f"[OPENAI] sending message={user_message!r} lang={lang!r}")
-    lang_note = f"\n\nSYSTEM LANGUAGE RULE (STRICT):\nYou MUST reply ONLY in this language: {lang}\nDO NOT use any other language.\nDO NOT translate unless the user asks."
+    lang_note = (
+        f"\n\nReply language: {lang}"
+        f"\n\nLANGUAGE RULES (STRICT):"
+        f"\n- Reply in the customer's detected language if you can confidently identify it."
+        f"\n- Otherwise reply in the configured language: {lang}"
+        f"\n- Never mix languages in the same answer unless the customer mixes languages."
+        f"\n- Supported languages: ar (العربية), fr (Français), en (English), es (Español), it (Italiano)."
+    )
     resp = requests.post(
         "https://api.openai.com/v1/chat/completions",
         headers={
@@ -3794,7 +3864,8 @@ def whatsapp():
         step  = state["current_step"]
 
         old_lang     = state.get("lang") or ""
-        new_lang     = detect_lang(incoming_msg)
+        _wh_client   = get_client(CLIENT_ID)
+        new_lang     = detect_customer_language(incoming_msg)   # None if not confident
         print(f"[LANG_DETECT] detected={new_lang!r} stored={old_lang!r}")
 
         if new_lang and new_lang != old_lang:
@@ -3802,7 +3873,9 @@ def whatsapp():
             state["lang"] = new_lang
             wa_save(sender, state)
 
-        lang = state.get("lang") or new_lang or "ar"
+        lang = state.get("lang") or new_lang or _wh_client.get("default_language") or "ar"
+        print(f"[CLIENT_DEFAULT_LANGUAGE] {_wh_client.get('default_language')!r}")
+        print(f"[REPLY_LANGUAGE] detected={new_lang!r} client_default={_wh_client.get('default_language')!r} → using={lang!r}")
         print(f"[LANG_FINAL] using={lang!r}")
         print(f"[WHATSAPP] step={step!r} lang={lang!r}")
 
