@@ -7,10 +7,12 @@ import sqlite3
 import datetime
 import random
 
-ULTRAMSG_INSTANCE = os.getenv("ULTRAMSG_INSTANCE", "")
-ULTRAMSG_TOKEN         = os.getenv("ULTRAMSG_TOKEN", "")
-ADMIN_WHATSAPP_NUMBER  = os.getenv("ADMIN_WHATSAPP_NUMBER", "")
+ULTRAMSG_INSTANCE         = os.getenv("ULTRAMSG_INSTANCE", "")
+ULTRAMSG_TOKEN            = os.getenv("ULTRAMSG_TOKEN", "")
+ADMIN_WHATSAPP_NUMBER     = os.getenv("ADMIN_WHATSAPP_NUMBER", "")
+PLATFORM_ADMIN_WHATSAPP   = os.getenv("PLATFORM_ADMIN_WHATSAPP", "")
 print(f"[STARTUP] ADMIN_WHATSAPP_NUMBER={ADMIN_WHATSAPP_NUMBER!r}")
+print(f"[STARTUP] PLATFORM_ADMIN_WHATSAPP={'set' if PLATFORM_ADMIN_WHATSAPP else 'not set'}")
 
 def ultramsg_send(to, text):
     import traceback as _tb
@@ -36,6 +38,27 @@ def ultramsg_send(to, text):
     elif resp.status_code != 200 or '"sent"' not in resp.text.lower():
         print(f"[ULTRAMSG_WARN] message may not have been delivered — status={resp.status_code} body={resp.text!r}")
     return resp
+
+
+def _notify_admin_whatsapp_connect(client_name, number):
+    """Send a WhatsApp alert to PLATFORM_ADMIN_WHATSAPP when a client submits a connection request.
+    Failures are silently logged — they never break the caller."""
+    if not PLATFORM_ADMIN_WHATSAPP:
+        print("[WHATSAPP_CONNECT_ADMIN_NOTIFIED] PLATFORM_ADMIN_WHATSAPP not configured — skipping alert")
+        return
+    msg = (
+        "🔔 طلب ربط واتساب جديد\n\n"
+        f"العميل: {client_name}\n"
+        f"الرقم: {number}\n"
+        "الحالة: pending\n\n"
+        "ادخل للوحة الإدارة لإكمال الربط."
+    )
+    try:
+        ultramsg_send(PLATFORM_ADMIN_WHATSAPP, msg)
+        print(f"[WHATSAPP_CONNECT_ADMIN_NOTIFIED] alert sent to platform admin for client={client_name!r}")
+    except Exception as _exc:
+        print(f"[CONNECT_REQUEST_NOTIFY_FAILED] could not send admin alert: {repr(_exc)}")
+
 
 app = Flask(__name__)
 print("🚀 WHATSAPP TEST VERSION LIVE")
@@ -4374,11 +4397,80 @@ def admin_connect_whatsapp():
             con.commit()
         finally:
             con.close()
-        print(f"[WHATSAPP_CONNECT_REQUEST] client={cid} number={number!r} → pending")
+
+        client_name = client.get("name") or f"client#{cid}"
+        print(f"[WHATSAPP_CONNECT_REQUEST_CREATED] client={cid} name={client_name!r} number={number!r} → pending")
+
+        # Notify platform admin — failure must NEVER break this request
+        try:
+            _notify_admin_whatsapp_connect(client_name, number)
+        except Exception as _notify_exc:
+            print(f"[CONNECT_REQUEST_NOTIFY_FAILED] outer guard caught: {repr(_notify_exc)}")
+
         flash(t("wa_success_msg", _lang), "success")
         return redirect(url_for("admin_connect_whatsapp"))
 
     return render_template("admin/connect_whatsapp.html", client=client, active="whatsapp")
+
+
+# ── /admin/whatsapp-requests  (platform owner: client_id == 1 only) ───────────
+@app.route("/admin/whatsapp-requests")
+def admin_whatsapp_requests():
+    guard = _admin_guard()
+    if guard:
+        return guard
+    if _session_client_id() != 1:
+        return "Forbidden", 403
+
+    con = get_db_connection()
+    try:
+        rows = con.execute("""
+            SELECT id, name,
+                   business_whatsapp_number,
+                   whatsapp_connection_status,
+                   created_at
+            FROM   clients
+            ORDER  BY
+                   CASE whatsapp_connection_status
+                       WHEN 'pending'   THEN 0
+                       WHEN 'connected' THEN 1
+                       ELSE 2
+                   END,
+                   id DESC
+        """).fetchall()
+        clients_list = [dict(r) for r in rows]
+    finally:
+        con.close()
+
+    return render_template(
+        "admin/whatsapp_requests.html",
+        clients=clients_list,
+        active="whatsapp_requests",
+    )
+
+
+@app.route("/admin/whatsapp-requests/<int:target_client_id>/mark-connected", methods=["POST"])
+def admin_whatsapp_mark_connected(target_client_id):
+    guard = _admin_guard()
+    if guard:
+        return guard
+    if _session_client_id() != 1:
+        return "Forbidden", 403
+
+    con = get_db_connection()
+    try:
+        con.execute("""
+            UPDATE clients
+            SET    whatsapp_connected=1,
+                   whatsapp_connection_status='connected'
+            WHERE  id=?
+        """, (target_client_id,))
+        con.commit()
+    finally:
+        con.close()
+
+    print(f"[WHATSAPP_CONNECT_MARKED_CONNECTED] admin marked client={target_client_id} as connected")
+    return redirect(url_for("admin_whatsapp_requests"))
 
 
 # ── /admin/settings ───────────────────────────────────────────────────────────
