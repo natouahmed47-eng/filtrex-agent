@@ -129,42 +129,42 @@
     <div class="trial-banner tb-expired">
       <div>
         <div class="trial-banner-text" style="color:#b91c1c;">
-          🚫 انتهت التجربة المجانية — اشترك الآن للاستمرار
+          🚫 سيتوقف البوت — اشترك الآن لاستمرار استقبال العملاء
         </div>
         <div class="trial-banner-sub" style="color:#7f1d1d;">
-          Free trial expired — subscribe now to keep using Filtrex AI
+          Free trial expired — your bot is paused. Reactivate now.
         </div>
       </div>
       <a href="/admin/upgrade-click?from=layout_expired" class="trial-upgrade-btn btn-expired">
-        اشترك الآن / Upgrade Now
+        🚀 فعّل البوت واستقبل العملاء الآن
       </a>
     </div>
     {% elif trial_info.warning %}
     <div class="trial-banner tb-warn">
       <div>
         <div class="trial-banner-text" style="color:#92400e;">
-          ⏳ تنتهي التجربة خلال {{ trial_info.hours }} ساعة — اشترك الآن
+          🚫 سيتوقف البوت خلال {{ trial_info.hours }} ساعة — لا تفقد العملاء
         </div>
         <div class="trial-banner-sub" style="color:#78350f;">
-          Trial ends in {{ trial_info.hours }}h {{ trial_info.minutes }}m — don't lose access
+          📈 كل رسالة عميل = فرصة بيع — اشترك الآن للاستمرار
         </div>
       </div>
       <a href="/admin/upgrade-click?from=layout_warning" class="trial-upgrade-btn btn-warn">
-        اشترك / Upgrade
+        🚀 فعّل البوت واستقبل العملاء الآن
       </a>
     </div>
     {% else %}
     <div class="trial-banner">
       <div>
         <div class="trial-banner-text" style="color:#3730a3;">
-          ⏳ لديك {{ trial_info.days }} يوم و {{ trial_info.hours }} ساعة في التجربة المجانية
+          ⏳ لديك {{ trial_info.days }} أيام تجربة — لا تفقد العملاء
         </div>
         <div class="trial-banner-sub" style="color:#4338ca;">
-          🎁 Free trial — {{ trial_info.days }}d {{ trial_info.hours }}h remaining. Upgrade anytime.
+          📈 كل رسالة عميل = فرصة بيع — فعّل البوت قبل انتهاء التجربة
         </div>
       </div>
       <a href="/admin/upgrade-click?from=layout_trial" class="trial-upgrade-btn">
-        اشترك / Upgrade
+        🚀 فعّل البوت واستقبل العملاء الآن
       </a>
     </div>
     {% endif %}

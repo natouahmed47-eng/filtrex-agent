@@ -2421,6 +2421,41 @@ def wa_reply(to, text):
     return "", 200
 
 
+def _fire_first_reply_nudge(sender, client_id):
+    """After the first real AI reply, send a value nudge to the customer (async, 2.5s delay)."""
+    import threading
+    def _send():
+        try:
+            _c = get_db_connection()
+            try:
+                _row = _c.execute(
+                    "SELECT id FROM analytics_events WHERE client_id=? AND event_name='first_reply_nudge' LIMIT 1",
+                    (client_id,)
+                ).fetchone()
+                if _row:
+                    return
+                _c.execute(
+                    "INSERT INTO analytics_events(client_id, event_name, event_data, created_at) VALUES(?,?,?,?)",
+                    (client_id, "first_reply_nudge", "{}", datetime.datetime.utcnow().isoformat())
+                )
+                _c.commit()
+            finally:
+                _c.close()
+            nudge_msg = (
+                "🔥 يمكنك الآن:\n"
+                "✔ استقبال الطلبات\n"
+                "✔ حجز المواعيد\n\n"
+                "جرب إرسال: (أريد حجز)"
+            )
+            ultramsg_send(normalize_number(sender), nudge_msg)
+            print(f"[USER_NUDGED] first_reply_nudge sent to={sender!r} client={client_id}")
+        except Exception as _nudge_err:
+            print(f"[NUDGE_ERROR] {_nudge_err}")
+    _t = threading.Timer(2.5, _send)
+    _t.daemon = True
+    _t.start()
+
+
 # wa_send_admin() REMOVED — use send_booking_messages() as the single send point
 
 _WA_PRICES = {
@@ -4117,8 +4152,12 @@ def whatsapp_webhook():
             finally:
                 _con.close()
 
-            # Confirmation
-            ultramsg_send(_sender_norm, "✅ تم ربط واتساب بنجاح!")
+            # Confirmation + first-action nudge
+            ultramsg_send(_sender_norm, (
+                "✅ تم ربط واتساب بنجاح!\n\n"
+                "📱 أرسل رسالة الآن إلى واتسابك وجرّب البوت فورًا."
+            ))
+            print(f"[USER_FIRST_ACTION] client={_target_cid} wa={_sender_norm!r}")
             return "ok", 200
 
         # Non-START messages: pass through to main handler
@@ -4177,8 +4216,25 @@ def whatsapp():
             mark_client_whatsapp_connected(client_id=pending["id"], phone=sender)
             print(f"[AUTO_CONNECT_SUCCESS] client_id={pending['id']} phone={sender!r}")
 
-            wa_reply(sender, "✅ تم ربط واتساب بنجاح!")
+            wa_reply(sender, (
+                "✅ تم ربط واتساب بنجاح!\n\n"
+                "📱 أرسل رسالة الآن إلى واتسابك وجرّب البوت فورًا."
+            ))
+            print(f"[USER_FIRST_ACTION] client={pending['id']} wa={sender!r}")
             return "", 200
+
+        # ── FIRST ENGAGEMENT — log + queue nudge for first real message ────
+        _eg_con = get_db_connection()
+        try:
+            _eg_row = _eg_con.execute(
+                "SELECT id FROM analytics_events WHERE client_id=? AND event_name='first_reply_nudge' LIMIT 1",
+                (CLIENT_ID,)
+            ).fetchone()
+            if not _eg_row:
+                print(f"[USER_ENGAGED] client={CLIENT_ID} first real message from={sender!r}")
+                _fire_first_reply_nudge(sender, CLIENT_ID)
+        finally:
+            _eg_con.close()
 
         # ── TRIAL CHECK ────────────────────────────────────────────────────
         if expire_trial_if_needed(CLIENT_ID):

@@ -71,7 +71,7 @@
     {% endif %}
 
     <a href="/admin/upgrade-click?from=dashboard" class="btn-upgrade-sm">
-      {% if sub.plan_name == 'Free' %}{{ t("upgrade_plan", lang) }}{% else %}{{ t("manage_plan", lang) }}{% endif %}
+      {% if sub.plan_name == 'Free' %}🚀 فعّل البوت واستقبل العملاء الآن{% else %}{{ t("manage_plan", lang) }}{% endif %}
     </a>
   </div>
 {% endif %}
@@ -80,6 +80,10 @@
   <div>
     <h1 class="page-title">{{ t("dashboard_title", lang) }}</h1>
     <p class="page-sub">{{ client.name }} — {{ client.business_type }}</p>
+  </div>
+  <div style="font-size:13px;color:#4338ca;font-weight:600;background:#eef2ff;
+              border:1px solid #c7d2fe;border-radius:8px;padding:6px 14px;white-space:nowrap;">
+    📈 كل رسالة عميل = فرصة بيع
   </div>
 </div>
 
