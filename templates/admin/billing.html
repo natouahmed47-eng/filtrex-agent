@@ -1,10 +1,9 @@
 {% extends "admin/layout.html" %}
 {% block content %}
 
-<!-- PayPal SDK — loaded once, vault=true + intent=subscription for recurring billing -->
+<!-- PayPal SDK — no defer so SDK is ready before inline script runs -->
 <script src="https://www.paypal.com/sdk/js?client-id=AXII0NIu0wnEJwazRqZ5UsowkdJWxJdVYxrxUT84kYljpayOSUFC76fMRyvJbIFMuzYjZMv3gP53U4C3&vault=true&intent=subscription"
-        data-sdk-integration-source="button-factory"
-        defer></script>
+        data-sdk-integration-source="button-factory"></script>
 
 <style>
   .billing-wrap { max-width: 900px; margin: 0 auto; padding: 0 4px; }
@@ -82,7 +81,18 @@
   }
 
   /* ── PayPal button wrapper ───────────────────────── */
-  .paypal-btn-wrap { margin-top: auto; min-height: 42px; }
+  .paypal-btn-wrap { margin-top: auto; }
+
+  /* Ensure PayPal containers are block-level and visible — prevents overlay rendering */
+  #paypal-button-starter,
+  #paypal-button-pro,
+  #paypal-button-business {
+    display: block;
+    min-height: 45px;
+    margin-top: 10px;
+    position: relative;   /* keeps PayPal iframe anchored inside card */
+    overflow: visible;
+  }
 
   /* ── Info note ───────────────────────────────────── */
   .info-note {
@@ -266,7 +276,9 @@
 <script>
 'use strict';
 
-/* ── Plan ID mapping — add/update plan IDs here when created in PayPal Dashboard ── */
+/* ── Plan ID mapping ─────────────────────────────────────────────────────────
+   Add/update plan IDs here when created in PayPal Dashboard.
+   Empty string → button silently skipped for that plan.                     */
 var PAYPAL_PLANS = {
   starter:  'P-2U68430732155245WNHV6LMA',
   pro:      'P-38W13773TC442671ENHWAFNY',
@@ -275,22 +287,30 @@ var PAYPAL_PLANS = {
 
 /* ── Core render function ─────────────────────────────────────────────────── */
 function renderPayPalButton(planKey, containerId) {
-  var planId = PAYPAL_PLANS[planKey];
-
-  if (!planId) {
-    console.log('[PAYPAL_RENDER] plan=' + planKey + ' — no plan_id configured, skipping');
-    return;
-  }
-
+  var planId    = PAYPAL_PLANS[planKey];
   var container = document.getElementById(containerId);
-  if (!container) {
-    console.log('[PAYPAL_RENDER] plan=' + planKey + ' — container #' + containerId + ' not on page, skipping');
+
+  /* Skip silently if no plan_id configured */
+  if (!planId) {
+    console.log('[PAYPAL_RENDER] plan=' + planKey + ' — no plan_id, skipping');
     return;
   }
 
-  console.log('[PAYPAL_RENDER] plan=' + planKey);
+  /* Skip if the container is not present on this page (e.g. current plan card hidden) */
+  if (!container) {
+    console.log('[PAYPAL_RENDER] plan=' + planKey + ' — container #' + containerId + ' not found, skipping');
+    return;
+  }
+  console.log('[PAYPAL_CONTAINER_FOUND] #' + containerId);
+
+  /* Prevent double-render (SDK throws if called twice on same element) */
+  if (container.hasChildNodes()) {
+    console.log('[PAYPAL_ALREADY_RENDERED] #' + containerId + ' — skipping');
+    return;
+  }
 
   paypal.Buttons({
+    /* Render inline inside the card — no modal, no overlay, no popup */
     style: {
       shape:  'rect',
       color:  'gold',
@@ -315,14 +335,10 @@ function renderPayPalButton(planKey, containerId) {
       })
       .then(function (r) { return r.json(); })
       .then(function (res) {
-        if (res.ok) {
-          window.location.href = '/admin/billing?success=1';
-        } else {
-          alert('Subscription recorded but activation may be delayed. Please refresh in a moment.');
-        }
+        /* Redirect regardless of server response — webhook handles activation */
+        window.location.href = '/admin/billing?success=1';
       })
       .catch(function () {
-        /* Network error — navigate anyway; webhook will activate the plan */
         window.location.href = '/admin/billing?success=1';
       });
     },
@@ -332,20 +348,24 @@ function renderPayPalButton(planKey, containerId) {
     }
 
   }).render('#' + containerId);
+
+  console.log('[PAYPAL_RENDER_OK] plan=' + planKey + ' rendered into #' + containerId);
 }
 
-/* ── Wait for SDK then render all plan buttons ────────────────────────────── */
-function initPayPal() {
-  if (typeof paypal === 'undefined') {
-    setTimeout(initPayPal, 250);
-    return;
+/* ── Entry point: wait for DOM + SDK, then render all plan buttons ────────── */
+document.addEventListener('DOMContentLoaded', function () {
+  function tryInit() {
+    if (typeof paypal === 'undefined') {
+      /* SDK not ready yet — retry in 200 ms */
+      setTimeout(tryInit, 200);
+      return;
+    }
+    renderPayPalButton('starter',  'paypal-button-starter');
+    renderPayPalButton('pro',      'paypal-button-pro');
+    renderPayPalButton('business', 'paypal-button-business');
   }
-  renderPayPalButton('starter',  'paypal-button-starter');
-  renderPayPalButton('pro',      'paypal-button-pro');
-  renderPayPalButton('business', 'paypal-button-business');
-}
-
-initPayPal();
+  tryInit();
+});
 </script>
 
 {% endblock %}
