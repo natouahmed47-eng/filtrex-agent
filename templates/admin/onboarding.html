@@ -392,7 +392,7 @@
             {% if client.name %}{{ client.name }}'s{% else %}Your{% endif %} AI Sales Engine
           </div>
           <div style="font-size:13px;color:var(--gray-600);line-height:1.5;">
-            Respond to WhatsApp messages, take orders &amp; book appointments — automatically, 24/7.
+            Reply, sell, and book — all on WhatsApp. Fully automated.
           </div>
         </div>
       </div>
@@ -549,7 +549,7 @@
       <div class="wa-status-box connected">
         <div class="wa-status-icon">✅</div>
         <div class="wa-status-text">{{ t('ob_already_conn', lang) }}</div>
-        <div class="wa-status-sub">Your WhatsApp number is linked and ready.</div>
+        <div class="wa-status-sub">Your bot is live and taking messages. ⚡</div>
       </div>
       <form method="POST">
         <input type="hidden" name="action" value="whatsapp_done">
@@ -560,27 +560,27 @@
     {% else %}
       <div class="wa-status-box not-connected">
         <div class="wa-status-icon">📱</div>
-        <div class="wa-status-text">Not connected yet</div>
-        <div class="wa-status-sub">{{ t('ob_wa_not_conn', lang) }}</div>
+        <div class="wa-status-text">Ready to connect</div>
+        <div class="wa-status-sub">Takes 30 seconds. No technical setup.</div>
       </div>
 
       <div class="wa-steps">
         <div class="wa-step-row">
           <div class="wa-step-num">1</div>
           <div class="wa-step-content">
-            Go to <a href="https://app.ultramsg.com" target="_blank">app.ultramsg.com</a> and create a free account.
+            <strong>Click Connect below.</strong> WhatsApp opens with the message pre-filled.
           </div>
         </div>
         <div class="wa-step-row">
           <div class="wa-step-num">2</div>
           <div class="wa-step-content">
-            Create an instance, scan the QR with your WhatsApp, then copy your <strong>Instance ID</strong> and <strong>Token</strong>.
+            <strong>Tap Send.</strong> The message is already typed — just send it.
           </div>
         </div>
         <div class="wa-step-row">
           <div class="wa-step-num">3</div>
           <div class="wa-step-content">
-            Paste them into <a href="/admin/connect-whatsapp" target="_blank">Settings → Connect WhatsApp</a>.
+            <strong>✅ You're live.</strong> Your bot activates instantly. No waiting.
           </div>
         </div>
       </div>

@@ -173,18 +173,18 @@
   <div class="wa-modal">
     <div class="wa-modal-icon">⚠️</div>
     <h3>
-      {% if lang == "ar" %}تأكيد قطع الاتصال{% else %}Confirm Disconnect{% endif %}
+      {% if lang == "ar" %}قطع الاتصال؟{% else %}Disconnect WhatsApp?{% endif %}
     </h3>
     <p>
       {% if lang == "ar" %}
-        سيؤدي قطع الاتصال إلى إيقاف جميع الردود التلقائية.<br>هل أنت متأكد؟
+        سيتوقف البوت مؤقتاً. يمكنك إعادة الربط في أي وقت.
       {% else %}
-        Disconnecting will stop all automated replies.<br>Are you sure?
+        This will pause your AI bot. You can reconnect anytime.
       {% endif %}
     </p>
     <div class="wa-modal-btns">
       <button class="btn-modal-confirm" onclick="confirmDisconnect()">
-        {% if lang == "ar" %}🔌 تأكيد القطع{% else %}🔌 Confirm{% endif %}
+        {% if lang == "ar" %}🔌 قطع الاتصال{% else %}🔌 Disconnect{% endif %}
       </button>
       <button class="btn-modal-cancel" onclick="closeDisconnectModal()">
         {% if lang == "ar" %}إلغاء{% else %}Cancel{% endif %}
@@ -240,7 +240,7 @@
   {% if status == "connected" %}
   <div class="wa-card">
     <div class="wa-card-title">
-      {% if lang == "ar" %}✅ واتساب متصل ويعمل{% else %}✅ WhatsApp Connected & Active{% endif %}
+      {% if lang == "ar" %}⚡ البوت نشط ويستقبل الرسائل{% else %}⚡ Bot Active — Receiving Messages{% endif %}
     </div>
 
     {% if client.business_whatsapp_number %}
@@ -280,12 +280,12 @@
       <span class="wa-pending-icon">⏳</span>
       <div>
         <strong>
-          {% if lang == "ar" %}في انتظار التأكيد من واتساب{% else %}Waiting for WhatsApp Confirmation{% endif %}
+          {% if lang == "ar" %}تقريباً اكتمل!{% else %}Almost done!{% endif %}
         </strong><br>
         {% if lang == "ar" %}
-          أرسل كلمة <strong>START</strong> من رقم واتساب الخاص بك إلى رقم الروبوت.
+          أرسل <strong>START</strong> من واتساب إلى رقم البوت. يتم التفعيل فوراً. ⚡
         {% else %}
-          Send the word <strong>START</strong> from your WhatsApp number to the bot number.
+          Send <strong>START</strong> from your WhatsApp to the bot. You'll be live instantly. ⚡
         {% endif %}
       </div>
     </div>
@@ -293,10 +293,10 @@
     {% if wa_deeplink %}
     <div class="wa-btn-row">
       <a href="{{ wa_deeplink }}" target="_blank" class="btn-wa-primary" onclick="startPolling()">
-        🔗 {% if lang == "ar" %}فتح واتساب وإرسال START{% else %}Open WhatsApp & Send START{% endif %}
+        📱 {% if lang == "ar" %}فتح واتساب وإرسال START{% else %}Open WhatsApp & Send START{% endif %}
       </a>
       <button type="button" class="btn-wa-ghost" onclick="openDisconnectModal()">
-        🔄 {% if lang == "ar" %}إعادة البدء{% else %}Start Over{% endif %}
+        🔄 {% if lang == "ar" %}بدء من جديد{% else %}Restart{% endif %}
       </button>
     </div>
     {% endif %}
@@ -313,7 +313,7 @@
   {% else %}
   <div class="wa-card">
     <div class="wa-card-title">
-      {% if lang == "ar" %}كيف تربط واتساب؟{% else %}How to Connect WhatsApp{% endif %}
+      {% if lang == "ar" %}⚡ ربط في 3 خطوات{% else %}⚡ Connect in 3 Steps{% endif %}
     </div>
 
     <!-- 3-step guide -->
@@ -322,10 +322,10 @@
         <div class="wa-step-num">1</div>
         <div class="wa-step-text">
           <strong>
-            {% if lang == "ar" %}انقر على زر الربط{% else %}Click the Connect button{% endif %}
+            {% if lang == "ar" %}انقر على ربط واتساب{% else %}Click Connect below{% endif %}
           </strong>
           <span>
-            {% if lang == "ar" %}سيفتح واتساب تلقائياً مع رسالة جاهزة.{% else %}WhatsApp will open with the message ready.{% endif %}
+            {% if lang == "ar" %}تفتح واتساب مباشرة مع رسالة جاهزة.{% else %}WhatsApp opens with the message pre-filled.{% endif %}
           </span>
         </div>
       </li>
@@ -333,10 +333,10 @@
         <div class="wa-step-num">2</div>
         <div class="wa-step-text">
           <strong>
-            {% if lang == "ar" %}افتح واتساب{% else %}Open WhatsApp{% endif %}
+            {% if lang == "ar" %}اضغط إرسال{% else %}Tap Send{% endif %}
           </strong>
           <span>
-            {% if lang == "ar" %}تأكد من تسجيل الدخول بالرقم الذي تريد ربطه.{% else %}Make sure you're logged in with the number you want to connect.{% endif %}
+            {% if lang == "ar" %}الرسالة مكتوبة — فقط اضغط إرسال.{% else %}The message is ready — just tap Send.{% endif %}
           </span>
         </div>
       </li>
@@ -344,10 +344,10 @@
         <div class="wa-step-num">3</div>
         <div class="wa-step-text">
           <strong>
-            {% if lang == "ar" %}أرسل START{% else %}Send START{% endif %}
+            {% if lang == "ar" %}✅ أنت الآن مباشر{% else %}✅ You're live{% endif %}
           </strong>
           <span>
-            {% if lang == "ar" %}الرسالة جاهزة — فقط اضغط إرسال ويتم الربط تلقائياً.{% else %}The message is ready — just press Send and you're connected.{% endif %}
+            {% if lang == "ar" %}البوت يبدأ عمله فوراً. لا انتظار.{% else %}Your bot activates instantly. No waiting.{% endif %}
           </span>
         </div>
       </li>
@@ -365,9 +365,9 @@
       {% if lang == "ar" %}في انتظار التأكيد... سيتم التحديث تلقائياً.{% else %}Waiting for confirmation… page will refresh automatically.{% endif %}
     </div>
     {% else %}
-    <div style="background:#fef9c3;border:1px solid #fde047;border-radius:10px;
-                padding:14px 18px;font-size:13px;color:#713f12;">
-      ⚠️ {% if lang == "ar" %}لم يتم تفعيل خاصية الربط التلقائي بعد.{% else %}Auto-connect is not configured yet.{% endif %}
+    <div style="background:#fee2e2;border:1px solid #fca5a5;border-radius:10px;
+                padding:14px 18px;font-size:13px;color:#991b1b;">
+      ⚠️ {% if lang == "ar" %}لا يمكن إنشاء الرابط الآن. تواصل مع الدعم للتفعيل.{% else %}Connection link unavailable. Contact support to activate.{% endif %}
     </div>
     {% endif %}
   </div>
