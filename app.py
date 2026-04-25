@@ -207,6 +207,30 @@ TRANSLATIONS = {
         "wa_success_msg":         "Your number has been received. We are setting up the connection.",
         "wa_disconnect_msg":      "Disconnected successfully.",
         "wa_error_number":        "Please enter a valid WhatsApp number.",
+        "wa_connect_title":         "Connect WhatsApp",
+        "wa_number_label":          "Your WhatsApp Number",
+        "wa_number_hint":           "Enter the number clients will send messages to (include country code).",
+        "wa_submit_request":        "إرسال طلب الربط",
+        "wa_status_pending":        "جاري الربط ⏳",
+        "wa_status_connected":      "تم الربط ✅",
+        "wa_status_not_connected":  "غير مربوط",
+        "wa_pending_note":          "جاري الربط",
+        "wa_connected_note":        "تم الربط",
+        "wa_page_title":            "Connect WhatsApp",
+        "wa_page_sub":              "Submit your number — our team will activate the connection within 24 hours.",
+        "wa_status_connected_sub":  "Your WhatsApp is active and receiving messages.",
+        "wa_status_pending_sub":    "We received your request. Activation in progress.",
+        "wa_status_not_conn":       "Not Connected",
+        "wa_status_not_conn_sub":   "Submit your number below to get started.",
+        "wa_status_failed":         "Connection Failed",
+        "wa_status_failed_sub":     "Please resubmit your number or contact support.",
+        "wa_btn_connect":           "إرسال طلب الربط",
+        "wa_btn_update":            "Update Number",
+        "wa_btn_disconnect":        "Disconnect",
+        "wa_form_title":            "Your WhatsApp Number",
+        "wa_form_label":            "WhatsApp Number",
+        "wa_form_placeholder":      "+212600000000",
+        "wa_form_hint":             "Include country code, e.g. +212600000000",
         # Onboarding
         "ob_welcome":         "Welcome to {brand} 🚀",
         "ob_subtitle":        "Let's get your WhatsApp AI sales engine up and running in 3 quick steps.",
@@ -315,6 +339,30 @@ TRANSLATIONS = {
         "wa_success_msg":         "تم استلام رقمك بنجاح. جاري تجهيز الربط.",
         "wa_disconnect_msg":      "تم قطع الاتصال.",
         "wa_error_number":        "يرجى إدخال رقم واتساب صحيح.",
+        "wa_connect_title":         "ربط واتساب",
+        "wa_number_label":          "رقم واتساب الخاص بك",
+        "wa_number_hint":           "أدخل الرقم الذي سيرسل إليه العملاء الرسائل (مع رمز الدولة).",
+        "wa_submit_request":        "إرسال طلب الربط",
+        "wa_status_pending":        "جاري الربط ⏳",
+        "wa_status_connected":      "تم الربط ✅",
+        "wa_status_not_connected":  "غير مربوط",
+        "wa_pending_note":          "جاري الربط",
+        "wa_connected_note":        "تم الربط",
+        "wa_page_title":            "ربط واتساب",
+        "wa_page_sub":              "أدخل رقمك — سيقوم فريقنا بتفعيل الاتصال خلال أقل من 24 ساعة.",
+        "wa_status_connected_sub":  "واتساب الخاص بك نشط ويستقبل الرسائل.",
+        "wa_status_pending_sub":    "تم استلام طلبك. جاري التفعيل.",
+        "wa_status_not_conn":       "غير مربوط",
+        "wa_status_not_conn_sub":   "أدخل رقمك أدناه للبدء.",
+        "wa_status_failed":         "فشل الاتصال",
+        "wa_status_failed_sub":     "يرجى إعادة إرسال الرقم أو التواصل مع الدعم.",
+        "wa_btn_connect":           "إرسال طلب الربط",
+        "wa_btn_update":            "تحديث الرقم",
+        "wa_btn_disconnect":        "قطع الاتصال",
+        "wa_form_title":            "رقم واتساب الخاص بك",
+        "wa_form_label":            "رقم واتساب",
+        "wa_form_placeholder":      "+212600000000",
+        "wa_form_hint":             "أدخل الرقم مع رمز الدولة، مثال: +212600000000",
         # Onboarding
         "ob_welcome":         "مرحباً بك في {brand} 🚀",
         "ob_subtitle":        "دعنا نشغّل محرك المبيعات الذكي لواتساب في 3 خطوات سريعة.",
@@ -4300,7 +4348,7 @@ def admin_connect_whatsapp():
                 con.commit()
             finally:
                 con.close()
-            print(f"[CONNECT_WA] client={cid} disconnected")
+            print(f"[WHATSAPP_CONNECT_REQUEST] client={cid} action=disconnect")
             flash(t("wa_disconnect_msg", _lang), "success")
             return redirect(url_for("admin_connect_whatsapp"))
 
@@ -4326,7 +4374,7 @@ def admin_connect_whatsapp():
             con.commit()
         finally:
             con.close()
-        print(f"[CONNECT_WA] client={cid} number={number!r} → pending")
+        print(f"[WHATSAPP_CONNECT_REQUEST] client={cid} number={number!r} → pending")
         flash(t("wa_success_msg", _lang), "success")
         return redirect(url_for("admin_connect_whatsapp"))
 
@@ -5739,6 +5787,84 @@ def chat():
 
     reply = response.json()["choices"][0]["message"]["content"]
     return jsonify({"reply": reply})
+
+# ── /saas/whatsapp-requests  (SaaS-operator only: client_id == 1) ─────────────
+def _saas_guard():
+    """Only client_id=1 (the SaaS owner) may access /saas/* routes."""
+    if not session.get("logged_in"):
+        return redirect(url_for("login"))
+    if _session_client_id() != 1:
+        return "Forbidden", 403
+    return None
+
+
+@app.route("/saas/whatsapp-requests")
+def saas_whatsapp_requests():
+    guard = _saas_guard()
+    if guard:
+        return guard
+
+    con = get_db_connection()
+    try:
+        rows = con.execute("""
+            SELECT id, name,
+                   business_whatsapp_number,
+                   whatsapp_connection_status,
+                   created_at
+            FROM   clients
+            WHERE  whatsapp_connection_status IN ('pending', 'connected', 'not_connected')
+            ORDER  BY
+                   CASE whatsapp_connection_status
+                       WHEN 'pending'   THEN 0
+                       WHEN 'connected' THEN 1
+                       ELSE 2
+                   END,
+                   id DESC
+        """).fetchall()
+        clients_list = [dict(r) for r in rows]
+    finally:
+        con.close()
+
+    return render_template("saas/whatsapp_requests.html", clients=clients_list)
+
+
+@app.route("/saas/whatsapp-approve", methods=["POST"])
+def saas_whatsapp_approve():
+    guard = _saas_guard()
+    if guard:
+        return guard
+
+    client_id = request.form.get("client_id", type=int)
+    action    = request.form.get("action", "connect")   # connect | disconnect
+
+    if not client_id:
+        return redirect(url_for("saas_whatsapp_requests"))
+
+    con = get_db_connection()
+    try:
+        if action == "disconnect":
+            con.execute("""
+                UPDATE clients
+                SET    whatsapp_connected=0,
+                       whatsapp_connection_status='not_connected'
+                WHERE  id=?
+            """, (client_id,))
+            con.commit()
+            print(f"[WHATSAPP_CONNECTED_MANUAL] operator disconnected client={client_id}")
+        else:
+            con.execute("""
+                UPDATE clients
+                SET    whatsapp_connected=1,
+                       whatsapp_connection_status='connected'
+                WHERE  id=?
+            """, (client_id,))
+            con.commit()
+            print(f"[WHATSAPP_CONNECTED_MANUAL] operator activated client={client_id}")
+    finally:
+        con.close()
+
+    return redirect(url_for("saas_whatsapp_requests"))
+
 
 if __name__ == "__main__":
     debug = os.getenv("FLASK_DEBUG", "false").lower() == "true"
