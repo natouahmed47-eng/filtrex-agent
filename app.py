@@ -146,7 +146,7 @@ TRANSLATIONS = {
         # Dashboard
         "dashboard_title":        "Dashboard",
         "plan_limit_reached":     "You have reached your current plan limit. Please upgrade to continue.",
-        "plan_approaching_limit": "⚠️ Approaching your plan limit — consider upgrading soon.",
+        "plan_approaching_limit": "⚠️ You're approaching your plan limit — upgrade to avoid interruptions.",
         "upgrade_plan":           "Upgrade Plan",
         "manage_plan":            "Manage Plan",
         "stat_total_orders":      "Total Orders",
@@ -247,7 +247,7 @@ TRANSLATIONS = {
         # Dashboard
         "dashboard_title":        "لوحة التحكم",
         "plan_limit_reached":     "لقد وصلت إلى حد خطتك الحالية. يرجى الترقية للمتابعة.",
-        "plan_approaching_limit": "⚠️ اقتراب من حد الخطة — يُنصح بالترقية قريباً.",
+        "plan_approaching_limit": "⚠️ اقتربت من استهلاك باقتك — قم بالترقية لتفادي الانقطاع.",
         "upgrade_plan":           "ترقية الخطة",
         "manage_plan":            "إدارة الخطة",
         "stat_total_orders":      "إجمالي الطلبات",
@@ -1162,6 +1162,24 @@ def increment_usage(client_id, usage_type):
     """
     _billing_increment(client_id, usage_type)
     print(f"[USAGE_INCREMENTED] client={client_id} type={usage_type}")
+
+
+def handle_limit_exceeded(client_id, limit_type):
+    """
+    Central paywall handler — call when a plan limit is hit.
+    Logs [PAYWALL_TRIGGERED] and returns a structured dict with
+    bilingual messages and the upgrade URL.
+
+    limit_type: 'messages' | 'catalog_items' | 'orders'
+    """
+    print(f"[PAYWALL_TRIGGERED] client={client_id} limit_type={limit_type!r} → upgrade required")
+    return {
+        "error":       "limit_exceeded",
+        "limit_type":  limit_type,
+        "message_ar":  "لقد وصلت إلى الحد الأقصى لباقتك.",
+        "message_en":  "You have reached your plan limit.",
+        "upgrade_url": "/admin/billing",
+    }
 
 
 def generate_referral_code(client_id):
@@ -2863,6 +2881,7 @@ def wa_save_booking(phone, state, name):
         _ord_plan = (_ord_sub or {}).get("plan_name", "Free")
         _ord_lim  = (_ord_sub or {}).get("max_orders", 10)
         print(f"[LIMIT_BLOCKED] orders — client={CLIENT_ID} plan={_ord_plan!r} limit={_ord_lim}")
+        handle_limit_exceeded(CLIENT_ID, "orders")
         return  # abort save silently
     increment_usage(CLIENT_ID, "orders_used")
 
@@ -3049,7 +3068,12 @@ def whatsapp():
             _used   = (_msg_sub or {}).get("messages_used", 0)
             _limit  = (_msg_sub or {}).get("max_messages", 100)
             print(f"[LIMIT_BLOCKED] messages — client={CLIENT_ID} plan={_plan_n!r} used={_used}/{_limit}")
-            _paywall_msg = "لقد وصلت إلى حد باقتك الحالية. يرجى الترقية للاستمرار."
+            _pw = handle_limit_exceeded(CLIENT_ID, "messages")
+            _paywall_msg = (
+                f"{_pw['message_ar']} قم بالترقية للاستمرار 👇\n"
+                f"https://filtrex.ai/admin/billing\n\n"
+                f"{_pw['message_en']} Upgrade to continue 👇"
+            )
             return wa_reply(sender, _paywall_msg)
         increment_usage(CLIENT_ID, "messages_used")
 
@@ -3787,8 +3811,10 @@ def admin_catalog_new():
                 _cat_plan = (_cat_sub or {}).get("plan_name", "Free")
                 _cat_lim  = (_cat_sub or {}).get("max_catalog_items", 5)
                 print(f"[LIMIT_BLOCKED] catalog_items — client={cid} plan={_cat_plan!r} limit={_cat_lim}")
+                _pw = handle_limit_exceeded(cid, "catalog_items")
                 flash(
-                    "لقد وصلت إلى حد باقتك الحالية. يرجى الترقية للاستمرار.",
+                    f'{_pw["message_ar"]} — <a href="/admin/upgrade-click?from=catalog" '
+                    f'style="color:#1d4ed8;font-weight:700">ترقية الآن</a>',
                     "error"
                 )
                 return redirect(url_for("admin_catalog"))
@@ -4408,6 +4434,15 @@ def api_paypal_subscribe():
     return {"success": True, "status": "pending"}
 
 
+@app.route("/admin/upgrade-click")
+def admin_upgrade_click():
+    """Log upgrade intent and redirect to billing page."""
+    source = request.args.get("from", "unknown")
+    cid    = _session_client_id()
+    print(f"[UPGRADE_CLICKED] client={cid} from={source!r}")
+    return redirect(url_for("admin_billing"))
+
+
 @app.route("/admin/billing")
 def admin_billing():
     guard = _admin_guard()
@@ -4666,12 +4701,8 @@ def api_post_orders():
         _ord_plan = (_ord_sub or {}).get("plan_name", "Free")
         _ord_lim  = (_ord_sub or {}).get("max_orders", 10)
         print(f"[LIMIT_BLOCKED] orders — client={cid} plan={_ord_plan!r} limit={_ord_lim}")
-        return jsonify({
-            "error": "لقد وصلت إلى حد باقتك الحالية. يرجى الترقية للاستمرار.",
-            "limit_type": "orders",
-            "plan": _ord_plan,
-            "limit": _ord_lim,
-        }), 429
+        _pw = handle_limit_exceeded(cid, "orders")
+        return jsonify(_pw | {"plan": _ord_plan, "limit": _ord_lim}), 429
 
     con = get_db_connection()
     try:

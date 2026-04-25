@@ -70,7 +70,7 @@
       <span style="font-size:13px;color:#92400e;font-weight:600;">{{ t("plan_approaching_limit", lang) }}</span>
     {% endif %}
 
-    <a href="/admin/billing" class="btn-upgrade-sm">
+    <a href="/admin/upgrade-click?from=dashboard" class="btn-upgrade-sm">
       {% if sub.plan_name == 'Free' %}{{ t("upgrade_plan", lang) }}{% else %}{{ t("manage_plan", lang) }}{% endif %}
     </a>
   </div>
