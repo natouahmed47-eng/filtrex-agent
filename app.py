@@ -2140,6 +2140,39 @@ def get_latest_pending_client():
         _con.close()
 
 
+def get_latest_pending_whatsapp_client():
+    """Return the most-recent pending client including all debug fields."""
+    con = get_db_connection()
+    try:
+        row = con.execute("""
+            SELECT id, name, business_whatsapp_number, whatsapp_connection_status
+            FROM clients
+            WHERE whatsapp_connection_status = 'pending'
+            ORDER BY id DESC
+            LIMIT 1
+        """).fetchone()
+        return dict(row) if row else None
+    finally:
+        con.close()
+
+
+def mark_client_whatsapp_connected(client_id, phone):
+    """Set a client's WhatsApp number and mark them connected."""
+    con = get_db_connection()
+    try:
+        con.execute("""
+            UPDATE clients
+            SET business_whatsapp_number      = ?,
+                whatsapp_connected            = 1,
+                whatsapp_connection_status    = 'connected',
+                whatsapp_provider             = 'manual_ultramsg'
+            WHERE id = ?
+        """, (normalize_number(phone), client_id))
+        con.commit()
+    finally:
+        con.close()
+
+
 def wa_reply(to, text):
     """Send a message to the CUSTOMER only. Never call this with admin content."""
     raw = to
@@ -3343,6 +3376,38 @@ def extract_booking_fields(message, allowed_services=None):
 def build_id():
     return "BUILD_ID: REPLIT_DEPLOY_TEST_001", 200
 
+
+@app.route("/debug/auto-connect-status")
+def debug_auto_connect_status():
+    """Diagnostic endpoint — shows all state needed to debug the auto-connect flow."""
+    import os as _os
+    _con = get_db_connection()
+    try:
+        _pending_rows = _con.execute("""
+            SELECT id, name, business_whatsapp_number, whatsapp_connection_status
+            FROM clients
+            WHERE whatsapp_connection_status = 'pending'
+            ORDER BY id DESC
+        """).fetchall()
+        _pending_count  = len(_pending_rows)
+        _latest_pending = dict(_pending_rows[0]) if _pending_rows else None
+    finally:
+        _con.close()
+
+    _instance = _os.getenv("ULTRAMSG_INSTANCE", "")
+    _token    = _os.getenv("ULTRAMSG_TOKEN", "")
+    _bot_num  = _os.getenv("WA_BOT_NUMBER", "")
+
+    return jsonify({
+        "ultramsg_instance":    bool(_instance),
+        "ultramsg_token":       bool(_token),
+        "wa_bot_number_set":    bool(_bot_num),
+        "webhook_url_expected": "https://filtrex-agent-1.replit.app/whatsapp",
+        "pending_clients":      _pending_count,
+        "latest_pending_client": _latest_pending,
+    })
+
+
 @app.route("/webhook/whatsapp", methods=["POST"])
 def whatsapp_webhook():
     """Dedicated UltraMsg webhook endpoint.
@@ -3474,6 +3539,10 @@ def whatsapp():
         from_me = _from_me_raw in (True, 1, "true", "1", "True")
 
         print(f"[WHATSAPP] sender={sender!r} message={incoming_msg!r} type={msg_type!r} fromMe_raw={_from_me_raw!r} fromMe={from_me!r}")
+        print("[AUTO_CONNECT_DEBUG] route=/whatsapp hit")
+        print(f"[AUTO_CONNECT_DEBUG] sender={sender!r}")
+        print(f"[AUTO_CONNECT_DEBUG] incoming_msg={incoming_msg!r}")
+        print(f"[AUTO_CONNECT_DEBUG] fromMe={from_me!r}")
 
         # ── Ignore outbound messages the bot itself sent ─────────────────────
         if from_me:
@@ -3484,86 +3553,22 @@ def whatsapp():
             print("[WHATSAPP] ignored non-chat or empty message")
             return "", 200
 
-        # ── AUTO-CONNECT: handle "START_<token>" or "START" ───────────────
+        # ── AUTO-CONNECT: handle "START" or "START_<token>" ──────────────
         _msg_upper = incoming_msg.strip().upper()
         if _msg_upper == "START" or _msg_upper.startswith("START_"):
-            print(f"[WA_AUTO_CONNECT_START] received from sender={sender!r} msg={incoming_msg!r}")
-            _sender_norm = normalize_number(sender)
-            import re as _ac_re
+            print("[AUTO_CONNECT_START_RECEIVED]")
 
-            # Extract optional token
-            _ac_token = None
-            if "_" in incoming_msg:
-                _ac_token = incoming_msg.strip().split("_", 1)[1].lower()
-            print(f"[WA_AUTO_CONNECT] sender_norm={_sender_norm!r} token={_ac_token!r}")
+            pending = get_latest_pending_whatsapp_client()
+            print(f"[AUTO_CONNECT_PENDING_CLIENT] {pending}")
 
-            _ac_con = get_db_connection()
-            try:
-                # Check if this number is already linked to any client
-                _existing = _ac_con.execute(
-                    "SELECT id, name FROM clients WHERE business_whatsapp_number=?",
-                    (_sender_norm,)
-                ).fetchone()
-                if _existing:
-                    print(f"[WA_AUTO_CONNECT] sender already linked to client={_existing['id']} — ignored")
-                    return "", 200
+            if not pending:
+                wa_reply(sender, "لم نجد طلب ربط قيد الانتظار. افتح لوحة التحكم واضغط ربط واتساب أولاً.")
+                return "", 200
 
-                # Resolve target client_id from token or fallback to latest pending
-                _target_cid = None
-                _now_iso    = datetime.datetime.utcnow().isoformat()
-                if _ac_token:
-                    _tok_row = _ac_con.execute("""
-                        SELECT client_id FROM wa_connect_tokens
-                        WHERE token=? AND used=0 AND expires_at > ?
-                    """, (_ac_token, _now_iso)).fetchone()
-                    if _tok_row:
-                        _target_cid = _tok_row["client_id"]
-                        print(f"[WA_AUTO_CONNECT] token valid → client_id={_target_cid}")
-                    else:
-                        print(f"[WA_AUTO_CONNECT] token {_ac_token!r} invalid or expired")
+            mark_client_whatsapp_connected(client_id=pending["id"], phone=sender)
+            print(f"[AUTO_CONNECT_SUCCESS] client_id={pending['id']} phone={sender!r}")
 
-                if not _target_cid:
-                    # Fallback: most recent client with status=pending and no number yet
-                    _pending_row = _ac_con.execute("""
-                        SELECT id FROM clients
-                        WHERE whatsapp_connection_status='pending'
-                          AND (business_whatsapp_number IS NULL OR business_whatsapp_number='')
-                        ORDER BY id DESC LIMIT 1
-                    """).fetchone()
-                    if _pending_row:
-                        _target_cid = _pending_row["id"]
-                        print(f"[WA_AUTO_CONNECT] fallback to pending client_id={_target_cid}")
-
-                if not _target_cid:
-                    print("[WA_AUTO_CONNECT] no matching client found — ignored")
-                    return "", 200
-
-                # Link the number to the client
-                _sender_digits = _ac_re.sub(r'\D', '', sender)
-                _ac_con.execute("""
-                    UPDATE clients
-                    SET business_whatsapp_number=?,
-                        whatsapp_connected=1,
-                        whatsapp_connection_status='connected',
-                        whatsapp_provider='ultramsg'
-                    WHERE id=?
-                """, (_sender_digits, _target_cid))
-
-                # Mark token used
-                if _ac_token:
-                    _ac_con.execute(
-                        "UPDATE wa_connect_tokens SET used=1 WHERE token=?",
-                        (_ac_token,)
-                    )
-                _ac_con.commit()
-                print(f"[WA_AUTO_CONNECT_SUCCESS] client={_target_cid} number={_sender_digits!r}")
-
-            finally:
-                _ac_con.close()
-
-            # Confirmation message to the client
-            _confirm_msg = "✅ تم ربط واتساب بنجاح! يمكنك الآن استخدام البوت."
-            wa_reply(sender, _confirm_msg)
+            wa_reply(sender, "✅ تم ربط واتساب بنجاح!")
             return "", 200
 
         # ── TRIAL CHECK ────────────────────────────────────────────────────
