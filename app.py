@@ -663,6 +663,14 @@ def _migrate_saas():
             con.commit()
             print("[SAAS] migrated clients → added whatsapp_provider")
 
+        # ── Trial columns ─────────────────────────────────────────────────────
+        if "is_trial" not in _cli_cols:
+            con.execute("ALTER TABLE clients ADD COLUMN is_trial          INTEGER DEFAULT 0")
+            con.execute("ALTER TABLE clients ADD COLUMN trial_started_at  TEXT")
+            con.execute("ALTER TABLE clients ADD COLUMN trial_ends_at     TEXT")
+            con.commit()
+            print("[TRIAL] migrated clients → added is_trial, trial_started_at, trial_ends_at")
+
         # users: add email + client_id columns for multi-tenant auth
         _usr_cols = [r[1] for r in con.execute("PRAGMA table_info(users)").fetchall()]
         if "email" not in _usr_cols:
@@ -1162,6 +1170,95 @@ def increment_usage(client_id, usage_type):
     """
     _billing_increment(client_id, usage_type)
     print(f"[USAGE_INCREMENTED] client={client_id} type={usage_type}")
+
+
+def get_trial_status(client):
+    """
+    Return a dict describing the client's free-trial state.
+
+    Keys:
+      is_trial   bool  — client was ever on a trial
+      active     bool  — trial is currently running
+      expired    bool  — trial started but now over
+      days/hours/minutes int — remaining time (0 when expired)
+      warning    bool  — True when < 24 h remain
+      ends_at    str   — ISO timestamp of trial end
+    """
+    if not client or not client.get("is_trial"):
+        return {"is_trial": False, "active": False, "expired": False}
+
+    ends_str = client.get("trial_ends_at")
+    if not ends_str:
+        return {"is_trial": True, "active": False, "expired": True}
+
+    try:
+        ends_at = datetime.datetime.fromisoformat(ends_str)
+    except (ValueError, TypeError):
+        return {"is_trial": True, "active": False, "expired": True}
+
+    remaining = (ends_at - datetime.datetime.now()).total_seconds()
+
+    if remaining <= 0:
+        print(f"[TRIAL_EXPIRED] client={client.get('id')} trial_ends_at={ends_str!r}")
+        return {
+            "is_trial": True, "active": False, "expired": True,
+            "remaining_seconds": 0, "days": 0, "hours": 0, "minutes": 0,
+            "warning": False, "ends_at": ends_str,
+        }
+
+    days    = int(remaining // 86400)
+    hours   = int((remaining % 86400) // 3600)
+    minutes = int((remaining % 3600) // 60)
+    warning = remaining < 86400   # < 24 h
+
+    if warning:
+        print(f"[TRIAL_WARNING] client={client.get('id')} remaining={hours}h {minutes}m")
+    else:
+        print(f"[TRIAL_ACTIVE] client={client.get('id')} remaining={days}d {hours}h")
+
+    return {
+        "is_trial": True, "active": True, "expired": False,
+        "remaining_seconds": remaining,
+        "days": days, "hours": hours, "minutes": minutes,
+        "warning": warning, "ends_at": ends_str,
+    }
+
+
+def expire_trial_if_needed(client_id):
+    """
+    Downgrade a client to the free plan if their trial has ended.
+    Must be called before plan-limit checks at each enforcement point.
+    Returns True if the trial was expired and the plan was downgraded.
+    Logs [TRIAL_EXPIRED].
+    """
+    client = get_client(client_id)
+    if not client.get("is_trial"):
+        return False
+
+    trial = get_trial_status(client)
+    if not trial.get("expired"):
+        return False
+
+    # Downgrade: clear trial flag, reset plan to free
+    con = get_db_connection()
+    try:
+        con.execute("""
+            UPDATE clients
+            SET    is_trial=0, plan='free', subscription_status='expired'
+            WHERE  id=? AND is_trial=1
+        """, (client_id,))
+        # Also mark any pending/active trial subscription as cancelled
+        con.execute("""
+            UPDATE client_subscriptions
+            SET    status='cancelled'
+            WHERE  client_id=? AND status IN ('active', 'pending')
+        """, (client_id,))
+        con.commit()
+    finally:
+        con.close()
+
+    print(f"[TRIAL_EXPIRED] client={client_id} → downgraded to free plan")
+    return True
 
 
 def handle_limit_exceeded(client_id, limit_type):
@@ -2874,6 +2971,11 @@ def wa_save_booking(phone, state, name):
     print(f"[SAVE_BOOKING] name={name}")
     print(f"[SAVE_BOOKING] state={state}")
 
+    # ── TRIAL CHECK ────────────────────────────────────────────────────────
+    if expire_trial_if_needed(CLIENT_ID):
+        print(f"[TRIAL_EXPIRED] client={CLIENT_ID} — booking aborted")
+        return  # abort silently; WA already told user in message handler
+
     # ── PLAN ENFORCE: order limit ──────────────────────────────────────────
     print(f"[PLAN_ENFORCE] checking orders limit — client={CLIENT_ID}")
     _ord_ok, _ord_sub = check_plan_limit(CLIENT_ID, "orders")
@@ -3059,6 +3161,15 @@ def whatsapp():
         if msg_type != "chat" or not sender or not incoming_msg:
             print("[WHATSAPP] ignored non-chat or empty message")
             return "", 200
+
+        # ── TRIAL CHECK ────────────────────────────────────────────────────
+        if expire_trial_if_needed(CLIENT_ID):
+            _trial_msg = (
+                "⏰ انتهت التجربة المجانية — يرجى الاشتراك للاستمرار 👇\n"
+                "https://filtrex.ai/admin/billing\n\n"
+                "⏰ Free trial expired — please subscribe to continue 👇"
+            )
+            return wa_reply(sender, _trial_msg)
 
         # ── PLAN ENFORCE: message limit ────────────────────────────────────
         print(f"[PLAN_ENFORCE] checking messages limit — client={CLIENT_ID}")
@@ -3664,9 +3775,13 @@ def admin_dashboard():
     referral_link = f"{request.host_url.rstrip('/')}signup?ref={client.get('referral_code', '')}"
     stats = dict(total_orders=total_orders, today_orders=today_orders,
                  catalog_count=catalog_count, active_convos=active_convos)
+    # ── Trial status (expire if needed, then compute display state) ────────
+    expire_trial_if_needed(cid)
+    trial_info = get_trial_status(get_client(cid))
     return render_template("admin/dashboard.html", client=client, stats=stats,
                            recent_orders=recent_orders, sub=sub,
-                           referral_link=referral_link, active="dashboard")
+                           referral_link=referral_link, active="dashboard",
+                           trial_info=trial_info)
 
 # ── /admin/onboarding ─────────────────────────────────────────────────────────
 @app.route("/admin/onboarding", methods=["GET", "POST"])
@@ -3804,6 +3919,11 @@ def admin_catalog_new():
         if not title:
             flash("Title is required.", "error")
         else:
+            # ── TRIAL CHECK ───────────────────────────────────────────────
+            if expire_trial_if_needed(cid):
+                flash("انتهت التجربة المجانية — يرجى الاشتراك للاستمرار.", "error")
+                return redirect(url_for("admin_catalog"))
+
             # ── PLAN ENFORCE: catalog item limit ──────────────────────────
             print(f"[PLAN_ENFORCE] checking catalog_items limit — client={cid}")
             _cat_ok, _cat_sub = check_plan_limit(cid, "catalog_items")
@@ -4694,6 +4814,15 @@ def api_post_orders():
     if not phone or not items:
         return jsonify({"error": "phone and items are required"}), 400
 
+    # ── TRIAL CHECK ────────────────────────────────────────────────────────
+    if expire_trial_if_needed(cid):
+        return jsonify({
+            "error": "trial_expired",
+            "message_ar": "انتهت التجربة المجانية — يرجى الاشتراك للاستمرار.",
+            "message_en": "Free trial expired — please subscribe to continue.",
+            "upgrade_url": "/admin/billing",
+        }), 402
+
     # ── PLAN ENFORCE: order limit ──────────────────────────────────────────
     print(f"[PLAN_ENFORCE] checking orders limit — client={cid}")
     _ord_ok, _ord_sub = check_plan_limit(cid, "orders")
@@ -5178,6 +5307,20 @@ def signup():
                         "UPDATE clients SET referral_code=? WHERE id=?",
                         (new_ref_code, new_client_id)
                     )
+                    # ── Start 3-day free trial ────────────────────────────
+                    _t_now = datetime.datetime.now()
+                    _t_end = _t_now + datetime.timedelta(days=3)
+                    con.execute("""
+                        UPDATE clients
+                        SET    is_trial=1,
+                               trial_started_at=?,
+                               trial_ends_at=?,
+                               plan='starter'
+                        WHERE  id=?
+                    """, (_t_now.isoformat(timespec="seconds"),
+                          _t_end.isoformat(timespec="seconds"),
+                          new_client_id))
+                    print(f"[TRIAL_STARTED] client={new_client_id} ends_at={_t_end.isoformat(timespec='seconds')!r}")
                     # Create user linked to that client
                     cur_u = con.execute("""
                         INSERT INTO users (username, email, password, client_id)

@@ -32,6 +32,41 @@
   .btn-upgrade-sm:hover { opacity:.88; }
 </style>
 
+{% if trial_info and trial_info.is_trial %}
+  {% if trial_info.expired %}
+  <div class="plan-banner alert" style="justify-content:space-between;">
+    <span style="font-size:14px;font-weight:700;color:#b91c1c;">
+      ⏰ انتهت التجربة المجانية — يرجى الاشتراك للاستمرار
+      <span style="display:block;font-size:12px;font-weight:400;color:#7f1d1d;margin-top:2px;">
+        ⏰ Free trial expired — please subscribe to continue
+      </span>
+    </span>
+    <a href="/admin/upgrade-click?from=trial_expired" class="btn-upgrade-sm">{{ t("upgrade_plan", lang) }}</a>
+  </div>
+  {% elif trial_info.warning %}
+  <div class="plan-banner alert" style="justify-content:space-between;">
+    <span style="font-size:14px;font-weight:700;color:#92400e;">
+      ⏰ تنتهي التجربة خلال أقل من 24 ساعة!
+      <span style="display:block;font-size:12px;font-weight:400;color:#78350f;margin-top:2px;">
+        ⏰ Trial ends in less than 24 hours!
+      </span>
+    </span>
+    <a href="/admin/upgrade-click?from=trial_warning" class="btn-upgrade-sm">{{ t("upgrade_plan", lang) }}</a>
+  </div>
+  {% else %}
+  <div class="plan-banner" style="justify-content:space-between;border-color:#a5b4fc;background:#eef2ff;">
+    <span style="font-size:14px;font-weight:600;color:#3730a3;">
+      🎁 لديك تجربة مجانية — تنتهي خلال:
+      <strong>{{ trial_info.days }} يوم{{ " " if trial_info.days != 1 else "" }} {{ trial_info.hours }} ساعة</strong>
+      <span style="display:block;font-size:12px;font-weight:400;color:#4338ca;margin-top:2px;">
+        🎁 Free trial ends in: <strong>{{ trial_info.days }}d {{ trial_info.hours }}h</strong>
+      </span>
+    </span>
+    <a href="/admin/upgrade-click?from=trial_banner" class="btn-upgrade-sm" style="background:#4f46e5;">{{ t("upgrade_plan", lang) }}</a>
+  </div>
+  {% endif %}
+{% endif %}
+
 {% if sub %}
   {% set pct_msg = ((sub.messages_used / sub.max_messages * 100)|int) if sub.max_messages > 0 else 0 %}
   {% set pct_ord = ((sub.orders_used / sub.max_orders * 100)|int) if sub.max_orders > 0 else 0 %}
