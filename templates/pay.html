@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>إتمام الدفع</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+      background: #f4f6f9;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 4px 24px rgba(0,0,0,.10);
+      max-width: 440px;
+      width: 100%;
+      overflow: hidden;
+    }
+    .card-header {
+      background: linear-gradient(135deg, #0070f3, #00c6ff);
+      padding: 28px 24px 20px;
+      text-align: center;
+    }
+    .card-header h1 { color: #fff; font-size: 1.4rem; margin-bottom: 4px; }
+    .card-header p  { color: rgba(255,255,255,.85); font-size: .9rem; }
+    .card-body { padding: 24px; }
+    .summary-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid #f0f0f0;
+      font-size: .95rem;
+    }
+    .summary-row:last-child { border-bottom: none; }
+    .label { color: #888; }
+    .value { font-weight: 600; color: #222; }
+    .amount-row .value { color: #0070f3; font-size: 1.2rem; }
+    .status-badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: .8rem;
+      font-weight: 600;
+      background: #fff3cd;
+      color: #856404;
+    }
+    .status-badge.paid   { background: #d1fae5; color: #065f46; }
+    .status-badge.failed { background: #fee2e2; color: #991b1b; }
+    #paypal-button-container { margin-top: 20px; }
+    .no-client-id {
+      margin-top: 20px;
+      padding: 14px;
+      background: #fff3cd;
+      border: 1px solid #ffc107;
+      border-radius: 8px;
+      color: #856404;
+      font-size: .88rem;
+      text-align: center;
+    }
+    .success-msg {
+      display: none;
+      margin-top: 20px;
+      padding: 16px;
+      background: #d1fae5;
+      border-radius: 10px;
+      text-align: center;
+      color: #065f46;
+      font-size: 1rem;
+      font-weight: 600;
+    }
+    .order-id { color: #aaa; font-size: .8rem; text-align: center; margin-top: 14px; }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <div class="card-header">
+    <h1>💳 إتمام الدفع</h1>
+    <p>أكمل دفعك بأمان عبر PayPal</p>
+  </div>
+  <div class="card-body">
+
+    <!-- Order summary -->
+    <div class="summary-row">
+      <span class="label">الاسم</span>
+      <span class="value">{{ order.name or '—' }}</span>
+    </div>
+    {% if order.data.day %}
+    <div class="summary-row">
+      <span class="label">اليوم</span>
+      <span class="value">{{ order.data.day }}</span>
+    </div>
+    {% endif %}
+    {% if order.data.time %}
+    <div class="summary-row">
+      <span class="label">الوقت</span>
+      <span class="value">{{ order.data.time }}</span>
+    </div>
+    {% endif %}
+    <div class="summary-row amount-row">
+      <span class="label">المبلغ</span>
+      <span class="value">
+        {% if order.amount and order.amount > 0 %}
+          {{ order.amount | round(2) }} USD
+        {% else %}
+          —
+        {% endif %}
+      </span>
+    </div>
+    <div class="summary-row">
+      <span class="label">حالة الدفع</span>
+      <span class="status-badge {% if order.payment_status == 'paid' %}paid{% elif order.payment_status == 'failed' %}failed{% endif %}">
+        {% if order.payment_status == 'paid' %}
+          مدفوع ✅
+        {% elif order.payment_status == 'failed' %}
+          فشل ❌
+        {% else %}
+          في الانتظار ⏳
+        {% endif %}
+      </span>
+    </div>
+
+    {% if order.payment_status == 'paid' %}
+      <div class="success-msg" style="display:block;">✅ تم الدفع بنجاح! شكراً لك 🎉</div>
+    {% elif paypal_client_id %}
+      <div id="paypal-button-container"></div>
+      <div class="success-msg" id="success-box">✅ تم الدفع بنجاح! شكراً لك 🎉</div>
+    {% else %}
+      <div class="no-client-id">
+        ⚠️ لم يتم تهيئة بوابة الدفع بعد.<br>
+        يرجى إضافة <strong>PAYPAL_CLIENT_ID</strong> في إعدادات البيئة.
+      </div>
+    {% endif %}
+
+    <p class="order-id">رقم الطلب: #{{ order.id }}</p>
+  </div>
+</div>
+
+{% if paypal_client_id and order.payment_status != 'paid' %}
+<script src="https://www.paypal.com/sdk/js?client-id={{ paypal_client_id }}&currency=USD"></script>
+<script>
+  const ORDER_ID   = {{ order.id }};
+  const PAY_AMOUNT = "{{ '%0.2f' % (order.amount if order.amount and order.amount > 0 else 1.00) }}";
+
+  paypal.Buttons({
+    createOrder: function(data, actions) {
+      return actions.order.create({
+        purchase_units: [{
+          amount: { value: PAY_AMOUNT, currency_code: "USD" },
+          description: "Order #" + ORDER_ID
+        }]
+      });
+    },
+    onApprove: function(data, actions) {
+      return actions.order.capture().then(function(details) {
+        fetch("/pay/" + ORDER_ID + "/success", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ orderID: data.orderID, id: details.id })
+        })
+        .then(r => r.json())
+        .then(res => {
+          if (res.ok) {
+            document.getElementById("paypal-button-container").style.display = "none";
+            document.getElementById("success-box").style.display = "block";
+          }
+        });
+      });
+    },
+    onError: function(err) {
+      alert("حدث خطأ أثناء الدفع. يرجى المحاولة مجدداً.");
+      console.error(err);
+    }
+  }).render("#paypal-button-container");
+</script>
+{% endif %}
+
+</body>
+</html>

@@ -818,13 +818,20 @@ def _migrate_saas():
             con.commit()
             print("[FLOW] migrated conversations → added collected_data")
 
-        # ── orders: add intent + customer_phone columns ───────────────────────
+        # ── orders: add intent + customer_phone + payment columns ───────────────
         _ord_cols = [r[1] for r in con.execute("PRAGMA table_info(orders)").fetchall()]
         if "intent" not in _ord_cols:
             con.execute("ALTER TABLE orders ADD COLUMN intent          TEXT DEFAULT 'unknown'")
             con.execute("ALTER TABLE orders ADD COLUMN customer_phone  TEXT DEFAULT ''")
             con.commit()
             print("[INTENT] migrated orders → added intent, customer_phone")
+        if "amount" not in _ord_cols:
+            con.execute("ALTER TABLE orders ADD COLUMN amount           REAL DEFAULT 0")
+            con.execute("ALTER TABLE orders ADD COLUMN payment_status   TEXT DEFAULT 'pending'")
+            con.execute("ALTER TABLE orders ADD COLUMN payment_link     TEXT DEFAULT ''")
+            con.execute("ALTER TABLE orders ADD COLUMN payment_provider TEXT DEFAULT 'paypal'")
+            con.commit()
+            print("[PAYMENT] migrated orders → added amount, payment_status, payment_link, payment_provider")
 
         # ── AI Brain columns ──────────────────────────────────────────────────
         if "assistant_tone" not in _cli_cols:
@@ -3025,28 +3032,47 @@ def run_booking_flow(sender, incoming_msg, client_id, lang, flow):
     # ── confirm ───────────────────────────────────────────────────────────────
     elif step == "confirm":
         if _flow_is_affirm(incoming_msg):
-            # Create confirmed order
+            # 1. Create pending order
             _data_json = json.dumps(data, ensure_ascii=False)
+            _norm_phone = normalize_number(sender)
             con = get_db_connection()
             try:
                 cur = con.execute("""
                     INSERT INTO orders
-                        (client_id, customer_phone, intent, name, items, status, created_at)
-                    VALUES (?, ?, 'book_appointment', ?, ?, 'confirmed', ?)
+                        (client_id, customer_phone, intent, name, items,
+                         status, payment_status, payment_provider, created_at)
+                    VALUES (?, ?, 'book_appointment', ?, ?, 'pending', 'pending', 'paypal', ?)
                 """, (
                     client_id,
-                    normalize_number(sender),
+                    _norm_phone,
                     data.get("name", ""),
                     _data_json,
                     datetime.datetime.utcnow().isoformat(),
                 ))
                 con.commit()
                 _oid = cur.lastrowid
-                print(f"[FLOW_COMPLETED] order_id={_oid} client={client_id} phone={sender!r} data={data}")
+
+                # 2. Build full payment URL and save it
+                _pay_url = request.url_root.rstrip("/") + f"/pay/{_oid}"
+                con.execute(
+                    "UPDATE orders SET payment_link=? WHERE id=?",
+                    (_pay_url, _oid)
+                )
+                con.commit()
+                print(f"[PAYMENT_LINK_CREATED] order_id={_oid} url={_pay_url!r}")
             finally:
                 con.close()
+
+            # 3. Reset flow, send payment link via WhatsApp
             flow_reset(client_id, sender)
-            return wa_reply(sender, _fs("confirmed", lang))
+            _pay_msgs = {
+                "ar": f"💳 لإتمام طلبك، يرجى الدفع من هنا:\n{_pay_url}",
+                "en": f"💳 To complete your order, please pay here:\n{_pay_url}",
+                "fr": f"💳 Pour finaliser votre commande, veuillez payer ici:\n{_pay_url}",
+                "es": f"💳 Para completar tu pedido, paga aquí:\n{_pay_url}",
+                "it": f"💳 Per completare il tuo ordine, paga qui:\n{_pay_url}",
+            }
+            return wa_reply(sender, _pay_msgs.get(lang, _pay_msgs["ar"]))
 
         elif _flow_is_reject(incoming_msg):
             flow_reset(client_id, sender)
@@ -6834,6 +6860,67 @@ def saas_whatsapp_approve():
         con.close()
 
     return redirect(url_for("saas_whatsapp_requests"))
+
+
+# ── Payment Routes ────────────────────────────────────────────────────────────
+
+@app.route("/pay/<int:order_id>", methods=["GET"])
+def pay_order(order_id):
+    """Public payment page — shows order summary and PayPal button."""
+    con = get_db_connection()
+    try:
+        order = con.execute(
+            "SELECT * FROM orders WHERE id=?", (order_id,)
+        ).fetchone()
+    finally:
+        con.close()
+    if not order:
+        return "Order not found", 404
+    order = dict(order)
+    # Parse collected_data JSON stored in items
+    try:
+        order["data"] = json.loads(order.get("items") or "{}")
+    except Exception:
+        order["data"] = {}
+    paypal_client_id = os.getenv("PAYPAL_CLIENT_ID", "")
+    return render_template("pay.html", order=order, paypal_client_id=paypal_client_id)
+
+
+@app.route("/pay/<int:order_id>/success", methods=["POST"])
+def pay_order_success(order_id):
+    """Called by PayPal JS SDK after successful payment approval."""
+    payload   = request.get_json(silent=True) or {}
+    paypal_id = payload.get("orderID") or payload.get("id") or ""
+    print(f"[PAYMENT_SUCCESS] order_id={order_id} paypal_id={paypal_id!r}")
+
+    con = get_db_connection()
+    try:
+        order = con.execute(
+            "SELECT * FROM orders WHERE id=?", (order_id,)
+        ).fetchone()
+        if not order:
+            return jsonify({"ok": False, "error": "not found"}), 404
+        order = dict(order)
+
+        # Update order status
+        con.execute("""
+            UPDATE orders
+            SET payment_status='paid', status='confirmed'
+            WHERE id=?
+        """, (order_id,))
+        con.commit()
+        print(f"[ORDER_CONFIRMED] order_id={order_id} client={order.get('client_id')}")
+    finally:
+        con.close()
+
+    # Send WhatsApp confirmation to customer
+    _cust_phone = order.get("customer_phone") or order.get("phone") or ""
+    if _cust_phone:
+        _confirm_msg = "✅ تم تأكيد طلبك بنجاح! نراك قريبًا 🎉"
+        ultramsg_send(_cust_phone, _confirm_msg)
+        print(f"[PAYMENT_SUCCESS] WA confirmation sent to {_cust_phone!r}")
+
+    return jsonify({"ok": True, "order_id": order_id})
 
 
 if __name__ == "__main__":
