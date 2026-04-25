@@ -1,10 +1,6 @@
 {% extends "admin/layout.html" %}
 {% block content %}
 
-<!-- PayPal SDK — no defer so SDK is ready before inline script runs -->
-<script src="https://www.paypal.com/sdk/js?client-id=AXII0NIu0wnEJwazRqZ5UsowkdJWxJdVYxrxUT84kYljpayOSUFC76fMRyvJbIFMuzYjZMv3gP53U4C3&vault=true&intent=subscription"
-        data-sdk-integration-source="button-factory"></script>
-
 <style>
   .billing-wrap { max-width: 900px; margin: 0 auto; padding: 0 4px; }
 
@@ -272,45 +268,67 @@
 
 </div>
 
-<!-- ═══ PayPal Dynamic Subscription Buttons ════════════════════════════════ -->
+<!-- ═══ PayPal Subscription Buttons ══════════════════════════════════════════
+
+  SDK is loaded ONCE here at the bottom of the page — AFTER all containers
+  exist in the DOM. No defer, no async. The window "load" event fires after
+  the SDK has executed, so we wait an extra 500 ms for PayPal to finish its
+  own internal async setup before calling paypal.Buttons().
+                                                                             -->
+
+<!-- PayPal SDK — single load, bottom of page, no defer/async -->
+<script src="https://www.paypal.com/sdk/js?client-id=AXII0NIu0wnEJwazRqZ5UsowkdJWxJdVYxrxUT84kYljpayOSUFC76fMRyvJbIFMuzYjZMv3gP53U4C3&vault=true&intent=subscription"></script>
+
 <script>
 'use strict';
 
-/* ── Plan ID mapping ─────────────────────────────────────────────────────────
-   Add/update plan IDs here when created in PayPal Dashboard.
-   Empty string → button silently skipped for that plan.                     */
+/* ── Plan ID map ─────────────────────────────────────────────────────────────
+   Update plan IDs here whenever they change in the PayPal Dashboard.
+   Empty string → that plan's button is replaced with "Contact Sales".      */
 var PAYPAL_PLANS = {
   starter:  'P-2U68430732155245WNHV6LMA',
   pro:      'P-38W13773TC442671ENHWAFNY',
-  business: ''   /* set when Business plan is created in PayPal */
+  business: ''
 };
 
-/* ── Core render function ─────────────────────────────────────────────────── */
+/* ── Render a single plan button ─────────────────────────────────────────── */
 function renderPayPalButton(planKey, containerId) {
-  var planId    = PAYPAL_PLANS[planKey];
-  var container = document.getElementById(containerId);
+  var el = document.getElementById(containerId);
 
-  /* Skip silently if no plan_id configured */
+  /* Container missing (current-plan card has no container) */
+  if (!el) {
+    console.log('[PAYPAL_CONTAINER_MISSING]', containerId);
+    return;
+  }
+
+  /* SDK failed to load */
+  if (typeof paypal === 'undefined') {
+    console.log('[PAYPAL_SDK_NOT_LOADED]');
+    return;
+  }
+
+  /* Already rendered — skip */
+  if (el.dataset.rendered === '1') {
+    console.log('[PAYPAL_ALREADY_RENDERED]', containerId);
+    return;
+  }
+
+  var planId = PAYPAL_PLANS[planKey];
+
+  /* No plan ID configured → show "Contact Sales" placeholder */
   if (!planId) {
-    console.log('[PAYPAL_RENDER] plan=' + planKey + ' — no plan_id, skipping');
+    console.log('[PAYPAL_PLAN_MISSING]', planKey, planId);
+    el.innerHTML = '<button class="btn-current-plan" disabled style="cursor:default;color:#6b7280;">Contact Sales</button>';
     return;
   }
 
-  /* Skip if the container is not present on this page (e.g. current plan card hidden) */
-  if (!container) {
-    console.log('[PAYPAL_RENDER] plan=' + planKey + ' — container #' + containerId + ' not found, skipping');
-    return;
-  }
-  console.log('[PAYPAL_CONTAINER_FOUND] #' + containerId);
+  /* Mark as being rendered before async call to prevent double-render */
+  el.dataset.rendered = '1';
+  el.innerHTML = '';
 
-  /* Prevent double-render (SDK throws if called twice on same element) */
-  if (container.hasChildNodes()) {
-    console.log('[PAYPAL_ALREADY_RENDERED] #' + containerId + ' — skipping');
-    return;
-  }
+  console.log('[PAYPAL_RENDER_START]', planKey, containerId, planId);
 
   paypal.Buttons({
-    /* Render inline inside the card — no modal, no overlay, no popup */
     style: {
       shape:  'rect',
       color:  'gold',
@@ -322,49 +340,48 @@ function renderPayPalButton(planKey, containerId) {
       return actions.subscription.create({ plan_id: planId });
     },
 
-    onApprove: function (data) {
-      console.log('[PAYPAL_SUCCESS] subscriptionID=' + data.subscriptionID + ' plan=' + planKey);
-
+    onApprove: function (data, actions) {
+      console.log('[PAYPAL_APPROVED]', planKey, data.subscriptionID);
       return fetch('/paypal/subscription-success', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          subscriptionID: data.subscriptionID,
-          plan:           planKey
+        body: JSON.stringify({
+          plan:           planKey,
+          subscription_id: data.subscriptionID,
+          subscriptionID:  data.subscriptionID
         })
-      })
-      .then(function (r) { return r.json(); })
-      .then(function (res) {
-        /* Redirect regardless of server response — webhook handles activation */
-        window.location.href = '/admin/billing?success=1';
-      })
-      .catch(function () {
+      }).then(function () {
         window.location.href = '/admin/billing?success=1';
       });
     },
 
     onError: function (err) {
-      console.error('[PAYPAL_ERROR] plan=' + planKey, err);
+      console.log('[PAYPAL_RENDER_ERROR]', err);
+      el.dataset.rendered = '0';   /* allow retry on error */
     }
 
-  }).render('#' + containerId);
-
-  console.log('[PAYPAL_RENDER_OK] plan=' + planKey + ' rendered into #' + containerId);
+  }).render('#' + containerId).then(function () {
+    console.log('[PAYPAL_RENDER_OK]', planKey);
+  });
 }
 
-/* ── Entry point: wait for DOM + SDK, then render all plan buttons ────────── */
-document.addEventListener('DOMContentLoaded', function () {
-  function tryInit() {
-    if (typeof paypal === 'undefined') {
-      /* SDK not ready yet — retry in 200 ms */
-      setTimeout(tryInit, 200);
-      return;
-    }
+/* ── Entry point ─────────────────────────────────────────────────────────────
+   window "load" fires after SDK script has executed.
+   500 ms extra delay lets PayPal finish its internal async bootstrap.      */
+window.addEventListener('load', function () {
+
+  /* Diagnostic: confirm SDK state and container presence */
+  console.log('[PAYPAL] SDK loaded?', typeof paypal !== 'undefined');
+  console.log('[PAYPAL] container starter',  document.getElementById('paypal-button-starter'));
+  console.log('[PAYPAL] container pro',      document.getElementById('paypal-button-pro'));
+  console.log('[PAYPAL] container business', document.getElementById('paypal-button-business'));
+
+  setTimeout(function () {
     renderPayPalButton('starter',  'paypal-button-starter');
     renderPayPalButton('pro',      'paypal-button-pro');
     renderPayPalButton('business', 'paypal-button-business');
-  }
-  tryInit();
+  }, 500);
+
 });
 </script>
 
