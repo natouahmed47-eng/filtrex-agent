@@ -11,8 +11,10 @@ ULTRAMSG_INSTANCE         = os.getenv("ULTRAMSG_INSTANCE", "")
 ULTRAMSG_TOKEN            = os.getenv("ULTRAMSG_TOKEN", "")
 ADMIN_WHATSAPP_NUMBER     = os.getenv("ADMIN_WHATSAPP_NUMBER", "")
 PLATFORM_ADMIN_WHATSAPP   = os.getenv("PLATFORM_ADMIN_WHATSAPP", "")
+WA_BOT_NUMBER             = os.getenv("WA_BOT_NUMBER", "")   # UltraMsg bot phone number for deep links
 print(f"[STARTUP] ADMIN_WHATSAPP_NUMBER={ADMIN_WHATSAPP_NUMBER!r}")
 print(f"[STARTUP] PLATFORM_ADMIN_WHATSAPP={'set' if PLATFORM_ADMIN_WHATSAPP else 'not set'}")
+print(f"[STARTUP] WA_BOT_NUMBER={'set' if WA_BOT_NUMBER else 'not set'}")
 
 def ultramsg_send(to, text):
     import traceback as _tb
@@ -520,6 +522,15 @@ def init_db():
                 known_name    TEXT,
                 current_step  TEXT DEFAULT 'service',
                 lang          TEXT DEFAULT ''
+            )
+        """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS wa_connect_tokens (
+                token      TEXT PRIMARY KEY,
+                client_id  INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                used       INTEGER DEFAULT 0
             )
         """)
         con.execute("INSERT OR IGNORE INTO users (id, username, password) VALUES (1, 'admin', '123456')")
@@ -3342,6 +3353,88 @@ def whatsapp():
             print("[WHATSAPP] ignored non-chat or empty message")
             return "", 200
 
+        # ── AUTO-CONNECT: handle "START_<token>" or "START" ───────────────
+        _msg_upper = incoming_msg.strip().upper()
+        if _msg_upper == "START" or _msg_upper.startswith("START_"):
+            print(f"[WA_AUTO_CONNECT_START] received from sender={sender!r} msg={incoming_msg!r}")
+            _sender_norm = normalize_number(sender)
+            import re as _ac_re
+
+            # Extract optional token
+            _ac_token = None
+            if "_" in incoming_msg:
+                _ac_token = incoming_msg.strip().split("_", 1)[1].lower()
+            print(f"[WA_AUTO_CONNECT] sender_norm={_sender_norm!r} token={_ac_token!r}")
+
+            _ac_con = get_db_connection()
+            try:
+                # Check if this number is already linked to any client
+                _existing = _ac_con.execute(
+                    "SELECT id, name FROM clients WHERE business_whatsapp_number=?",
+                    (_sender_norm,)
+                ).fetchone()
+                if _existing:
+                    print(f"[WA_AUTO_CONNECT] sender already linked to client={_existing['id']} — ignored")
+                    return "", 200
+
+                # Resolve target client_id from token or fallback to latest pending
+                _target_cid = None
+                _now_iso    = datetime.datetime.utcnow().isoformat()
+                if _ac_token:
+                    _tok_row = _ac_con.execute("""
+                        SELECT client_id FROM wa_connect_tokens
+                        WHERE token=? AND used=0 AND expires_at > ?
+                    """, (_ac_token, _now_iso)).fetchone()
+                    if _tok_row:
+                        _target_cid = _tok_row["client_id"]
+                        print(f"[WA_AUTO_CONNECT] token valid → client_id={_target_cid}")
+                    else:
+                        print(f"[WA_AUTO_CONNECT] token {_ac_token!r} invalid or expired")
+
+                if not _target_cid:
+                    # Fallback: most recent client with status=pending and no number yet
+                    _pending_row = _ac_con.execute("""
+                        SELECT id FROM clients
+                        WHERE whatsapp_connection_status='pending'
+                          AND (business_whatsapp_number IS NULL OR business_whatsapp_number='')
+                        ORDER BY id DESC LIMIT 1
+                    """).fetchone()
+                    if _pending_row:
+                        _target_cid = _pending_row["id"]
+                        print(f"[WA_AUTO_CONNECT] fallback to pending client_id={_target_cid}")
+
+                if not _target_cid:
+                    print("[WA_AUTO_CONNECT] no matching client found — ignored")
+                    return "", 200
+
+                # Link the number to the client
+                _sender_digits = _ac_re.sub(r'\D', '', sender)
+                _ac_con.execute("""
+                    UPDATE clients
+                    SET business_whatsapp_number=?,
+                        whatsapp_connected=1,
+                        whatsapp_connection_status='connected',
+                        whatsapp_provider='ultramsg'
+                    WHERE id=?
+                """, (_sender_digits, _target_cid))
+
+                # Mark token used
+                if _ac_token:
+                    _ac_con.execute(
+                        "UPDATE wa_connect_tokens SET used=1 WHERE token=?",
+                        (_ac_token,)
+                    )
+                _ac_con.commit()
+                print(f"[WA_AUTO_CONNECT_SUCCESS] client={_target_cid} number={_sender_digits!r}")
+
+            finally:
+                _ac_con.close()
+
+            # Confirmation message to the client
+            _confirm_msg = "✅ تم ربط واتساب بنجاح! يمكنك الآن استخدام البوت."
+            wa_reply(sender, _confirm_msg)
+            return "", 200
+
         # ── TRIAL CHECK ────────────────────────────────────────────────────
         if expire_trial_if_needed(CLIENT_ID):
             _trial_msg = (
@@ -4378,20 +4471,20 @@ def admin_connect_whatsapp():
     guard = _admin_guard()
     if guard:
         return guard
-    cid  = _session_client_id()
+    cid    = _session_client_id()
     client = get_client(cid)
     _lang  = client.get("default_language") or "en"
 
     if request.method == "POST":
-        action = request.form.get("action", "connect")
-
+        action = request.form.get("action", "")
         if action == "disconnect":
             con = get_db_connection()
             try:
                 con.execute("""
                     UPDATE clients
                     SET whatsapp_connected=0,
-                        whatsapp_connection_status='not_connected'
+                        whatsapp_connection_status='not_connected',
+                        business_whatsapp_number=NULL
                     WHERE id=?
                 """, (cid,))
                 con.commit()
@@ -4399,45 +4492,44 @@ def admin_connect_whatsapp():
                 con.close()
             print(f"[WHATSAPP_CONNECT_REQUEST] client={cid} action=disconnect")
             flash(t("wa_disconnect_msg", _lang), "success")
-            return redirect(url_for("admin_connect_whatsapp"))
-
-        # action == "connect" — save number, mark pending
-        number = request.form.get("business_whatsapp_number", "").strip()
-
-        # Basic validation: must have at least 7 digits
-        import re as _re
-        digits = _re.sub(r'\D', '', number)
-        if len(digits) < 7:
-            flash(t("wa_error_number", _lang), "error")
-            return redirect(url_for("admin_connect_whatsapp"))
-
-        con = get_db_connection()
-        try:
-            con.execute("""
-                UPDATE clients
-                SET business_whatsapp_number=?,
-                    whatsapp_connection_status='pending',
-                    whatsapp_provider='ultramsg'
-                WHERE id=?
-            """, (number, cid))
-            con.commit()
-        finally:
-            con.close()
-
-        print("[WHATSAPP_CONNECT_REQUEST_CREATED]")
-        print(f"[CONNECT_REQUEST] client_id={cid}")
-        print(f"[CONNECT_REQUEST] number={number}")
-
-        # Notify platform admin — failure must NEVER break this request
-        try:
-            notify_platform_admin_connect_request(cid, number)
-        except Exception as _notify_exc:
-            print(f"[CONNECT_REQUEST_NOTIFY_FAILED] outer guard caught: {repr(_notify_exc)}")
-
-        flash(t("wa_success_msg", _lang), "success")
         return redirect(url_for("admin_connect_whatsapp"))
 
-    return render_template("admin/connect_whatsapp.html", client=client, active="whatsapp")
+    # ── GET: generate a one-time connect token valid for 15 minutes ──────────
+    _bot_raw  = os.getenv("WA_BOT_NUMBER", WA_BOT_NUMBER).strip()
+    _now      = datetime.datetime.utcnow()
+    _expires  = _now + datetime.timedelta(minutes=15)
+    _token    = _secrets.token_hex(4)           # e.g. "a3f91c2b" — 8 chars
+
+    con = get_db_connection()
+    try:
+        # Expire any old unused tokens for this client
+        con.execute("""
+            UPDATE wa_connect_tokens SET used=1
+            WHERE client_id=? AND used=0 AND expires_at < ?
+        """, (cid, _now.isoformat()))
+        con.execute("""
+            INSERT INTO wa_connect_tokens (token, client_id, created_at, expires_at, used)
+            VALUES (?, ?, ?, ?, 0)
+        """, (_token, cid, _now.isoformat(), _expires.isoformat()))
+        con.commit()
+    finally:
+        con.close()
+
+    print(f"[WA_AUTO_CONNECT_START] client={cid} token={_token!r} bot={_bot_raw!r}")
+
+    _wa_deeplink = ""
+    if _bot_raw:
+        import re as _re
+        _bot_digits = _re.sub(r'\D', '', _bot_raw)
+        _wa_deeplink = f"https://wa.me/{_bot_digits}?text=START_{_token}"
+
+    return render_template(
+        "admin/connect_whatsapp.html",
+        client=client,
+        active="whatsapp",
+        wa_deeplink=_wa_deeplink,
+        bot_configured=bool(_bot_raw),
+    )
 
 
 # ── /admin/whatsapp-requests  (platform owner: client_id == 1 only) ───────────

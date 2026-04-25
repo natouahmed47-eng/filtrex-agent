@@ -300,72 +300,94 @@
     </form>
   </div>
 
-  <!-- ═══ PENDING: show info + allow update ════════════════════════════════ -->
+  <!-- ═══ PENDING: waiting for START message ══════════════════════════════ -->
   {% elif status == "pending" %}
   <div class="wa-card">
     <div class="wa-pending-box">
-      <span class="wa-pending-icon">💬</span>
-      <div>{{ t("wa_pending_box", lang) }}</div>
+      <span class="wa-pending-icon">⏳</span>
+      <div>
+        <strong>{{ t("wa_status_pending", lang) }}</strong><br>
+        {{ t("wa_status_pending_sub", lang) }}
+      </div>
     </div>
 
-    {% if client.business_whatsapp_number %}
-      <div class="wa-number-label">{{ t("wa_settings_number", lang) }}</div>
-      <div class="wa-number-display">
-        <span class="wa-num-icon">📱</span>
-        <span class="wa-num-val">{{ client.business_whatsapp_number }}</span>
-      </div>
+    {% if wa_deeplink %}
+    <p style="font-size:13px;color:#64748b;margin-bottom:16px;">
+      لم تصلك الرسالة؟ انقر مجدداً لفتح واتساب وأرسل الرسالة.
+    </p>
+    <div class="wa-btn-row">
+      <a href="{{ wa_deeplink }}" target="_blank" class="btn-wa-primary">
+        🔗 فتح واتساب مجدداً
+      </a>
+    </div>
+    {% else %}
+    <p style="font-size:13px;color:#94a3b8;margin-top:8px;">
+      ارجع لهذه الصفحة بعد إرسال START عبر واتساب.
+    </p>
     {% endif %}
 
-    <div class="wa-card-title" style="margin-bottom:14px;">{{ t("wa_form_title", lang) }}</div>
-    <form method="POST">
-      <input type="hidden" name="action" value="connect">
-      <div class="wa-field">
-        <label>{{ t("wa_form_label", lang) }}</label>
-        <div class="wa-input-wrap">
-          <span class="wa-input-prefix">📱</span>
-          <input type="tel" name="business_whatsapp_number"
-                 placeholder="{{ t('wa_form_placeholder', lang) }}"
-                 value="{{ client.business_whatsapp_number or '' }}"
-                 autocomplete="tel">
-        </div>
-        <div class="wa-hint">{{ t("wa_form_hint", lang) }}</div>
-      </div>
-      <div class="wa-btn-row">
-        <button type="submit" class="btn-wa-primary">
-          <span>✅</span> {{ t("wa_btn_update", lang) }}
+    <div style="margin-top:20px;">
+      <form method="POST"
+            onsubmit="return confirm('{{ t('wa_disconnect_confirm', lang) }}')">
+        <input type="hidden" name="action" value="disconnect">
+        <button type="submit" class="btn-wa-ghost" style="font-size:12px;">
+          🔄 إعادة البدء
         </button>
-        <form method="POST" style="display:contents"
-              onsubmit="return confirm('{{ t('wa_disconnect_confirm', lang) }}')">
-          <input type="hidden" name="action" value="disconnect">
-          <button type="submit" class="btn-wa-ghost">{{ t("wa_btn_disconnect", lang) }}</button>
-        </form>
-      </div>
-    </form>
+      </form>
+    </div>
   </div>
 
-  <!-- ═══ NOT CONNECTED / FAILED: show connect form ════════════════════════ -->
+  <!-- ═══ NOT CONNECTED / FAILED: deep link button ═════════════════════════ -->
   {% else %}
   <div class="wa-card">
-    <div class="wa-card-title">{{ t("wa_form_title", lang) }}</div>
-    <form method="POST">
-      <input type="hidden" name="action" value="connect">
-      <div class="wa-field">
-        <label>{{ t("wa_form_label", lang) }}</label>
-        <div class="wa-input-wrap">
-          <span class="wa-input-prefix">📱</span>
-          <input type="tel" name="business_whatsapp_number"
-                 placeholder="{{ t('wa_form_placeholder', lang) }}"
-                 value="{{ client.business_whatsapp_number or '' }}"
-                 autocomplete="tel" required>
-        </div>
-        <div class="wa-hint">{{ t("wa_form_hint", lang) }}</div>
-      </div>
-      <div class="wa-btn-row">
-        <button type="submit" class="btn-wa-primary">
-          <span>📲</span> {{ t("wa_btn_connect", lang) }}
-        </button>
-      </div>
-    </form>
+    <div class="wa-card-title">🔗 ربط واتساب تلقائياً</div>
+
+    <p style="font-size:14px;color:#64748b;line-height:1.7;margin-bottom:20px;">
+      انقر على الزر أدناه لفتح واتساب. سيتم إرسال رسالة تلقائية منك إلى الروبوت، وسيتم ربط حسابك فوراً.
+    </p>
+
+    {% if wa_deeplink %}
+    <div class="wa-btn-row">
+      <a href="{{ wa_deeplink }}" target="_blank" class="btn-wa-primary"
+         id="wa-connect-btn"
+         style="text-decoration:none;"
+         onclick="startPolling()">
+        🔗 ربط واتساب
+      </a>
+    </div>
+    <p class="wa-hint" style="margin-top:12px;">
+      بعد الضغط، ستُفتح واتساب بشكل تلقائي مع الرسالة جاهزة — فقط اضغط "إرسال".
+    </p>
+    <p id="wa-poll-status" style="display:none;font-size:12px;color:#6366f1;margin-top:10px;">
+      ⏳ في انتظار التأكيد... سيتم تحديث الصفحة تلقائياً.
+    </p>
+    <script>
+      function startPolling() {
+        document.getElementById('wa-poll-status').style.display = 'block';
+        var checks = 0;
+        var timer = setInterval(function() {
+          checks++;
+          fetch(window.location.pathname + '?_check=1')
+            .then(function(r) { return r.text(); })
+            .then(function(html) {
+              if (html.indexOf('wa-status-banner connected') !== -1 ||
+                  html.indexOf('badge-connected') !== -1 ||
+                  html.indexOf('تم ربط واتساب') !== -1) {
+                clearInterval(timer);
+                window.location.reload();
+              }
+            }).catch(function(){});
+          if (checks >= 24) clearInterval(timer); // stop after 2 min
+        }, 5000);
+      }
+    </script>
+    {% else %}
+    <div style="background:#fef9c3;border:1px solid #fde047;border-radius:10px;
+                padding:14px 18px;font-size:13px;color:#713f12;">
+      ⚠️ لم يتم تفعيل خاصية الربط التلقائي بعد.
+      تواصل مع مزود الخدمة لإكمال الإعداد.
+    </div>
+    {% endif %}
   </div>
   {% endif %}
 
