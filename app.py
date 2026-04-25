@@ -163,6 +163,13 @@ TRANSLATIONS = {
         "invite_referred_suffix": "client(s) so far.",
         "referrals_label":        "referral(s)",
         "more_to_reward":         "more to reward",
+        "affiliate_title":        "Affiliate Earnings",
+        "affiliate_desc":         "Share your affiliate link. Earn {rate}% commission on every paid subscription.",
+        "affiliate_earned":       "Total Earned",
+        "affiliate_referrals":    "Paid Referrals",
+        "affiliate_copy":         "Copy Link",
+        "affiliate_copied":       "Copied!",
+        "affiliate_no_earnings":  "No earnings yet — share your link to start earning.",
         "copy":                   "Copy",
         "copied":                 "Copied!",
         "recent_orders":          "Recent Orders",
@@ -264,6 +271,13 @@ TRANSLATIONS = {
         "invite_referred_suffix": "عميل حتى الآن.",
         "referrals_label":        "دعوة",
         "more_to_reward":         "دعوة أخرى للمكافأة",
+        "affiliate_title":        "أرباح الشركاء",
+        "affiliate_desc":         "شارك رابطك واكسب {rate}٪ عمولة على كل اشتراك مدفوع.",
+        "affiliate_earned":       "إجمالي الأرباح",
+        "affiliate_referrals":    "إحالات مدفوعة",
+        "affiliate_copy":         "نسخ الرابط",
+        "affiliate_copied":       "تم النسخ!",
+        "affiliate_no_earnings":  "لا أرباح بعد — شارك رابطك للبدء.",
         "copy":                   "نسخ",
         "copied":                 "تم النسخ!",
         "recent_orders":          "الطلبات الأخيرة",
@@ -663,6 +677,21 @@ def _migrate_saas():
             con.commit()
             print("[SAAS] migrated clients → added whatsapp_provider")
 
+        # ── Affiliate columns (clients) ───────────────────────────────────────
+        if "affiliate_code" not in _cli_cols:
+            con.execute("ALTER TABLE clients ADD COLUMN affiliate_enabled  INTEGER DEFAULT 1")
+            con.execute("ALTER TABLE clients ADD COLUMN affiliate_code     TEXT")
+            con.execute("ALTER TABLE clients ADD COLUMN affiliate_earnings REAL    DEFAULT 0.0")
+            con.execute("ALTER TABLE clients ADD COLUMN affiliate_rate     REAL    DEFAULT 0.20")
+            con.commit()
+            _no_aff = con.execute("SELECT id FROM clients WHERE affiliate_code IS NULL").fetchall()
+            for _r in _no_aff:
+                con.execute("UPDATE clients SET affiliate_code=? WHERE id=?",
+                            (f"AFF{_r['id']}", _r["id"]))
+            if _no_aff:
+                con.commit()
+            print(f"[AFFILIATE_CREATED] migrated clients → affiliate columns, generated {len(_no_aff)} code(s)")
+
         # ── Trial columns ─────────────────────────────────────────────────────
         if "is_trial" not in _cli_cols:
             con.execute("ALTER TABLE clients ADD COLUMN is_trial          INTEGER DEFAULT 0")
@@ -673,6 +702,10 @@ def _migrate_saas():
 
         # users: add email + client_id columns for multi-tenant auth
         _usr_cols = [r[1] for r in con.execute("PRAGMA table_info(users)").fetchall()]
+        if "affiliate_id" not in _usr_cols:
+            con.execute("ALTER TABLE users ADD COLUMN affiliate_id INTEGER")
+            con.commit()
+            print("[AFFILIATE] migrated users → added affiliate_id")
         if "email" not in _usr_cols:
             con.execute("ALTER TABLE users ADD COLUMN email TEXT")
             con.commit()
@@ -1285,6 +1318,11 @@ def generate_referral_code(client_id):
     return f"REF{client_id}{digits}"
 
 
+def generate_affiliate_code(client_id):
+    """Generate a deterministic affiliate code for a client."""
+    return f"AFF{client_id}"
+
+
 _APP_DEFAULT_BRAND = {
     "brand_name":          "Filtrex AI",
     "logo_url":            None,
@@ -1422,6 +1460,51 @@ def _save_integration(client_id, provider, config):
     finally:
         con.close()
     print(f"[INTEGRATION_TRIGGER] client={client_id} provider={provider!r} saved")
+
+
+PLAN_PRICES = {
+    "starter":  9.0,
+    "pro":     29.0,
+    "business": 79.0,
+    "free":     0.0,
+}
+
+
+def _apply_affiliate_commission(affiliate_client_id, plan_name):
+    """
+    Credit commission to an affiliate when a referred user's subscription activates.
+    commission = plan_price * affiliate_rate (default 20%)
+    Logs [AFFILIATE_COMMISSION].
+    """
+    con = get_db_connection()
+    try:
+        aff = con.execute(
+            "SELECT affiliate_enabled, affiliate_rate FROM clients WHERE id=?",
+            (affiliate_client_id,)
+        ).fetchone()
+        if not aff or not aff["affiliate_enabled"]:
+            return
+
+        plan_price = PLAN_PRICES.get(plan_name, 0.0)
+        if plan_price <= 0:
+            return
+
+        rate       = float(aff["affiliate_rate"] or 0.20)
+        commission = round(plan_price * rate, 2)
+
+        con.execute("""
+            UPDATE clients
+            SET    affiliate_earnings = affiliate_earnings + ?
+            WHERE  id = ?
+        """, (commission, affiliate_client_id))
+        con.commit()
+        print(
+            f"[AFFILIATE_COMMISSION] affiliate={affiliate_client_id} "
+            f"plan={plan_name!r} price=${plan_price} rate={rate:.0%} "
+            f"commission=${commission}"
+        )
+    finally:
+        con.close()
 
 
 def _apply_referral_reward(referrer_id, new_count):
@@ -3777,11 +3860,29 @@ def admin_dashboard():
                  catalog_count=catalog_count, active_convos=active_convos)
     # ── Trial status (expire if needed, then compute display state) ────────
     expire_trial_if_needed(cid)
-    trial_info = get_trial_status(get_client(cid))
+    _fresh_client = get_client(cid)
+    trial_info    = get_trial_status(_fresh_client)
+    # ── Affiliate stats ────────────────────────────────────────────────────
+    _aff_con = get_db_connection()
+    try:
+        _aff_count = _aff_con.execute(
+            "SELECT COUNT(*) FROM users WHERE affiliate_id=?", (cid,)
+        ).fetchone()[0]
+    finally:
+        _aff_con.close()
+    affiliate_link = f"{request.host_url.rstrip('/')}signup?aff={_fresh_client.get('affiliate_code', '')}"
+    affiliate_info = {
+        "enabled":  _fresh_client.get("affiliate_enabled", 1),
+        "code":     _fresh_client.get("affiliate_code", ""),
+        "earnings": _fresh_client.get("affiliate_earnings") or 0.0,
+        "count":    _aff_count,
+        "rate":     int((_fresh_client.get("affiliate_rate") or 0.20) * 100),
+        "link":     affiliate_link,
+    }
     return render_template("admin/dashboard.html", client=client, stats=stats,
                            recent_orders=recent_orders, sub=sub,
                            referral_link=referral_link, active="dashboard",
-                           trial_info=trial_info)
+                           trial_info=trial_info, affiliate_info=affiliate_info)
 
 # ── /admin/onboarding ─────────────────────────────────────────────────────────
 @app.route("/admin/onboarding", methods=["GET", "POST"])
@@ -4346,6 +4447,14 @@ def paypal_webhook():
 
                 # 2. Sync client_subscriptions (sets started_at = activated_at)
                 upgrade_client_plan(client_id, plan_name, subscription_id)
+
+                # 3. Affiliate commission
+                _aff_row = con.execute(
+                    "SELECT affiliate_id FROM users WHERE client_id=? LIMIT 1",
+                    (client_id,)
+                ).fetchone()
+                if _aff_row and _aff_row["affiliate_id"]:
+                    _apply_affiliate_commission(_aff_row["affiliate_id"], plan_name)
 
                 print(f"[PAYPAL_SUB_ACTIVATED] client={client_id} "
                       f"plan={plan_name!r} sub={subscription_id!r} → active")
@@ -5307,6 +5416,13 @@ def signup():
                         "UPDATE clients SET referral_code=? WHERE id=?",
                         (new_ref_code, new_client_id)
                     )
+                    # ── Generate affiliate code ───────────────────────────
+                    new_aff_code = generate_affiliate_code(new_client_id)
+                    con.execute(
+                        "UPDATE clients SET affiliate_code=? WHERE id=?",
+                        (new_aff_code, new_client_id)
+                    )
+                    print(f"[AFFILIATE_CREATED] client={new_client_id} affiliate_code={new_aff_code!r}")
                     # ── Start 3-day free trial ────────────────────────────
                     _t_now = datetime.datetime.now()
                     _t_end = _t_now + datetime.timedelta(days=3)
@@ -5330,6 +5446,25 @@ def signup():
                     new_user_id = cur_u.lastrowid
                     con.commit()
                     print(f"[AUTH_SIGNUP] user_id={new_user_id} client_id={new_client_id} email={email!r} referral_code={new_ref_code!r}")
+
+                    # ── Affiliate tracking ────────────────────────────────
+                    aff_code = (request.form.get("aff_code") or "").strip().upper()
+                    if aff_code:
+                        aff_client = con.execute(
+                            "SELECT id FROM clients WHERE affiliate_code=?", (aff_code,)
+                        ).fetchone()
+                        if aff_client and aff_client["id"] != new_client_id:
+                            con.execute(
+                                "UPDATE users SET affiliate_id=? WHERE id=?",
+                                (aff_client["id"], new_user_id)
+                            )
+                            con.commit()
+                            print(f"[AFFILIATE_REFERRAL] new_client={new_client_id} "
+                                  f"user={new_user_id} affiliate_client={aff_client['id']} "
+                                  f"code={aff_code!r}")
+                        else:
+                            print(f"[AFFILIATE_REFERRAL] aff_code={aff_code!r} "
+                                  f"not found or self-referral — ignored")
 
                     # ── Referral tracking ─────────────────────────────────
                     if ref_code:

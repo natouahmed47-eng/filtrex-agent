@@ -112,8 +112,16 @@
     </div>
     {% endif %}
 
+    {% if request.args.get('aff') %}
+    <div style="background:#ede9fe;border-radius:8px;padding:10px 14px;
+                font-size:13px;color:#4f46e5;margin-bottom:16px;">
+      💼 Affiliate link detected — you'll be linked to your partner account.
+    </div>
+    {% endif %}
+
     <form method="POST">
       <input type="hidden" name="ref_code" value="{{ request.args.get('ref', '') }}">
+      <input type="hidden" name="aff_code" value="{{ request.args.get('aff', '') }}">
 
       <label for="business_name">Business Name</label>
       <input type="text" id="business_name" name="business_name"
