@@ -40,24 +40,50 @@ def ultramsg_send(to, text):
     return resp
 
 
-def _notify_admin_whatsapp_connect(client_name, number):
-    """Send a WhatsApp alert to PLATFORM_ADMIN_WHATSAPP when a client submits a connection request.
-    Failures are silently logged — they never break the caller."""
-    if not PLATFORM_ADMIN_WHATSAPP:
-        print("[WHATSAPP_ADMIN_NOTIFIED] PLATFORM_ADMIN_WHATSAPP not configured — skipping alert")
-        return
+def notify_platform_admin_connect_request(client_id, phone):
+    """Notify the platform admin when a client submits a WhatsApp connection request.
+    Reads PLATFORM_ADMIN_WHATSAPP fresh from env each call (picks up Secrets added after startup).
+    Never raises — all failures are logged so the client request is never broken."""
+    print("[ADMIN_CONNECT_NOTIFY] START")
+
+    admin_number = os.getenv("PLATFORM_ADMIN_WHATSAPP", "").strip()
+    print(f"[ADMIN_CONNECT_NOTIFY] admin_number={admin_number!r}")
+
+    if not admin_number:
+        print("[ADMIN_CONNECT_NOTIFY] SKIPPED — PLATFORM_ADMIN_WHATSAPP not set")
+        return False
+
+    # get_client and normalize_number are defined later in the file but resolved at call time
+    try:
+        client      = get_client(client_id)
+        client_name = client.get("name") or f"Client #{client_id}"
+    except Exception as _ce:
+        client_name = f"Client #{client_id}"
+        print(f"[ADMIN_CONNECT_NOTIFY] could not fetch client name: {repr(_ce)}")
+
     msg = (
         "🔔 طلب ربط واتساب جديد\n\n"
         f"العميل: {client_name}\n"
-        f"الرقم: {number}\n"
+        f"الرقم: {phone}\n"
         "الحالة: pending\n\n"
-        "اذهب إلى لوحة التحكم لإكمال الربط."
+        "ادخل للوحة التحكم لإكمال الربط."
     )
+    print(f"[ADMIN_CONNECT_NOTIFY] message={msg!r}")
+
     try:
-        ultramsg_send(PLATFORM_ADMIN_WHATSAPP, msg)
-        print(f"[WHATSAPP_ADMIN_NOTIFIED] alert sent to platform admin for client={client_name!r}")
+        to   = normalize_number(admin_number)
+        resp = ultramsg_send(to, msg)
+        status = resp.status_code if resp else "N/A"
+        body   = resp.text        if resp else ""
+        print(f"[ADMIN_CONNECT_NOTIFY] resp={status} body={body!r}")
+        if resp and resp.status_code == 200:
+            print("[WHATSAPP_ADMIN_NOTIFIED] alert delivered successfully")
+            return True
+        print("[ADMIN_CONNECT_NOTIFY] delivery uncertain — check UltraMsg logs above")
+        return False
     except Exception as _exc:
-        print(f"[CONNECT_REQUEST_NOTIFY_FAILED] could not send admin alert: {repr(_exc)}")
+        print(f"[ADMIN_CONNECT_NOTIFY_ERROR] {repr(_exc)}")
+        return False
 
 
 app = Flask(__name__)
@@ -4398,12 +4424,13 @@ def admin_connect_whatsapp():
         finally:
             con.close()
 
-        client_name = client.get("name") or f"client#{cid}"
-        print(f"[WHATSAPP_CONNECT_REQUEST_CREATED] client={cid} name={client_name!r} number={number!r} → pending")
+        print("[WHATSAPP_CONNECT_REQUEST_CREATED]")
+        print(f"[CONNECT_REQUEST] client_id={cid}")
+        print(f"[CONNECT_REQUEST] number={number}")
 
         # Notify platform admin — failure must NEVER break this request
         try:
-            _notify_admin_whatsapp_connect(client_name, number)
+            notify_platform_admin_connect_request(cid, number)
         except Exception as _notify_exc:
             print(f"[CONNECT_REQUEST_NOTIFY_FAILED] outer guard caught: {repr(_notify_exc)}")
 
