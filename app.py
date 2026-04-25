@@ -157,7 +157,7 @@ TRANSLATIONS = {
         "wa_connected":           "Connected",
         "wa_disconnected":        "Not Connected",
         "invite_earn":            "Invite & Earn",
-        "invite_desc":            "Invite colleagues and earn +500 bonus messages for every 3 referrals.",
+        "invite_desc":            "Invite colleagues and earn +1000 bonus messages for every 3 referrals.",
         "invite_share_link":      "Share your link to get started.",
         "invite_referred":        "You've referred",
         "invite_referred_suffix": "client(s) so far.",
@@ -258,7 +258,7 @@ TRANSLATIONS = {
         "wa_connected":           "متصل",
         "wa_disconnected":        "غير متصل",
         "invite_earn":            "ادع واربح",
-        "invite_desc":            "ادع زملاءك واحصل على +500 رسالة مجانية لكل 3 دعوات.",
+        "invite_desc":            "ادع زملاءك واحصل على +1000 رسالة مجانية لكل 3 دعوات.",
         "invite_share_link":      "شارك رابطك للبدء.",
         "invite_referred":        "لقد دعوت",
         "invite_referred_suffix": "عميل حتى الآن.",
@@ -1426,21 +1426,21 @@ def _save_integration(client_id, provider, config):
 
 def _apply_referral_reward(referrer_id, new_count):
     """
-    Grant 500 bonus messages for every 3 successful referrals.
-    Logs [REFERRAL_REWARD].
+    Grant 1 000 bonus messages for every 3 successful referrals.
+    Logs [REFERRAL_REWARD_GRANTED].
     """
     if new_count > 0 and new_count % 3 == 0:
         con = get_db_connection()
         try:
             con.execute("""
                 UPDATE client_subscriptions
-                SET    bonus_messages = bonus_messages + 500
+                SET    bonus_messages = bonus_messages + 1000
                 WHERE  client_id = ? AND status = 'active'
             """, (referrer_id,))
             con.commit()
         finally:
             con.close()
-        print(f"[REFERRAL_REWARD] client={referrer_id} referral_count={new_count} → +500 bonus messages")
+        print(f"[REFERRAL_REWARD_GRANTED] client={referrer_id} referral_count={new_count} → +1000 bonus messages")
 
 
 def _check_activation(client_id):
