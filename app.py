@@ -573,6 +573,9 @@ def _migrate_whatsapp_state():
         if "completed" not in cols:
             con.execute("ALTER TABLE whatsapp_state ADD COLUMN completed INTEGER DEFAULT 0")
             print("[DB] migration: added completed")
+        if "msg_intent" not in cols:
+            con.execute("ALTER TABLE whatsapp_state ADD COLUMN msg_intent TEXT DEFAULT ''")
+            print("[DB] migration: added msg_intent")
         con.commit()
     finally:
         con.close()
@@ -807,6 +810,14 @@ def _migrate_saas():
             con.execute("ALTER TABLE clients ADD COLUMN trial_ends_at     TEXT")
             con.commit()
             print("[TRIAL] migrated clients → added is_trial, trial_started_at, trial_ends_at")
+
+        # ── orders: add intent + customer_phone columns ───────────────────────
+        _ord_cols = [r[1] for r in con.execute("PRAGMA table_info(orders)").fetchall()]
+        if "intent" not in _ord_cols:
+            con.execute("ALTER TABLE orders ADD COLUMN intent          TEXT DEFAULT 'unknown'")
+            con.execute("ALTER TABLE orders ADD COLUMN customer_phone  TEXT DEFAULT ''")
+            con.commit()
+            print("[INTENT] migrated orders → added intent, customer_phone")
 
         # ── AI Brain columns ──────────────────────────────────────────────────
         if "assistant_tone" not in _cli_cols:
@@ -1934,6 +1945,7 @@ def wa_load(phone):
             "upsell_offered":         bool(row["upsell_offered"]),
             "upsell_rejected":        bool(row["upsell_rejected"]),
             "completed":              bool(row["completed"]),
+            "msg_intent":             row["msg_intent"] or "",
         }
     else:
         state = {
@@ -1941,7 +1953,7 @@ def wa_load(phone):
             "known_day": None, "known_time": None, "known_name": None,
             "current_step": "service", "lang": "",
             "upsell_offered": False, "upsell_rejected": False,
-            "completed": False,
+            "completed": False, "msg_intent": "",
         }
     # ── Load known_catalog_ids_json from conversations table ──────────────
     con2 = get_db_connection()
@@ -1966,8 +1978,8 @@ def wa_save(phone, state):
             _svc_to_save = json.dumps(_svc_to_save, ensure_ascii=False) if _svc_to_save else None
         # ── whatsapp_state ────────────────────────────────────────────────
         con.execute(
-            """INSERT INTO whatsapp_state (phone, known_service, known_day, known_time, known_name, current_step, lang, upsell_offered, upsell_rejected, completed)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """INSERT INTO whatsapp_state (phone, known_service, known_day, known_time, known_name, current_step, lang, upsell_offered, upsell_rejected, completed, msg_intent)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(phone) DO UPDATE SET
                    known_service   = excluded.known_service,
                    known_day       = excluded.known_day,
@@ -1977,7 +1989,8 @@ def wa_save(phone, state):
                    lang            = CASE WHEN excluded.lang != '' THEN excluded.lang ELSE whatsapp_state.lang END,
                    upsell_offered  = excluded.upsell_offered,
                    upsell_rejected = excluded.upsell_rejected,
-                   completed       = excluded.completed""",
+                   completed       = excluded.completed,
+                   msg_intent      = CASE WHEN excluded.msg_intent != '' THEN excluded.msg_intent ELSE whatsapp_state.msg_intent END""",
             (phone,
              _svc_to_save,
              state.get("known_day"),
@@ -1987,7 +2000,8 @@ def wa_save(phone, state):
              state.get("lang", ""),
              1 if state.get("upsell_offered") else 0,
              1 if state.get("upsell_rejected") else 0,
-             1 if state.get("completed") else 0)
+             1 if state.get("completed") else 0,
+             state.get("msg_intent") or "")
         )
         # ── conversations (spec table) ────────────────────────────────────
         _cat_ids_json = state.get("known_catalog_ids_json", "[]")
@@ -2635,19 +2649,19 @@ def extract_entities(msg):
     return service, day, time
 
 _PARSE_SYSTEM_PROMPT = (
-    "You are a dental clinic booking parser. "
+    "You are a universal business assistant message parser. "
     "Parse the user message and return ONLY a valid JSON object with exactly these keys:\n"
     "  intent        — one of: book_service | add_service | cancel | query | affirm | reject | other\n"
-    "  service       — one of: teeth_cleaning | teeth_whitening | dental_checkup | null\n"
-    "  add_on_service— one of: teeth_cleaning | teeth_whitening | dental_checkup | null\n"
+    "  service       — the service/product the user wants (exact text from message) or null\n"
+    "  add_on_service— an additional service mentioned with add-intent words (أضيف/add/ajoute) or null\n"
     "  day           — one of: today | tomorrow | null\n"
     "  time          — 24-hour string HH:MM or null\n"
     "  name          — person name string (1-2 words) or null\n"
     "  affirmation   — true if message means yes/ok/confirm, else false\n"
     "  rejection     — true if message means no/refuse, else false\n\n"
     "Rules:\n"
-    "- service = main service the user wants to book\n"
-    "- add_on_service = service mentioned with add-intent words (أضيف/add/ajoute); if set, service=null\n"
+    "- service = the main product or service the user wants to book or order\n"
+    "- add_on_service = extra service mentioned with add-intent words; if set, service=null\n"
     "- day: اليوم/today/aujourd'hui → today; غدا/غداً/tomorrow/demain → tomorrow\n"
     "- time: normalize to 24-hour HH:MM; 'الساعة 5' or '5 مساء' → '17:00' (assume PM for 1-9)\n"
     "- name: only a person's first name, never a service or sentence\n"
@@ -2694,6 +2708,77 @@ def parse_user_message(msg, lang="ar"):
     except Exception as _pe:
         print(f"[PARSE] failed={repr(_pe)} — falling back to regex")
         return _empty
+
+
+# ── Intent Detection ──────────────────────────────────────────────────────────
+_INTENT_LABELS = {"book_appointment", "place_order", "ask_price", "ask_info", "greeting"}
+
+def detect_message_intent(msg, lang="ar"):
+    """Single-call AI intent classifier.
+    Returns one of: book_appointment | place_order | ask_price | ask_info | greeting
+    Falls back to 'ask_info' on any error.
+    """
+    prompt = (
+        "حدد نية هذه الرسالة فقط بكلمة واحدة من القائمة التالية:\n"
+        "book_appointment\n"
+        "place_order\n"
+        "ask_price\n"
+        "ask_info\n"
+        "greeting\n\n"
+        f"الرسالة:\n{msg}"
+    )
+    try:
+        resp = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0,
+                "max_tokens": 10,
+            },
+            timeout=8,
+        )
+        if resp.status_code == 200:
+            intent = resp.json()["choices"][0]["message"]["content"].strip().lower()
+            # Keep only the first word in case the model adds extra text
+            intent = intent.split()[0] if intent else "ask_info"
+            if intent not in _INTENT_LABELS:
+                intent = "ask_info"
+            print(f"[INTENT_DETECTED] intent={intent!r} msg={msg[:60]!r}")
+            return intent
+    except Exception as _ie:
+        print(f"[INTENT_DETECT_ERROR] {_ie}")
+    return "ask_info"
+
+
+def create_intent_order(client_id, phone, intent, service=None):
+    """Create a row in the orders table to track an intent-driven conversation.
+    Returns the new order id.
+    """
+    con = get_db_connection()
+    try:
+        cur = con.execute("""
+            INSERT INTO orders (client_id, customer_phone, intent, name, items, status, created_at)
+            VALUES (?, ?, ?, ?, ?, 'pending', ?)
+        """, (
+            client_id,
+            normalize_number(phone),
+            intent,
+            "",
+            service or "",
+            datetime.datetime.utcnow().isoformat(),
+        ))
+        con.commit()
+        order_id = cur.lastrowid
+        print(f"[ORDER_CREATED] order_id={order_id} client={client_id} phone={phone!r} intent={intent!r}")
+        return order_id
+    finally:
+        con.close()
+
 
 _FULL_INTENT_PROMPT = (
     "You are a booking intent extractor for any business type.\n"
@@ -3731,10 +3816,61 @@ def whatsapp():
             print(f"[NOISE] ignored mid-booking greeting at step={_step_early!r}")
             return "", 200
 
-        # ── STEP 11: CATALOG MATCH → known_catalog_ids_json ───────────────
-        # Run this before the LLM parse so IDs are always up-to-date
+        # ── INTENT DETECTION — only on fresh conversation start ───────────────
         _early_lang = state.get("lang") or detect_lang(incoming_msg) or "ar"
-        _cat_match  = find_catalog_match(CLIENT_ID, incoming_msg, lang=_early_lang)
+        if _step_early == "service" and not state.get("msg_intent"):
+            _msg_intent = detect_message_intent(incoming_msg, lang=_early_lang)
+            state["msg_intent"] = _msg_intent
+
+            _greeting_map = {
+                "ar": f"أهلاً! كيف يمكنني مساعدتك اليوم؟",
+                "en": "Hello! How can I help you today?",
+                "fr": "Bonjour! Comment puis-je vous aider aujourd'hui?",
+                "es": "¡Hola! ¿Cómo puedo ayudarte hoy?",
+                "it": "Ciao! Come posso aiutarti oggi?",
+            }
+
+            wa_save(sender, state)   # persist msg_intent before any early return
+
+            if _msg_intent == "greeting":
+                print(f"[INTENT_FLOW] greeting → send welcome")
+                _wc = (_wh_client or {}).get("default_language") or _early_lang
+                return wa_reply(sender, _greeting_map.get(_wc, _greeting_map["ar"]))
+
+            elif _msg_intent == "ask_price":
+                print(f"[INTENT_FLOW] ask_price → fetch catalog")
+                _price_con = get_db_connection()
+                try:
+                    _price_rows = _price_con.execute("""
+                        SELECT title, price, currency FROM catalogs
+                        WHERE client_id=? AND is_active=1 ORDER BY title
+                    """, (CLIENT_ID,)).fetchall()
+                finally:
+                    _price_con.close()
+                if _price_rows:
+                    _lines = [f"• {r['title']}: {r['price']} {r['currency']}" for r in _price_rows]
+                    _price_hdr = {
+                        "ar": "أسعارنا:", "en": "Our prices:", "fr": "Nos prix:",
+                        "es": "Nuestros precios:", "it": "I nostri prezzi:",
+                    }
+                    _price_msg = _price_hdr.get(_early_lang, _price_hdr["ar"]) + "\n" + "\n".join(_lines)
+                else:
+                    _price_msg = openai_chat(incoming_msg, lang=_early_lang, client_obj=_wh_client)
+                return wa_reply(sender, _price_msg)
+
+            elif _msg_intent == "ask_info":
+                print(f"[INTENT_FLOW] ask_info → AI reply")
+                _info_reply = openai_chat(incoming_msg, lang=_early_lang, client_obj=_wh_client)
+                return wa_reply(sender, _info_reply)
+
+            elif _msg_intent in ("book_appointment", "place_order"):
+                create_intent_order(CLIENT_ID, sender, _msg_intent)
+                print(f"[INTENT_FLOW] {_msg_intent} → continue booking flow")
+                # Fall through into the regular step controller below
+
+        # ── STEP 11: CATALOG MATCH → known_catalog_ids_json ───────────────
+        # _early_lang already set above
+        _cat_match = find_catalog_match(CLIENT_ID, incoming_msg, lang=_early_lang)
         if _cat_match:
             print(f"[CATALOG_MATCH] {_cat_match}")
             _ids = json.loads(state.get("known_catalog_ids_json") or "[]")
@@ -3821,8 +3957,7 @@ def whatsapp():
 
         # ── LLM PARSE ─────────────────────────────────────────────────────
         _parsed = parse_user_message(incoming_msg, lang=state.get("lang") or "ar")
-        _DAY_NORM   = {"today": "اليوم", "tomorrow": "غدا"}
-        _VALID_SVCS = {"teeth_cleaning", "teeth_whitening", "dental_checkup"}
+        _DAY_NORM = {"today": "اليوم", "tomorrow": "غدا"}
         state["known_service"] = ensure_svc_list(state.get("known_service"))
         _changed = False
 
@@ -3834,19 +3969,22 @@ def whatsapp():
         _parsed_affirmation = bool(_parsed.get("affirmation"))
         _parsed_rejection   = bool(_parsed.get("rejection"))
 
-        if _p_svc in _VALID_SVCS:
-            _arabic_svc = _CANONICAL_SERVICE_MAP.get(_p_svc, _p_svc)
+        # Resolve service from catalog (generic — any business type)
+        if _p_svc:
+            _p_svc_match = find_catalog_match(CLIENT_ID, _p_svc, lang=_early_lang)
+            _resolved_svc = _p_svc_match["title"] if _p_svc_match else _CANONICAL_SERVICE_MAP.get(_p_svc, _p_svc)
             if not state["known_service"]:
-                state["known_service"] = [_arabic_svc]
+                state["known_service"] = [_resolved_svc]
                 _changed = True
-                print(f"[STATE_MERGE] set service={_arabic_svc!r}")
+                print(f"[STATE_MERGE] set service={_resolved_svc!r}")
 
-        if _p_addon in _VALID_SVCS:
-            _arabic_addon = _CANONICAL_SERVICE_MAP.get(_p_addon, _p_addon)
-            if _arabic_addon not in state["known_service"]:
-                state["known_service"].append(_arabic_addon)
+        if _p_addon:
+            _p_addon_match = find_catalog_match(CLIENT_ID, _p_addon, lang=_early_lang)
+            _resolved_addon = _p_addon_match["title"] if _p_addon_match else _CANONICAL_SERVICE_MAP.get(_p_addon, _p_addon)
+            if _resolved_addon not in state["known_service"]:
+                state["known_service"].append(_resolved_addon)
                 _changed = True
-                print(f"[STATE_MERGE] appended add_on={_arabic_addon!r}")
+                print(f"[STATE_MERGE] appended add_on={_resolved_addon!r}")
 
         if _p_day in ("today", "tomorrow") and not state.get("known_day"):
             state["known_day"] = _DAY_NORM[_p_day]
