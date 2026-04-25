@@ -342,16 +342,18 @@ function renderPayPalButton(planKey, containerId) {
 
     onApprove: function (data, actions) {
       console.log('[PAYPAL_APPROVED]', planKey, data.subscriptionID);
-      return fetch('/paypal/subscription-success', {
+      return fetch('/api/paypal/subscribe', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          plan:           planKey,
-          subscription_id: data.subscriptionID,
-          subscriptionID:  data.subscriptionID
+          subscriptionID: data.subscriptionID,
+          plan:           planKey
         })
-      }).then(function () {
-        window.location.href = '/admin/billing?success=1';
+      })
+      .then(function (res) { return res.json(); })
+      .then(function (json) {
+        console.log('[PAYPAL_ACTIVATE]', json);
+        window.location.reload();
       });
     },
 

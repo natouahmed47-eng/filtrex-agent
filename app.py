@@ -4277,34 +4277,54 @@ def upgrade_client_plan(client_id, plan_name, subscription_id=None):
 
 @app.route("/paypal/subscription-success", methods=["POST"])
 def paypal_subscription_success():
+    """Legacy route — kept for backwards compatibility. Delegates to the API handler."""
+    return api_paypal_subscribe()
+
+
+@app.route("/api/paypal/subscribe", methods=["POST"])
+def api_paypal_subscribe():
+    """
+    Immediately activate a PayPal subscription for the logged-in client.
+
+    Accepts JSON: { subscriptionID, plan }
+    Saves to DB:  clients (plan, subscription_id, subscription_status='active')
+                  client_subscriptions (plan_id, status='active', paypal_subscription_id)
+    Returns:      { success: true }
+
+    Note: PayPal webhook (BILLING.SUBSCRIPTION.ACTIVATED) will re-verify
+          server-side once PayPal fires it. This route is the optimistic
+          fast-path so the UI updates immediately after checkout.
+    """
     data            = request.get_json() or {}
-    # Accept both camelCase (new JS) and snake_case (legacy) keys
     subscription_id = data.get("subscriptionID") or data.get("subscription_id")
     plan            = data.get("plan", "").strip().lower()
 
     client_id = session.get("client_id")
     if not client_id:
-        return {"ok": False, "error": "not_logged_in"}, 401
+        print("[PAYPAL_SUBSCRIBE] no session → 401")
+        return {"success": False, "error": "not_logged_in"}, 401
 
     if not plan or not subscription_id:
-        return {"ok": False, "error": "missing_fields"}, 400
+        print(f"[PAYPAL_SUBSCRIBE] missing fields — plan={plan!r} sub={subscription_id!r}")
+        return {"success": False, "error": "missing_fields"}, 400
 
-    # Update clients table directly (fast path + simple lookup)
+    # ── 1. Update clients table (plan shortcut + raw subscription_id + status) ──
     con = get_db_connection()
     try:
-        con.execute(
-            "UPDATE clients SET plan=?, subscription_id=? WHERE id=?",
-            (plan, subscription_id, client_id)
-        )
+        con.execute("""
+            UPDATE clients
+            SET    plan=?, subscription_id=?, subscription_status='active'
+            WHERE  id=?
+        """, (plan, subscription_id, client_id))
         con.commit()
     finally:
         con.close()
 
-    # Also activate via client_subscriptions for limits/usage tracking
+    # ── 2. Sync client_subscriptions (limits / usage tracking) ─────────────────
     upgrade_client_plan(client_id, plan, subscription_id)
 
-    print(f"[PAYPAL] Activated plan={plan!r} for client={client_id} sub={subscription_id!r}")
-    return {"ok": True}
+    print(f"[PAYPAL_SUBSCRIBE] client={client_id} plan={plan!r} sub={subscription_id!r} → active")
+    return {"success": True}
 
 
 @app.route("/admin/billing")
