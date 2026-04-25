@@ -2124,6 +2124,22 @@ def normalize_number(raw):
         return str(raw).strip() + "@c.us"
     return digits + "@c.us"
 
+def get_latest_pending_client():
+    """Return the most-recent client that is pending WhatsApp connection with no number yet.
+    Used by the auto-connect webhook when no token is present."""
+    _con = get_db_connection()
+    try:
+        row = _con.execute("""
+            SELECT id, name FROM clients
+            WHERE whatsapp_connection_status='pending'
+              AND (business_whatsapp_number IS NULL OR business_whatsapp_number='')
+            ORDER BY id DESC LIMIT 1
+        """).fetchone()
+        return dict(row) if row else None
+    finally:
+        _con.close()
+
+
 def wa_reply(to, text):
     """Send a message to the CUSTOMER only. Never call this with admin content."""
     raw = to
@@ -3326,6 +3342,121 @@ def extract_booking_fields(message, allowed_services=None):
 @app.route("/build-id")
 def build_id():
     return "BUILD_ID: REPLIT_DEPLOY_TEST_001", 200
+
+@app.route("/webhook/whatsapp", methods=["POST"])
+def whatsapp_webhook():
+    """Dedicated UltraMsg webhook endpoint.
+    Configure in UltraMsg dashboard:
+        https://filtrex-agent-1.replit.app/webhook/whatsapp
+    Handles the START auto-connect flow only; all other chat traffic
+    is forwarded internally to the main whatsapp() handler via the
+    same logic.
+    """
+    import re as _wh_re
+    data = request.get_json(force=True, silent=True) or {}
+    print("[WEBHOOK RECEIVED]", data)
+
+    try:
+        # UltraMsg wraps payload inside a "data" key
+        msg_data     = data.get("data", data)   # tolerate both flat and nested
+        sender       = (msg_data.get("from") or msg_data.get("sender") or "").strip()
+        message      = (msg_data.get("body") or msg_data.get("text")   or "").strip()
+        msg_type     = msg_data.get("type", "chat")
+
+        _from_me_raw = msg_data.get("fromMe", False)
+        from_me      = _from_me_raw in (True, 1, "true", "1", "True")
+
+        print(f"[WEBHOOK] sender={sender!r} msg={message!r} type={msg_type!r} fromMe={from_me!r}")
+
+        if from_me:
+            print("[WEBHOOK] ignored — outbound message")
+            return "ignored", 200
+
+        if not sender or not message:
+            print("[WEBHOOK] ignored — empty sender or body")
+            return "ignored", 200
+
+        msg_upper = message.strip().upper()
+
+        # ── AUTO-CONNECT ──────────────────────────────────────────────────────
+        if msg_upper == "START" or msg_upper.startswith("START_"):
+            _sender_norm   = normalize_number(sender)
+            _sender_digits = _wh_re.sub(r'\D', '', sender)
+
+            # Extract optional token
+            _token = None
+            if "_" in message:
+                _token = message.strip().split("_", 1)[1].lower()
+            print(f"[WEBHOOK AUTO-CONNECT] norm={_sender_norm!r} token={_token!r}")
+
+            _con = get_db_connection()
+            try:
+                # Already linked?
+                _existing = _con.execute(
+                    "SELECT id FROM clients WHERE business_whatsapp_number=?",
+                    (_sender_norm,)
+                ).fetchone()
+                if _existing:
+                    print(f"[WEBHOOK AUTO-CONNECT] already linked to client={_existing['id']} — ignored")
+                    return "ok", 200
+
+                # Resolve target client via token or fallback
+                _target_cid = None
+                if _token:
+                    _now_iso = datetime.datetime.utcnow().isoformat()
+                    _tok_row = _con.execute("""
+                        SELECT client_id FROM wa_connect_tokens
+                        WHERE token=? AND used=0 AND expires_at > ?
+                    """, (_token, _now_iso)).fetchone()
+                    if _tok_row:
+                        _target_cid = _tok_row["client_id"]
+                        print(f"[WEBHOOK AUTO-CONNECT] token valid → client_id={_target_cid}")
+                    else:
+                        print(f"[WEBHOOK AUTO-CONNECT] token {_token!r} invalid or expired")
+
+                if not _target_cid:
+                    _pending = get_latest_pending_client()
+                    if _pending:
+                        _target_cid = _pending["id"]
+                        print(f"[WEBHOOK AUTO-CONNECT] fallback to pending client_id={_target_cid}")
+
+                if not _target_cid:
+                    print("[WEBHOOK AUTO-CONNECT] no matching client — ignored")
+                    return "ok", 200
+
+                # Link number
+                _con.execute("""
+                    UPDATE clients
+                    SET business_whatsapp_number=?,
+                        whatsapp_connected=1,
+                        whatsapp_connection_status='connected',
+                        whatsapp_provider='ultramsg'
+                    WHERE id=?
+                """, (_sender_digits, _target_cid))
+
+                # Mark token used
+                if _token:
+                    _con.execute(
+                        "UPDATE wa_connect_tokens SET used=1 WHERE token=?",
+                        (_token,)
+                    )
+                _con.commit()
+                print(f"[AUTO CONNECT SUCCESS] client={_target_cid} number={_sender_digits!r}")
+
+            finally:
+                _con.close()
+
+            # Confirmation
+            ultramsg_send(_sender_norm, "✅ تم ربط واتساب بنجاح!")
+            return "ok", 200
+
+        # Non-START messages: pass through to main handler
+        return whatsapp()
+
+    except Exception as e:
+        print(f"[WEBHOOK ERROR] {e}")
+        return "error", 500
+
 
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
