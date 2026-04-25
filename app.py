@@ -11,7 +11,7 @@ ULTRAMSG_INSTANCE         = os.getenv("ULTRAMSG_INSTANCE", "")
 ULTRAMSG_TOKEN            = os.getenv("ULTRAMSG_TOKEN", "")
 ADMIN_WHATSAPP_NUMBER     = os.getenv("ADMIN_WHATSAPP_NUMBER", "")
 PLATFORM_ADMIN_WHATSAPP   = os.getenv("PLATFORM_ADMIN_WHATSAPP", "")
-WA_BOT_NUMBER             = os.getenv("WA_BOT_NUMBER", "")   # UltraMsg bot phone number for deep links
+WA_BOT_NUMBER             = os.getenv("WA_BOT_NUMBER", "22230489495")   # UltraMsg bot phone number for deep links
 print(f"[STARTUP] ADMIN_WHATSAPP_NUMBER={ADMIN_WHATSAPP_NUMBER!r}")
 print(f"[STARTUP] PLATFORM_ADMIN_WHATSAPP={'set' if PLATFORM_ADMIN_WHATSAPP else 'not set'}")
 print(f"[STARTUP] WA_BOT_NUMBER={'set' if WA_BOT_NUMBER else 'not set'}")
@@ -5375,7 +5375,8 @@ def admin_connect_whatsapp():
     if _bot_raw:
         import re as _re
         _bot_digits = _re.sub(r'\D', '', _bot_raw)
-        _wa_deeplink = f"https://wa.me/{_bot_digits}?text=START_{_token}"
+        _wa_deeplink = f"https://wa.me/{_bot_digits}?text=START"
+        print(f"[WA_LINK_GENERATED] {_wa_deeplink}")
 
     return render_template(
         "admin/connect_whatsapp.html",
