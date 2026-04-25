@@ -6,49 +6,38 @@
 {% set status = client.whatsapp_connection_status or "not_connected" %}
 
 <style>
-  /* ── Layout ─────────────────────────────────────── */
-  .wa-wrap {
-    max-width: 560px;
-    direction: {{ dir }};
-  }
-  .wa-page-head {
-    margin-bottom: 28px;
-  }
-  .wa-page-head h1 {
-    font-size: 24px;
-    font-weight: 800;
-    color: #0f172a;
-    margin-bottom: 6px;
-  }
-  .wa-page-head p {
-    font-size: 14px;
-    color: #64748b;
-    line-height: 1.6;
-  }
+  /* ── Reset & Base ─────────────────────────────────── */
+  .wa-wrap { max-width: 560px; direction: {{ dir }}; }
+  .wa-page-head { margin-bottom: 28px; }
+  .wa-page-head h1 { font-size: 24px; font-weight: 800; color: #0f172a; margin-bottom: 6px; }
+  .wa-page-head p  { font-size: 14px; color: #64748b; line-height: 1.6; }
 
-  /* ── Status banner ───────────────────────────────── */
+  /* ── Status Banner ───────────────────────────────── */
   .wa-status-banner {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 18px 22px;
-    border-radius: 14px;
-    margin-bottom: 24px;
+    display: flex; align-items: center; gap: 14px;
+    padding: 16px 20px; border-radius: 14px; margin-bottom: 24px;
     border: 1.5px solid transparent;
   }
-  .wa-status-banner.connected  { background: #dcfce7; border-color: #86efac; }
-  .wa-status-banner.pending    { background: #fef9c3; border-color: #fde047; }
-  .wa-status-banner.failed     { background: #fee2e2; border-color: #fca5a5; }
+  .wa-status-banner.connected     { background: #dcfce7; border-color: #86efac; }
+  .wa-status-banner.pending       { background: #fef9c3; border-color: #fde047; }
+  .wa-status-banner.failed        { background: #fee2e2; border-color: #fca5a5; }
   .wa-status-banner.not_connected { background: #f8fafc; border-color: #e2e8f0; }
 
-  .wa-status-icon { font-size: 30px; line-height: 1; flex-shrink: 0; }
-  .wa-status-body h3 {
-    font-size: 15px;
-    font-weight: 700;
-    margin-bottom: 3px;
+  /* Badge dot */
+  .wa-badge-dot {
+    width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+    box-shadow: 0 0 0 3px rgba(0,0,0,.06);
   }
-  .wa-status-body p  { font-size: 13px; line-height: 1.5; }
+  .connected  .wa-badge-dot { background: #16a34a; box-shadow: 0 0 0 3px #bbf7d0; animation: pulse-green 1.8s infinite; }
+  .pending    .wa-badge-dot { background: #d97706; box-shadow: 0 0 0 3px #fde68a; animation: pulse-yellow 1.8s infinite; }
+  .failed     .wa-badge-dot { background: #dc2626; }
+  .not_connected .wa-badge-dot { background: #94a3b8; }
 
+  @keyframes pulse-green  { 0%,100%{ box-shadow:0 0 0 3px #bbf7d0; } 50%{ box-shadow:0 0 0 6px rgba(22,163,74,.15); } }
+  @keyframes pulse-yellow { 0%,100%{ box-shadow:0 0 0 3px #fde68a; } 50%{ box-shadow:0 0 0 6px rgba(217,119,6,.15);  } }
+
+  .wa-status-body h3 { font-size: 14px; font-weight: 700; margin-bottom: 2px; }
+  .wa-status-body p  { font-size: 12px; line-height: 1.5; }
   .connected  .wa-status-body h3 { color: #15803d; }
   .connected  .wa-status-body p  { color: #166534; }
   .pending    .wa-status-body h3 { color: #854d0e; }
@@ -60,176 +49,149 @@
 
   /* ── Card ────────────────────────────────────────── */
   .wa-card {
-    background: #fff;
-    border: 1.5px solid #e2e8f0;
-    border-radius: 16px;
-    padding: 28px 32px;
-    box-shadow: 0 2px 12px rgba(0,0,0,.05);
-    margin-bottom: 16px;
+    background: #fff; border: 1.5px solid #e2e8f0; border-radius: 16px;
+    padding: 28px 32px; box-shadow: 0 2px 12px rgba(0,0,0,.05); margin-bottom: 16px;
   }
-  .wa-card-title {
-    font-size: 15px;
-    font-weight: 700;
-    color: #0f172a;
-    margin-bottom: 20px;
-  }
+  .wa-card-title { font-size: 15px; font-weight: 700; color: #0f172a; margin-bottom: 20px; }
 
-  /* ── Form ────────────────────────────────────────── */
-  .wa-field { margin-bottom: 20px; }
-  .wa-field label {
-    display: block;
-    font-size: 13px;
-    font-weight: 600;
-    color: #374151;
-    margin-bottom: 7px;
+  /* ── Steps ───────────────────────────────────────── */
+  .wa-steps { list-style: none; padding: 0; margin: 0 0 24px; display: flex; flex-direction: column; gap: 14px; }
+  .wa-step  { display: flex; align-items: flex-start; gap: 14px; }
+  .wa-step-num {
+    width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
+    background: #4f46e5; color: #fff; font-weight: 800; font-size: 13px;
+    display: flex; align-items: center; justify-content: center;
   }
-  .wa-input-wrap {
-    display: flex;
-    align-items: center;
-    border: 1.5px solid #e2e8f0;
-    border-radius: 10px;
-    background: #fff;
-    overflow: hidden;
-    transition: border-color .15s, box-shadow .15s;
-  }
-  .wa-input-wrap:focus-within {
-    border-color: #4f46e5;
-    box-shadow: 0 0 0 3px rgba(79,70,229,.10);
-  }
-  .wa-input-prefix {
-    padding: 0 14px;
-    font-size: 20px;
-    color: #25d366;
-    background: #f0fdf4;
-    border-{{ "left" if dir == "ltr" else "right" }}: 1.5px solid #e2e8f0;
-    height: 46px;
-    display: flex;
-    align-items: center;
-    flex-shrink: 0;
-  }
-  .wa-input-wrap input {
-    flex: 1;
-    border: none;
-    outline: none;
-    padding: 12px 14px;
-    font-size: 15px;
-    color: #0f172a;
-    background: transparent;
-    direction: ltr;
-    text-align: {{ "right" if dir == "rtl" else "left" }};
-  }
-  .wa-hint {
-    font-size: 12px;
-    color: #94a3b8;
-    margin-top: 7px;
-    line-height: 1.5;
-  }
+  .wa-step-text { padding-top: 4px; }
+  .wa-step-text strong { font-size: 14px; color: #0f172a; display: block; margin-bottom: 2px; }
+  .wa-step-text span   { font-size: 12px; color: #64748b; line-height: 1.5; }
 
-  /* ── Registered number display ───────────────────── */
+  /* ── Number display ──────────────────────────────── */
   .wa-number-display {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    background: #f8fafc;
-    border: 1.5px solid #e2e8f0;
-    border-radius: 10px;
-    padding: 12px 16px;
-    margin-bottom: 20px;
-    font-size: 14px;
-    color: #374151;
-    direction: ltr;
+    display: flex; align-items: center; gap: 10px;
+    background: #f8fafc; border: 1.5px solid #e2e8f0; border-radius: 10px;
+    padding: 12px 16px; margin-bottom: 20px; font-size: 14px; color: #374151; direction: ltr;
   }
-  .wa-number-display .wa-num-icon { font-size: 18px; }
-  .wa-number-display .wa-num-val  { font-weight: 700; color: #0f172a; flex: 1; }
-  .wa-number-label {
-    font-size: 12px;
-    font-weight: 600;
-    color: #94a3b8;
-    margin-bottom: 8px;
-  }
+  .wa-number-display .num-val { font-weight: 700; color: #0f172a; flex: 1; }
+  .wa-number-label { font-size: 12px; font-weight: 600; color: #94a3b8; margin-bottom: 8px; }
 
-  /* ── Pending info box ────────────────────────────── */
+  /* ── Pending box ─────────────────────────────────── */
   .wa-pending-box {
-    display: flex;
-    gap: 12px;
-    background: #fef9c3;
-    border: 1px solid #fde047;
-    border-radius: 12px;
-    padding: 14px 18px;
-    font-size: 13px;
-    color: #713f12;
-    line-height: 1.6;
-    margin-bottom: 20px;
+    display: flex; gap: 12px; background: #fef9c3; border: 1px solid #fde047;
+    border-radius: 12px; padding: 14px 18px; font-size: 13px; color: #713f12;
+    line-height: 1.6; margin-bottom: 20px;
   }
   .wa-pending-icon { font-size: 20px; flex-shrink: 0; margin-top: 1px; }
 
   /* ── Buttons ─────────────────────────────────────── */
-  .wa-btn-row {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin-top: 4px;
-  }
+  .wa-btn-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
   .btn-wa-primary {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 12px 26px;
-    background: #25d366;
-    color: #fff;
-    border: none;
-    border-radius: 10px;
-    font-size: 14px;
-    font-weight: 700;
-    cursor: pointer;
-    text-decoration: none;
-    transition: opacity .15s, transform .1s;
-    box-shadow: 0 2px 8px rgba(37,211,102,.30);
+    display: inline-flex; align-items: center; gap: 8px; padding: 12px 26px;
+    background: #25d366; color: #fff; border: none; border-radius: 10px;
+    font-size: 14px; font-weight: 700; cursor: pointer; text-decoration: none;
+    transition: opacity .15s, transform .1s; box-shadow: 0 2px 8px rgba(37,211,102,.30);
   }
   .btn-wa-primary:hover  { opacity: .88; transform: translateY(-1px); }
   .btn-wa-primary:active { transform: translateY(0); }
 
+  .btn-wa-indigo {
+    display: inline-flex; align-items: center; gap: 8px; padding: 12px 26px;
+    background: #4f46e5; color: #fff; border: none; border-radius: 10px;
+    font-size: 14px; font-weight: 700; cursor: pointer; text-decoration: none;
+    transition: opacity .15s, transform .1s; box-shadow: 0 2px 8px rgba(79,70,229,.25);
+  }
+  .btn-wa-indigo:hover  { opacity: .88; transform: translateY(-1px); }
+
   .btn-wa-danger {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 10px 20px;
-    background: transparent;
-    color: #b91c1c;
-    border: 1.5px solid #fca5a5;
-    border-radius: 10px;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all .15s;
+    display: inline-flex; align-items: center; gap: 6px; padding: 10px 20px;
+    background: transparent; color: #b91c1c; border: 1.5px solid #fca5a5;
+    border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all .15s;
   }
   .btn-wa-danger:hover { background: #fef2f2; border-color: #f87171; }
 
   .btn-wa-ghost {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 10px 18px;
-    background: #fff;
-    color: #64748b;
-    border: 1.5px solid #e2e8f0;
-    border-radius: 10px;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    text-decoration: none;
-    transition: all .15s;
+    display: inline-flex; align-items: center; gap: 6px; padding: 10px 18px;
+    background: #fff; color: #64748b; border: 1.5px solid #e2e8f0; border-radius: 10px;
+    font-size: 13px; font-weight: 600; cursor: pointer; text-decoration: none; transition: all .15s;
   }
   .btn-wa-ghost:hover { color: #334155; border-color: #cbd5e1; background: #f8fafc; }
+
+  /* ── Disconnect Modal ────────────────────────────── */
+  .wa-modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,.45); backdrop-filter: blur(3px);
+    z-index: 9999; align-items: center; justify-content: center;
+  }
+  .wa-modal-overlay.open { display: flex; }
+  .wa-modal {
+    background: #fff; border-radius: 18px; padding: 32px 28px; max-width: 400px; width: 90%;
+    box-shadow: 0 20px 60px rgba(0,0,0,.2); text-align: center; animation: modal-in .2s ease;
+  }
+  @keyframes modal-in { from { transform: scale(.92); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  .wa-modal-icon  { font-size: 40px; margin-bottom: 14px; }
+  .wa-modal h3    { font-size: 17px; font-weight: 800; color: #0f172a; margin-bottom: 8px; }
+  .wa-modal p     { font-size: 13px; color: #64748b; line-height: 1.6; margin-bottom: 22px; }
+  .wa-modal-btns  { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  .btn-modal-confirm {
+    padding: 11px 24px; background: #dc2626; color: #fff; border: none;
+    border-radius: 10px; font-size: 14px; font-weight: 700; cursor: pointer; transition: opacity .15s;
+  }
+  .btn-modal-confirm:hover { opacity: .88; }
+  .btn-modal-cancel {
+    padding: 11px 24px; background: #fff; color: #374151;
+    border: 1.5px solid #e2e8f0; border-radius: 10px; font-size: 14px;
+    font-weight: 600; cursor: pointer; transition: all .15s;
+  }
+  .btn-modal-cancel:hover { background: #f8fafc; border-color: #cbd5e1; }
+
+  /* ── Poll status ─────────────────────────────────── */
+  #wa-poll-status {
+    display: none; font-size: 12px; color: #6366f1; margin-top: 12px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  #wa-poll-status .spinner {
+    width: 14px; height: 14px; border: 2px solid #c7d2fe;
+    border-top-color: #6366f1; border-radius: 50%; animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
   /* ── Responsive ─────────────────────────────────── */
   @media (max-width: 600px) {
     .wa-card { padding: 20px 18px; }
     .wa-btn-row { flex-direction: column; align-items: stretch; }
-    .btn-wa-primary, .btn-wa-danger, .btn-wa-ghost { justify-content: center; }
+    .btn-wa-primary, .btn-wa-indigo, .btn-wa-danger, .btn-wa-ghost { justify-content: center; }
   }
 </style>
+
+<!-- Disconnect form (shared, hidden) -->
+<form id="disconnect-form" method="POST" style="display:none;">
+  <input type="hidden" name="action" value="disconnect">
+</form>
+
+<!-- Disconnect modal -->
+<div class="wa-modal-overlay" id="disconnect-modal" role="dialog" aria-modal="true">
+  <div class="wa-modal">
+    <div class="wa-modal-icon">⚠️</div>
+    <h3>
+      {% if lang == "ar" %}تأكيد قطع الاتصال{% else %}Confirm Disconnect{% endif %}
+    </h3>
+    <p>
+      {% if lang == "ar" %}
+        سيؤدي قطع الاتصال إلى إيقاف جميع الردود التلقائية.<br>هل أنت متأكد؟
+      {% else %}
+        Disconnecting will stop all automated replies.<br>Are you sure?
+      {% endif %}
+    </p>
+    <div class="wa-modal-btns">
+      <button class="btn-modal-confirm" onclick="confirmDisconnect()">
+        {% if lang == "ar" %}🔌 تأكيد القطع{% else %}🔌 Confirm{% endif %}
+      </button>
+      <button class="btn-modal-cancel" onclick="closeDisconnectModal()">
+        {% if lang == "ar" %}إلغاء{% else %}Cancel{% endif %}
+      </button>
+    </div>
+  </div>
+</div>
 
 <div class="wa-wrap">
 
@@ -251,15 +213,9 @@
     {% endfor %}
   {% endwith %}
 
-  <!-- Status banner -->
-  <div class="wa-status-banner {{ status }}">
-    <div class="wa-status-icon">
-      {% if status == "connected"    %}✅
-      {% elif status == "pending"    %}🕐
-      {% elif status == "failed"     %}❌
-      {% else                        %}📵
-      {% endif %}
-    </div>
+  <!-- ─── Status banner with badge dot ─────────────── -->
+  <div class="wa-status-banner {{ status }}" id="status-banner">
+    <div class="wa-badge-dot"></div>
     <div class="wa-status-body">
       <h3>
         {% if status == "connected"    %}{{ t("wa_status_connected", lang) }}
@@ -278,121 +234,221 @@
     </div>
   </div>
 
-  <!-- ═══ CONNECTED: show number + disconnect option ═══════════════════════ -->
+  <!-- ═══════════════════════════════════════════════
+       STATE 3: CONNECTED
+       ═══════════════════════════════════════════════ -->
   {% if status == "connected" %}
   <div class="wa-card">
-    <div class="wa-card-title">{{ t("wa_settings_title", lang) }}</div>
+    <div class="wa-card-title">
+      {% if lang == "ar" %}✅ واتساب متصل ويعمل{% else %}✅ WhatsApp Connected & Active{% endif %}
+    </div>
 
     {% if client.business_whatsapp_number %}
-      <div class="wa-number-label">{{ t("wa_settings_number", lang) }}</div>
+      <div class="wa-number-label">
+        {% if lang == "ar" %}رقم واتساب المرتبط{% else %}Connected Number{% endif %}
+      </div>
       <div class="wa-number-display">
-        <span class="wa-num-icon">📱</span>
-        <span class="wa-num-val">{{ client.business_whatsapp_number }}</span>
+        <span>📱</span>
+        <span class="num-val">{{ client.business_whatsapp_number }}</span>
+        <span style="font-size:11px;background:#dcfce7;color:#15803d;padding:2px 8px;border-radius:20px;font-weight:700;">
+          {% if lang == "ar" %}نشط{% else %}Active{% endif %}
+        </span>
       </div>
     {% endif %}
 
-    <p style="font-size:13px;color:#64748b;margin-bottom:20px;">{{ t("wa_settings_change", lang) }}</p>
-
-    <form method="POST"
-          onsubmit="return confirm('{{ t('wa_disconnect_confirm', lang) }}')">
-      <input type="hidden" name="action" value="disconnect">
-      <button type="submit" class="btn-wa-danger">🔌 {{ t("wa_btn_disconnect", lang) }}</button>
-    </form>
+    <div class="wa-btn-row">
+      <a href="{{ url_for('admin_dashboard') }}" class="btn-wa-indigo">
+        🏠 {% if lang == "ar" %}الذهاب للوحة التحكم{% else %}Go to Dashboard{% endif %}
+      </a>
+      {% if wa_deeplink %}
+      <a href="{{ wa_deeplink }}" target="_blank" class="btn-wa-ghost">
+        🧪 {% if lang == "ar" %}اختبار الروبوت{% else %}Test Bot{% endif %}
+      </a>
+      {% endif %}
+      <button type="button" class="btn-wa-danger" onclick="openDisconnectModal()">
+        🔌 {{ t("wa_btn_disconnect", lang) }}
+      </button>
+    </div>
   </div>
 
-  <!-- ═══ PENDING: waiting for START message ══════════════════════════════ -->
+  <!-- ═══════════════════════════════════════════════
+       STATE 2: PENDING
+       ═══════════════════════════════════════════════ -->
   {% elif status == "pending" %}
   <div class="wa-card">
     <div class="wa-pending-box">
       <span class="wa-pending-icon">⏳</span>
       <div>
-        <strong>{{ t("wa_status_pending", lang) }}</strong><br>
-        {{ t("wa_status_pending_sub", lang) }}
+        <strong>
+          {% if lang == "ar" %}في انتظار التأكيد من واتساب{% else %}Waiting for WhatsApp Confirmation{% endif %}
+        </strong><br>
+        {% if lang == "ar" %}
+          أرسل كلمة <strong>START</strong> من رقم واتساب الخاص بك إلى رقم الروبوت.
+        {% else %}
+          Send the word <strong>START</strong> from your WhatsApp number to the bot number.
+        {% endif %}
       </div>
     </div>
 
     {% if wa_deeplink %}
-    <p style="font-size:13px;color:#64748b;margin-bottom:16px;">
-      لم تصلك الرسالة؟ انقر مجدداً لفتح واتساب وأرسل الرسالة.
-    </p>
     <div class="wa-btn-row">
-      <a href="{{ wa_deeplink }}" target="_blank" class="btn-wa-primary">
-        🔗 فتح واتساب مجدداً
+      <a href="{{ wa_deeplink }}" target="_blank" class="btn-wa-primary" onclick="startPolling()">
+        🔗 {% if lang == "ar" %}فتح واتساب وإرسال START{% else %}Open WhatsApp & Send START{% endif %}
       </a>
+      <button type="button" class="btn-wa-ghost" onclick="openDisconnectModal()">
+        🔄 {% if lang == "ar" %}إعادة البدء{% else %}Start Over{% endif %}
+      </button>
     </div>
-    {% else %}
-    <p style="font-size:13px;color:#94a3b8;margin-top:8px;">
-      ارجع لهذه الصفحة بعد إرسال START عبر واتساب.
-    </p>
     {% endif %}
 
-    <div style="margin-top:20px;">
-      <form method="POST"
-            onsubmit="return confirm('{{ t('wa_disconnect_confirm', lang) }}')">
-        <input type="hidden" name="action" value="disconnect">
-        <button type="submit" class="btn-wa-ghost" style="font-size:12px;">
-          🔄 إعادة البدء
-        </button>
-      </form>
+    <div id="wa-poll-status" style="display:none;margin-top:14px;font-size:12px;color:#6366f1;display:flex;align-items:center;gap:6px;">
+      <div class="spinner" style="width:14px;height:14px;border:2px solid #c7d2fe;border-top-color:#6366f1;border-radius:50%;animation:spin .7s linear infinite;"></div>
+      {% if lang == "ar" %}جاري التحقق تلقائياً...{% else %}Checking automatically…{% endif %}
     </div>
   </div>
 
-  <!-- ═══ NOT CONNECTED / FAILED: deep link button ═════════════════════════ -->
+  <!-- ═══════════════════════════════════════════════
+       STATE 1: NOT CONNECTED / FAILED
+       ═══════════════════════════════════════════════ -->
   {% else %}
   <div class="wa-card">
-    <div class="wa-card-title">🔗 ربط واتساب تلقائياً</div>
+    <div class="wa-card-title">
+      {% if lang == "ar" %}كيف تربط واتساب؟{% else %}How to Connect WhatsApp{% endif %}
+    </div>
 
-    <p style="font-size:14px;color:#64748b;line-height:1.7;margin-bottom:20px;">
-      انقر على الزر أدناه لفتح واتساب. سيتم إرسال رسالة تلقائية منك إلى الروبوت، وسيتم ربط حسابك فوراً.
-    </p>
+    <!-- 3-step guide -->
+    <ul class="wa-steps">
+      <li class="wa-step">
+        <div class="wa-step-num">1</div>
+        <div class="wa-step-text">
+          <strong>
+            {% if lang == "ar" %}انقر على زر الربط{% else %}Click the Connect button{% endif %}
+          </strong>
+          <span>
+            {% if lang == "ar" %}سيفتح واتساب تلقائياً مع رسالة جاهزة.{% else %}WhatsApp will open with the message ready.{% endif %}
+          </span>
+        </div>
+      </li>
+      <li class="wa-step">
+        <div class="wa-step-num">2</div>
+        <div class="wa-step-text">
+          <strong>
+            {% if lang == "ar" %}افتح واتساب{% else %}Open WhatsApp{% endif %}
+          </strong>
+          <span>
+            {% if lang == "ar" %}تأكد من تسجيل الدخول بالرقم الذي تريد ربطه.{% else %}Make sure you're logged in with the number you want to connect.{% endif %}
+          </span>
+        </div>
+      </li>
+      <li class="wa-step">
+        <div class="wa-step-num">3</div>
+        <div class="wa-step-text">
+          <strong>
+            {% if lang == "ar" %}أرسل START{% else %}Send START{% endif %}
+          </strong>
+          <span>
+            {% if lang == "ar" %}الرسالة جاهزة — فقط اضغط إرسال ويتم الربط تلقائياً.{% else %}The message is ready — just press Send and you're connected.{% endif %}
+          </span>
+        </div>
+      </li>
+    </ul>
 
     {% if wa_deeplink %}
     <div class="wa-btn-row">
       <a href="{{ wa_deeplink }}" target="_blank" class="btn-wa-primary"
-         id="wa-connect-btn"
-         style="text-decoration:none;"
-         onclick="startPolling()">
-        🔗 ربط واتساب
+         id="wa-connect-btn" onclick="handleConnectClick()">
+        📲 {% if lang == "ar" %}ربط واتساب{% else %}Connect WhatsApp{% endif %}
       </a>
     </div>
-    <p class="wa-hint" style="margin-top:12px;">
-      بعد الضغط، ستُفتح واتساب بشكل تلقائي مع الرسالة جاهزة — فقط اضغط "إرسال".
-    </p>
-    <p style="font-size:11px;color:#94a3b8;margin-top:8px;word-break:break-all;">
-      🔗 <strong>رابط الربط:</strong> {{ wa_deeplink }}
-    </p>
-    <p id="wa-poll-status" style="display:none;font-size:12px;color:#6366f1;margin-top:10px;">
-      ⏳ في انتظار التأكيد... سيتم تحديث الصفحة تلقائياً.
-    </p>
-    <script>
-      function startPolling() {
-        document.getElementById('wa-poll-status').style.display = 'block';
-        var checks = 0;
-        var timer = setInterval(function() {
-          checks++;
-          fetch(window.location.pathname + '?_check=1')
-            .then(function(r) { return r.text(); })
-            .then(function(html) {
-              if (html.indexOf('wa-status-banner connected') !== -1 ||
-                  html.indexOf('badge-connected') !== -1 ||
-                  html.indexOf('تم ربط واتساب') !== -1) {
-                clearInterval(timer);
-                window.location.reload();
-              }
-            }).catch(function(){});
-          if (checks >= 24) clearInterval(timer); // stop after 2 min
-        }, 5000);
-      }
-    </script>
+    <div id="wa-poll-status" style="display:none;margin-top:14px;font-size:12px;color:#6366f1;align-items:center;gap:6px;">
+      <div style="width:14px;height:14px;border:2px solid #c7d2fe;border-top-color:#6366f1;border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0;"></div>
+      {% if lang == "ar" %}في انتظار التأكيد... سيتم التحديث تلقائياً.{% else %}Waiting for confirmation… page will refresh automatically.{% endif %}
+    </div>
     {% else %}
     <div style="background:#fef9c3;border:1px solid #fde047;border-radius:10px;
                 padding:14px 18px;font-size:13px;color:#713f12;">
-      ⚠️ لم يتم تفعيل خاصية الربط التلقائي بعد.
-      تواصل مع مزود الخدمة لإكمال الإعداد.
+      ⚠️ {% if lang == "ar" %}لم يتم تفعيل خاصية الربط التلقائي بعد.{% else %}Auto-connect is not configured yet.{% endif %}
     </div>
     {% endif %}
   </div>
   {% endif %}
 
 </div>
+
+<script>
+  const _WA_STATUS = "{{ status }}";
+
+  /* ── Logging ─────────────────────────────────────── */
+  function logUiState(state, extra) {
+    console.log("[UI_STATE_CHANGED]", state, extra || "");
+  }
+  logUiState(_WA_STATUS, "page-load");
+
+  /* ── Disconnect modal ────────────────────────────── */
+  function openDisconnectModal() {
+    logUiState("disconnect-modal-open");
+    document.getElementById("disconnect-modal").classList.add("open");
+  }
+  function closeDisconnectModal() {
+    logUiState("disconnect-modal-close");
+    document.getElementById("disconnect-modal").classList.remove("open");
+  }
+  function confirmDisconnect() {
+    logUiState("disconnect-confirmed");
+    document.getElementById("disconnect-form").submit();
+  }
+  // Close on overlay click
+  document.getElementById("disconnect-modal").addEventListener("click", function(e) {
+    if (e.target === this) closeDisconnectModal();
+  });
+  // Close on Escape
+  document.addEventListener("keydown", function(e) {
+    if (e.key === "Escape") closeDisconnectModal();
+  });
+
+  /* ── Connect click + auto-poll ───────────────────── */
+  function handleConnectClick() {
+    logUiState("connect-clicked");
+    var el = document.getElementById("wa-poll-status");
+    if (el) { el.style.display = "flex"; }
+    startPolling();
+  }
+
+  function startPolling() {
+    var checks = 0;
+    var timer = setInterval(function() {
+      checks++;
+      fetch(window.location.pathname + "?_check=1")
+        .then(function(r) { return r.text(); })
+        .then(function(html) {
+          if (html.indexOf("wa-status-banner connected") !== -1 ||
+              html.indexOf("badge-connected") !== -1 ||
+              html.indexOf("wa-badge-dot") !== -1 && html.indexOf("connected") !== -1) {
+            clearInterval(timer);
+            console.log("[WHATSAPP_CONNECTED_UI]", "auto-detected via poll");
+            logUiState("connected");
+            window.location.reload();
+          }
+        }).catch(function() {});
+      if (checks >= 24) clearInterval(timer);
+    }, 5000);
+  }
+
+  // Auto-start polling if already in pending state on load
+  {% if status == "pending" %}
+  window.addEventListener("load", function() {
+    var el = document.getElementById("wa-poll-status");
+    if (el) { el.style.display = "flex"; }
+    startPolling();
+    logUiState("pending-auto-poll-started");
+  });
+  {% endif %}
+
+  // Log connected state on arrival
+  {% if status == "connected" %}
+  console.log("[WHATSAPP_CONNECTED_UI]", "status=connected on page load");
+  logUiState("connected");
+  {% endif %}
+</script>
+
 {% endblock %}
