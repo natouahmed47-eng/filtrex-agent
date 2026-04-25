@@ -4501,6 +4501,36 @@ def admin_whatsapp_mark_connected(target_client_id):
     return redirect(url_for("admin_whatsapp_requests"))
 
 
+# ── /admin/test-admin-notify  (temporary diagnostic route) ────────────────────
+@app.route("/admin/test-admin-notify")
+def test_admin_notify():
+    admin_number = os.getenv("PLATFORM_ADMIN_WHATSAPP", "").strip()
+    print(f"[TEST_ADMIN_NOTIFY] admin_number={admin_number!r}")
+
+    if not admin_number:
+        print("[TEST_ADMIN_NOTIFY] FAILED — PLATFORM_ADMIN_WHATSAPP not set")
+        return {"error": "PLATFORM_ADMIN_WHATSAPP missing"}, 500
+
+    msg = "✅ اختبار إشعار الأدمن من المنصة"
+    to  = normalize_number(admin_number)
+    print(f"[TEST_ADMIN_NOTIFY] normalized_to={to!r}")
+    print(f"[TEST_ADMIN_NOTIFY] message={msg!r}")
+
+    resp = ultramsg_send(to, msg)
+
+    status = resp.status_code if resp else None
+    body   = resp.text        if resp else None
+    print(f"[TEST_ADMIN_NOTIFY] resp={status}")
+    print(f"[TEST_ADMIN_NOTIFY] body={body!r}")
+
+    return {
+        "admin_number":   admin_number,
+        "normalized_to":  to,
+        "status":         status,
+        "body":           body,
+    }
+
+
 # ── /admin/settings ───────────────────────────────────────────────────────────
 @app.route("/admin/settings", methods=["GET", "POST"])
 def admin_settings():
