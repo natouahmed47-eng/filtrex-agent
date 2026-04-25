@@ -42,6 +42,46 @@ def ultramsg_send(to, text):
     return resp
 
 
+def _ultramsg_send_with_creds(instance_id, token, to, text):
+    """Low-level send using explicit instance_id + token (for per-client instances)."""
+    url = f"https://api.ultramsg.com/{instance_id}/messages/chat"
+    payload = {"token": token, "to": to, "body": text}
+    print(f"[WA_SEND_CLIENT_INSTANCE] instance={instance_id!r} to={to!r}")
+    try:
+        resp = requests.post(url, data=payload, timeout=10)
+        print(f"[WA_SEND_CLIENT_INSTANCE] status={resp.status_code} body={resp.text!r}")
+        return resp
+    except Exception as _e:
+        print(f"[WA_SEND_CLIENT_INSTANCE_ERROR] {_e!r}")
+        return None
+
+
+def get_whatsapp_instance(client_id):
+    """Return the client's whatsapp_instances row (sqlite3.Row) or None."""
+    try:
+        _con = sqlite3.connect(DB_FILE, timeout=10)
+        _con.row_factory = sqlite3.Row
+        row = _con.execute(
+            "SELECT * FROM whatsapp_instances WHERE client_id=?", (client_id,)
+        ).fetchone()
+        _con.close()
+        return row
+    except Exception as _e:
+        print(f"[GET_WA_INSTANCE_ERROR] client={client_id} {_e!r}")
+        return None
+
+
+def send_whatsapp_message(client_id, to, text):
+    """Send a WhatsApp message using the client's own instance.
+    Falls back to the platform's shared UltraMsg instance if none is configured."""
+    inst = get_whatsapp_instance(client_id)
+    if inst and inst["instance_id"] and inst["token"] and inst["status"] == "connected":
+        print(f"[WA_SEND_CLIENT_INSTANCE] client={client_id} using own instance={inst['instance_id']!r}")
+        return _ultramsg_send_with_creds(inst["instance_id"], inst["token"], to, text)
+    print(f"[WA_SEND_PLATFORM_FALLBACK] client={client_id} no personal instance → using platform")
+    return ultramsg_send(to, text)
+
+
 def notify_platform_admin_connect_request(client_id, phone):
     """Notify the platform admin when a client submits a WhatsApp connection request.
     Reads PLATFORM_ADMIN_WHATSAPP fresh from env each call (picks up Secrets added after startup).
@@ -1033,6 +1073,23 @@ def _migrate_saas():
                 event_name TEXT NOT NULL,
                 metadata   TEXT DEFAULT '{}',
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        con.commit()
+
+        # ── STEP 7i: whatsapp_instances — per-client WA credentials ───────
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS whatsapp_instances (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id    INTEGER NOT NULL UNIQUE,
+                provider     TEXT    DEFAULT 'ultramsg',
+                instance_id  TEXT,
+                token        TEXT,
+                phone_number TEXT,
+                status       TEXT    DEFAULT 'pending',
+                qr_url       TEXT,
+                created_at   TEXT    DEFAULT CURRENT_TIMESTAMP,
+                updated_at   TEXT    DEFAULT CURRENT_TIMESTAMP
             )
         """)
         con.commit()
@@ -2410,13 +2467,14 @@ def mark_client_whatsapp_connected(client_id, phone):
     track_event(client_id, "whatsapp_connected", {"phone": phone})
 
 
-def wa_reply(to, text):
-    """Send a message to the CUSTOMER only. Never call this with admin content."""
-    raw = to
-    to  = normalize_number(to)
-    print(f"[SEND_CUSTOMER] to={to!r}")
+def wa_reply(to, text, client_id=None):
+    """Send a message to the CUSTOMER only. Never call this with admin content.
+    Uses the client's own WhatsApp instance if connected, else platform fallback."""
+    _cid = client_id or getattr(g, 'wa_client_id', CLIENT_ID)
+    to   = normalize_number(to)
+    print(f"[SEND_CUSTOMER] client={_cid} to={to!r}")
     print(f"[SEND_CUSTOMER] body={text!r}")
-    resp = ultramsg_send(to, text)
+    resp = send_whatsapp_message(_cid, to, text)
     print(f"[SEND_CUSTOMER] status={resp.status_code if resp else 'N/A'}")
     return "", 200
 
@@ -4168,10 +4226,33 @@ def whatsapp_webhook():
         return "error", 500
 
 
+@app.route("/whatsapp/instance/<instance_id>", methods=["POST"])
+def whatsapp_by_instance(instance_id):
+    """Per-client webhook endpoint. Configure each client's UltraMsg instance
+    to POST to /whatsapp/instance/<their_instance_id>."""
+    _con = get_db_connection()
+    try:
+        _row = _con.execute(
+            "SELECT client_id FROM whatsapp_instances WHERE instance_id=?", (instance_id,)
+        ).fetchone()
+    finally:
+        _con.close()
+    if _row:
+        g.wa_client_id = _row["client_id"]
+        print(f"[WA_INSTANCE_ROUTE] instance={instance_id!r} → client={g.wa_client_id}")
+    else:
+        print(f"[WA_INSTANCE_ROUTE] unknown instance={instance_id!r} → fallback client=1")
+        g.wa_client_id = 1
+    return whatsapp()
+
+
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
     print("🔥 WHATSAPP ROUTE HIT")
     try:
+        # Per-request client ID: set by whatsapp_by_instance() or defaults to global CLIENT_ID
+        _WH_CID    = getattr(g, 'wa_client_id', CLIENT_ID)
+        _wh_client = get_client(_WH_CID)   # loaded early — used across all intent branches
         data = request.get_json(force=True, silent=True) or {}
         print(f"[TRACE_PAYLOAD] {data}")          # full dump — reveals UltraMsg echo payloads
         msg_data     = data.get("data", {})
@@ -4199,7 +4280,7 @@ def whatsapp():
             return "", 200
 
         # Track every valid inbound message
-        track_event(CLIENT_ID, "message_received", {"sender": sender, "len": len(incoming_msg)})
+        track_event(_WH_CID, "message_received", {"sender": sender, "len": len(incoming_msg)})
 
         # ── AUTO-CONNECT: handle "START" or "START_<token>" ──────────────
         _msg_upper = incoming_msg.strip().upper()
@@ -4228,17 +4309,17 @@ def whatsapp():
         try:
             _eg_row = _eg_con.execute(
                 "SELECT id FROM analytics_events WHERE client_id=? AND event_name='first_reply_nudge' LIMIT 1",
-                (CLIENT_ID,)
+                (_WH_CID,)
             ).fetchone()
             if not _eg_row:
-                print(f"[USER_ENGAGED] client={CLIENT_ID} first real message from={sender!r}")
-                _fire_first_reply_nudge(sender, CLIENT_ID)
+                print(f"[USER_ENGAGED] client={_WH_CID} first real message from={sender!r}")
+                _fire_first_reply_nudge(sender, _WH_CID)
         finally:
             _eg_con.close()
 
         # ── TRIAL CHECK ────────────────────────────────────────────────────
-        if expire_trial_if_needed(CLIENT_ID):
-            print(f"[TRIAL_EXPIRED] client={CLIENT_ID} blocked WA reply from sender={sender!r}")
+        if expire_trial_if_needed(_WH_CID):
+            print(f"[TRIAL_EXPIRED] client={_WH_CID} blocked WA reply from sender={sender!r}")
             _trial_msg = (
                 "🚫 انتهت التجربة المجانية — اشترك الآن للاستمرار 👇\n"
                 "https://filtrex.ai/pay/subscription\n\n"
@@ -4247,21 +4328,21 @@ def whatsapp():
             return wa_reply(sender, _trial_msg)
 
         # ── PLAN ENFORCE: message limit ────────────────────────────────────
-        print(f"[PLAN_ENFORCE] checking messages limit — client={CLIENT_ID}")
-        _msg_allowed, _msg_sub = check_plan_limit(CLIENT_ID, "messages")
+        print(f"[PLAN_ENFORCE] checking messages limit — client={_WH_CID}")
+        _msg_allowed, _msg_sub = check_plan_limit(_WH_CID, "messages")
         if not _msg_allowed:
             _plan_n = (_msg_sub or {}).get("plan_name", "Free")
             _used   = (_msg_sub or {}).get("messages_used", 0)
             _limit  = (_msg_sub or {}).get("max_messages", 100)
-            print(f"[LIMIT_BLOCKED] messages — client={CLIENT_ID} plan={_plan_n!r} used={_used}/{_limit}")
-            _pw = handle_limit_exceeded(CLIENT_ID, "messages")
+            print(f"[LIMIT_BLOCKED] messages — client={_WH_CID} plan={_plan_n!r} used={_used}/{_limit}")
+            _pw = handle_limit_exceeded(_WH_CID, "messages")
             _paywall_msg = (
                 f"{_pw['message_ar']} قم بالترقية للاستمرار 👇\n"
                 f"https://filtrex.ai/pay/subscription\n\n"
                 f"{_pw['message_en']} Upgrade to continue 👇"
             )
             return wa_reply(sender, _paywall_msg)
-        increment_usage(CLIENT_ID, "messages_used")
+        increment_usage(_WH_CID, "messages_used")
 
         state = wa_load(sender)
         _step_early = state.get("current_step", "service")
@@ -4289,7 +4370,7 @@ def whatsapp():
         if _step_early == "service" and not state.get("msg_intent"):
             _msg_intent = detect_message_intent(incoming_msg, lang=_early_lang)
             state["msg_intent"] = _msg_intent
-            track_event(CLIENT_ID, "intent_detected", {"intent": _msg_intent, "lang": _early_lang})
+            track_event(_WH_CID, "intent_detected", {"intent": _msg_intent, "lang": _early_lang})
 
             _greeting_map = {
                 "ar": f"أهلاً! كيف يمكنني مساعدتك اليوم؟",
@@ -4313,7 +4394,7 @@ def whatsapp():
                     _price_rows = _price_con.execute("""
                         SELECT title, price, currency FROM catalogs
                         WHERE client_id=? AND is_active=1 ORDER BY title
-                    """, (CLIENT_ID,)).fetchall()
+                    """, (_WH_CID,)).fetchall()
                 finally:
                     _price_con.close()
                 if _price_rows:
@@ -4333,22 +4414,22 @@ def whatsapp():
                 return wa_reply(sender, _info_reply)
 
             elif _msg_intent in ("book_appointment", "place_order"):
-                create_intent_order(CLIENT_ID, sender, _msg_intent)
-                print(f"[FLOW_STARTED] client={CLIENT_ID} phone={sender!r} intent={_msg_intent!r}")
-                flow_save(CLIENT_ID, sender, "ask_day", {}, lang=_early_lang)
+                create_intent_order(_WH_CID, sender, _msg_intent)
+                print(f"[FLOW_STARTED] client={_WH_CID} phone={sender!r} intent={_msg_intent!r}")
+                flow_save(_WH_CID, sender, "ask_day", {}, lang=_early_lang)
                 return wa_reply(sender, _fs("ask_day", _early_lang))
 
         # ── CONVERSATION FLOW ENGINE — highest priority ───────────────────────
         # If the customer is already inside a booking flow, route there immediately.
-        _active_flow = flow_load(CLIENT_ID, sender)
+        _active_flow = flow_load(_WH_CID, sender)
         if _active_flow:
             print(f"[FLOW_STEP] active flow detected step={_active_flow['current_step']!r}")
             _flow_lang = _active_flow.get("lang") or _early_lang
-            return run_booking_flow(sender, incoming_msg, CLIENT_ID, _flow_lang, _active_flow)
+            return run_booking_flow(sender, incoming_msg, _WH_CID, _flow_lang, _active_flow)
 
         # ── STEP 11: CATALOG MATCH → known_catalog_ids_json ───────────────
         # _early_lang already set above
-        _cat_match = find_catalog_match(CLIENT_ID, incoming_msg, lang=_early_lang)
+        _cat_match = find_catalog_match(_WH_CID, incoming_msg, lang=_early_lang)
         if _cat_match:
             print(f"[CATALOG_MATCH] {_cat_match}")
             _ids = json.loads(state.get("known_catalog_ids_json") or "[]")
@@ -4368,10 +4449,10 @@ def whatsapp():
 
         # Merge services: match each extracted phrase against catalog
         for _svc_phrase in (_intent.get("services") or []):
-            _svc_match = find_catalog_match(CLIENT_ID, _svc_phrase, lang=_early_lang)
+            _svc_match = find_catalog_match(_WH_CID, _svc_phrase, lang=_early_lang)
             if not _svc_match:
                 # Retry with full message to handle phrase variation
-                _svc_match = find_catalog_match(CLIENT_ID, incoming_msg, lang=_early_lang)
+                _svc_match = find_catalog_match(_WH_CID, incoming_msg, lang=_early_lang)
             if not _svc_match:
                 # Last resort: reverse LIKE — find alias that CONTAINS any word from phrase
                 _con_r = get_db_connection()
@@ -4384,7 +4465,7 @@ def whatsapp():
                                 WHERE c.client_id=? AND a.lang=? AND c.is_active=1
                                   AND a.alias LIKE ?
                                 ORDER BY LENGTH(a.alias) DESC LIMIT 1
-                            """, (CLIENT_ID, _early_lang, f"%{_word}%")).fetchone()
+                            """, (_WH_CID, _early_lang, f"%{_word}%")).fetchone()
                             if _row_r:
                                 _svc_match = dict(_row_r)
                                 print(f"[INTENT_MERGE] reverse-LIKE matched {_word!r} → {_svc_match['title']!r}")
@@ -4449,7 +4530,7 @@ def whatsapp():
 
         # Resolve service from catalog (generic — any business type)
         if _p_svc:
-            _p_svc_match = find_catalog_match(CLIENT_ID, _p_svc, lang=_early_lang)
+            _p_svc_match = find_catalog_match(_WH_CID, _p_svc, lang=_early_lang)
             _resolved_svc = _p_svc_match["title"] if _p_svc_match else _CANONICAL_SERVICE_MAP.get(_p_svc, _p_svc)
             if not state["known_service"]:
                 state["known_service"] = [_resolved_svc]
@@ -4457,7 +4538,7 @@ def whatsapp():
                 print(f"[STATE_MERGE] set service={_resolved_svc!r}")
 
         if _p_addon:
-            _p_addon_match = find_catalog_match(CLIENT_ID, _p_addon, lang=_early_lang)
+            _p_addon_match = find_catalog_match(_WH_CID, _p_addon, lang=_early_lang)
             _resolved_addon = _p_addon_match["title"] if _p_addon_match else _CANONICAL_SERVICE_MAP.get(_p_addon, _p_addon)
             if _resolved_addon not in state["known_service"]:
                 state["known_service"].append(_resolved_addon)
@@ -4493,7 +4574,7 @@ def whatsapp():
             _re_changed = False
             # Catalog alias match as extra fallback for service
             if not _e_svc:
-                _cat_match = find_catalog_match(CLIENT_ID, incoming_msg,
+                _cat_match = find_catalog_match(_WH_CID, incoming_msg,
                                                 lang=state.get("lang") or "ar")
                 if _cat_match:
                     _e_svc = _cat_match["title"]
@@ -4523,7 +4604,7 @@ def whatsapp():
         step  = state["current_step"]
 
         old_lang     = state.get("lang") or ""
-        _wh_client   = get_client(CLIENT_ID)
+        _wh_client   = get_client(_WH_CID)
         new_lang     = detect_customer_language(incoming_msg)   # None if not confident
         print(f"[LANG_DETECT] detected={new_lang!r} stored={old_lang!r}")
 
@@ -4559,7 +4640,7 @@ def whatsapp():
             elif step == "service":
                 print(f"[GREETING] pure greeting — resetting state for sender={sender!r}")
                 wa_clear(sender)
-                return wa_reply(sender, build_ask_service(CLIENT_ID, lang))
+                return wa_reply(sender, build_ask_service(_WH_CID, lang))
             else:
                 _ask_map = {
                     "day":     "Ask the user for the appointment day (today or tomorrow only).",
@@ -4592,7 +4673,7 @@ def whatsapp():
         _sc_name = state.get("known_name")
         # Resolve current cart items + flow type for shortcut decision
         _sc_ids_pre  = json.loads(state.get("known_catalog_ids_json") or "[]")
-        _sc_items    = get_catalog_items(CLIENT_ID, _sc_ids_pre) if _sc_ids_pre else []
+        _sc_items    = get_catalog_items(_WH_CID, _sc_ids_pre) if _sc_ids_pre else []
         _sc_flow     = determine_flow_type(_sc_items)
         print(f"[FLOW_TYPE] shortcut check flow={_sc_flow!r}")
         # Services/mixed require day+time; products require only name
@@ -4645,7 +4726,7 @@ def whatsapp():
                 state["known_catalog_ids_json"] = json.dumps(_ids_set)
 
                 # ── Required Fields Engine ────────────────────────────────
-                _svc_items_now = get_catalog_items(CLIENT_ID, _ids_set)
+                _svc_items_now = get_catalog_items(_WH_CID, _ids_set)
                 _svc_flow      = determine_flow_type(_svc_items_now)
                 _req_fields    = get_required_fields(_svc_flow, _svc_items_now)
                 _miss_fields   = get_missing_fields(state, _req_fields)
@@ -4660,7 +4741,7 @@ def whatsapp():
 
                 # ── Build item-confirmed reply using catalog data ──────────
                 _primary = _cur_svcs[-1]
-                _cur     = get_client(CLIENT_ID).get("currency", "SAR")
+                _cur     = get_client(_WH_CID).get("currency", "SAR")
                 if _cat_item:
                     _p_raw   = _cat_item.get("sale_price") or _cat_item.get("price") or 0
                     _price   = f"{int(_p_raw)} {_cur}"
@@ -4671,13 +4752,13 @@ def whatsapp():
 
                 # Multi-item: show all items + total when cart has >1 item
                 if len(_cur_svcs) > 1:
-                    _all_items = get_catalog_items(CLIENT_ID, _ids_set)
+                    _all_items = get_catalog_items(_WH_CID, _ids_set)
                     if _all_items:
                         _list_lines = "\n".join(
                             f"• {it['title']} — {int(it.get('sale_price') or it.get('price') or 0)} {_cur}"
                             for it in _all_items
                         )
-                        _total = calculate_total(CLIENT_ID, _ids_set)
+                        _total = calculate_total(_WH_CID, _ids_set)
                         _cart_hdrs = {
                             "ar": f"تم إضافة {svc} ✨\nسلة طلباتك:\n{_list_lines}\n\nالإجمالي: {int(_total)} {_cur}",
                             "en": f"Added {svc} ✨\nYour cart:\n{_list_lines}\n\nTotal: {int(_total)} {_cur}",
@@ -4704,7 +4785,7 @@ def whatsapp():
                 # ── Upsell from catalog (DB-first, no hardcoded map) ───────
                 if can_show_upsell(state):
                     _pid     = _cat_item["id"] if _cat_item else _catalog_id_for_title(_primary)
-                    _upsell_item = get_upsell_for_item(CLIENT_ID, _pid) if _pid else None
+                    _upsell_item = get_upsell_for_item(_WH_CID, _pid) if _pid else None
                     if _upsell_item:
                         _uname    = _upsell_item["title"]
                         _up_price = _upsell_item.get("sale_price") or _upsell_item.get("price") or 0
@@ -4720,7 +4801,7 @@ def whatsapp():
                         print(f"[UPSELL_OFFER] catalog source={_pid} target={_upsell_item['id']} ({_uname!r})")
 
             elif is_price_question(incoming_msg):
-                reply = build_price_list(CLIENT_ID, lang)
+                reply = build_price_list(_WH_CID, lang)
 
             elif is_recommendation_request(incoming_msg):
                 # Recommend first active catalog item dynamically
@@ -4728,14 +4809,14 @@ def whatsapp():
                 try:
                     _rec_ids = [r["id"] for r in _rec_con.execute(
                         "SELECT id FROM catalogs WHERE client_id=? AND is_active=1 ORDER BY id LIMIT 1",
-                        (CLIENT_ID,)
+                        (_WH_CID,)
                     ).fetchall()]
                 finally:
                     _rec_con.close()
-                _all_cat = get_catalog_items(CLIENT_ID, _rec_ids)
+                _all_cat = get_catalog_items(_WH_CID, _rec_ids)
                 if _all_cat:
                     _rec     = _all_cat[0]
-                    _cur     = get_client(CLIENT_ID).get("currency", "SAR")
+                    _cur     = get_client(_WH_CID).get("currency", "SAR")
                     _rp      = _rec.get("sale_price") or _rec.get("price") or 0
                     _rec_lang = lang if lang in ("ar", "en", "fr") else "ar"
                     reply = _RECOMMENDATION[_rec_lang].format(
@@ -4809,7 +4890,7 @@ def whatsapp():
                 day = state.get("known_day") or ""
                 # Resolve flow type — slot check applies ONLY to service bookings
                 _t_ids   = json.loads(state.get("known_catalog_ids_json") or "[]")
-                _t_items = get_catalog_items(CLIENT_ID, _t_ids) if _t_ids else []
+                _t_items = get_catalog_items(_WH_CID, _t_ids) if _t_ids else []
                 _t_flow  = determine_flow_type(_t_items)
                 print(f"[FLOW_TYPE] time-step slot check flow={_t_flow!r}")
                 if _t_flow != "order" and is_time_slot_taken(svc, day, time_val):
@@ -5451,31 +5532,109 @@ def admin_connect_whatsapp_qr():
         return guard
     cid    = _session_client_id()
     client = get_client(cid)
-    _lang  = client.get("default_language") or "en"
+    inst   = get_whatsapp_instance(cid)
     return render_template(
         "admin/connect_whatsapp_qr.html",
         client=client,
         active="whatsapp",
+        has_instance=bool(inst),
+        instance_status=(inst["status"] if inst else None),
     )
+
+
+@app.route("/admin/connect-whatsapp/create-instance", methods=["POST"])
+def admin_create_whatsapp_instance():
+    """Create (or re-activate) a WhatsApp instance for the current client.
+    Uses the platform's UltraMsg credentials; stores per-client record so
+    that routing and sends can be scoped per-client in future."""
+    guard = _admin_guard()
+    if guard:
+        return jsonify({"error": "unauthorized"}), 403
+    cid       = _session_client_id()
+    _instance = os.getenv("ULTRAMSG_INSTANCE", "")
+    _token    = os.getenv("ULTRAMSG_TOKEN", "")
+    if not _instance or not _token:
+        return jsonify({"error": "not_configured", "message": "Platform WhatsApp not set up yet."})
+
+    _now = datetime.datetime.utcnow().isoformat()
+    con  = get_db_connection()
+    try:
+        existing = con.execute(
+            "SELECT id FROM whatsapp_instances WHERE client_id=?", (cid,)
+        ).fetchone()
+        if existing:
+            con.execute("""
+                UPDATE whatsapp_instances
+                SET status='pending', updated_at=?
+                WHERE client_id=?
+            """, (_now, cid))
+        else:
+            con.execute("""
+                INSERT INTO whatsapp_instances
+                    (client_id, provider, instance_id, token, status, created_at, updated_at)
+                VALUES (?, 'ultramsg', ?, ?, 'pending', ?, ?)
+            """, (cid, _instance, _token, _now, _now))
+        con.commit()
+    finally:
+        con.close()
+
+    print(f"[WA_INSTANCE_CREATE] client={cid} instance={_instance!r}")
+
+    # Fetch current QR from UltraMsg
+    try:
+        qr_resp = requests.get(
+            f"https://api.ultramsg.com/{_instance}/instance/qrCode",
+            params={"token": _token}, timeout=10
+        )
+        qr_data = qr_resp.json()
+        qr_val  = qr_data.get("qrCode") or qr_data.get("qr") or None
+        print(f"[WA_QR_DISPLAYED] client={cid} qr_present={bool(qr_val)}")
+        return jsonify({"status": "pending", "qr": qr_val})
+    except Exception as _e:
+        print(f"[WA_INSTANCE_CREATE_QR_ERROR] {_e!r}")
+        return jsonify({"status": "pending", "qr": None})
 
 
 @app.route("/admin/connect-whatsapp/qr/status")
 def admin_qr_status():
-    """JSON API — polls UltraMsg instance status. Never exposes credentials."""
+    """JSON API — polls the client's UltraMsg instance status. Never exposes credentials."""
     guard = _admin_guard()
     if guard:
         return jsonify({"error": "unauthorized"}), 403
-    _instance = os.getenv("ULTRAMSG_INSTANCE", "")
-    _token    = os.getenv("ULTRAMSG_TOKEN", "")
+    cid  = _session_client_id()
+    inst = get_whatsapp_instance(cid)
+    _instance = (inst["instance_id"] if inst else None) or os.getenv("ULTRAMSG_INSTANCE", "")
+    _token    = (inst["token"]       if inst else None) or os.getenv("ULTRAMSG_TOKEN", "")
     if not _instance or not _token:
         return jsonify({"status": "not_configured"})
+    print(f"[WA_STATUS_CHECK] client={cid} instance={_instance!r}")
     try:
         url  = f"https://api.ultramsg.com/{_instance}/instance/status"
         resp = requests.get(url, params={"token": _token}, timeout=8)
         data = resp.json()
         raw  = (data.get("status") or data.get("instanceStatus") or "").lower()
         if raw in ("connected", "authenticated"):
-            return jsonify({"status": "connected"})
+            # Persist connected state + phone number
+            _phone = data.get("phone") or data.get("number") or None
+            _now   = datetime.datetime.utcnow().isoformat()
+            con    = get_db_connection()
+            try:
+                if inst:
+                    con.execute("""
+                        UPDATE whatsapp_instances
+                        SET status='connected', phone_number=COALESCE(?,phone_number), updated_at=?
+                        WHERE client_id=?
+                    """, (_phone, _now, cid))
+                    con.execute("""
+                        UPDATE clients
+                        SET whatsapp_connected=1, whatsapp_connection_status='connected'
+                        WHERE id=?
+                    """, (cid,))
+                    con.commit()
+            finally:
+                con.close()
+            print(f"[WA_INSTANCE_CONNECTED] client={cid} phone={_phone!r}")
+            return jsonify({"status": "connected", "phone": _phone})
         if raw in ("qr", "loading", "init", "initializing"):
             return jsonify({"status": "qr_pending"})
         return jsonify({"status": "disconnected", "raw": raw})
@@ -5486,12 +5645,14 @@ def admin_qr_status():
 
 @app.route("/admin/connect-whatsapp/qr/code")
 def admin_qr_code():
-    """JSON API — fetches current QR code from UltraMsg. Never exposes credentials."""
+    """JSON API — fetches current QR code using the client's instance. Never exposes credentials."""
     guard = _admin_guard()
     if guard:
         return jsonify({"error": "unauthorized"}), 403
-    _instance = os.getenv("ULTRAMSG_INSTANCE", "")
-    _token    = os.getenv("ULTRAMSG_TOKEN", "")
+    cid  = _session_client_id()
+    inst = get_whatsapp_instance(cid)
+    _instance = (inst["instance_id"] if inst else None) or os.getenv("ULTRAMSG_INSTANCE", "")
+    _token    = (inst["token"]       if inst else None) or os.getenv("ULTRAMSG_TOKEN", "")
     if not _instance or not _token:
         return jsonify({"qr": None, "status": "not_configured"})
     try:
@@ -5499,6 +5660,7 @@ def admin_qr_code():
         resp = requests.get(url, params={"token": _token}, timeout=10)
         data = resp.json()
         qr_val = data.get("qrCode") or data.get("qr") or None
+        print(f"[WA_QR_DISPLAYED] client={cid} qr_present={bool(qr_val)}")
         return jsonify({"qr": qr_val})
     except Exception as _e:
         print(f"[QR_CODE_ERROR] {_e!r}")

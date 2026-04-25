@@ -88,9 +88,13 @@ A Flask-based WhatsApp sales assistant and SaaS platform. Converts conversations
 
 ## Multi-Tenant Design
 
-- `CLIENT_ID = 1` constant for MVP (single tenant)
+- `CLIENT_ID = 1` is the global default; per-request overridden via `g.wa_client_id`
 - All catalog, upsell, order queries are scoped by `client_id`
-- Future: resolve `CLIENT_ID` from UltraMsg webhook token to support multiple tenants
+- **Per-client WhatsApp instances**: stored in `whatsapp_instances` table (instance_id, token, status, phone_number per client)
+- `send_whatsapp_message(client_id, to, text)` — routes via client's own UltraMsg instance; falls back to platform instance
+- `wa_reply(to, text, client_id=None)` — uses `send_whatsapp_message` with `g.wa_client_id`
+- Webhook routing: `/whatsapp/instance/<instance_id>` sets `g.wa_client_id` from `whatsapp_instances` table, then calls `whatsapp()`
+- QR connect flow: POST `/admin/connect-whatsapp/create-instance` → upserts `whatsapp_instances` record → returns QR image from UltraMsg
 
 ## Environment Variables
 
