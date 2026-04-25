@@ -1,541 +1,648 @@
-{% extends "admin/layout.html" %}
-{% block title %}{{ t("ob_step1_label", lang) }}{% endblock %}
+<!DOCTYPE html>
+<html lang="{{ 'ar' if lang == 'ar' else 'en' }}" dir="{{ 'rtl' if lang == 'ar' else 'ltr' }}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Setup — Filtrex AI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-{% block content %}
-{% set dir = "rtl" if lang == "ar" else "ltr" %}
-{% set is_rtl = (lang == "ar") %}
+    :root {
+      --brand:    #4f46e5;
+      --brand-dk: #3730a3;
+      --brand-lt: #eef2ff;
+      --success:  #10b981;
+      --warn:     #f59e0b;
+      --gray-50:  #f9fafb;
+      --gray-100: #f3f4f6;
+      --gray-200: #e5e7eb;
+      --gray-400: #9ca3af;
+      --gray-600: #4b5563;
+      --gray-800: #1f2937;
+      --radius:   12px;
+    }
 
-<style>
-  /* ── Page wrapper ───────────────────────────────── */
-  .ob-page {
-    max-width: 680px;
-    margin: 0 auto;
-    padding: 8px 0 80px;
-    font-family: inherit;
-  }
+    body {
+      font-family: 'Inter', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
 
-  /* ── Header ─────────────────────────────────────── */
-  .ob-hero {
-    text-align: center;
-    padding: 40px 20px 36px;
-  }
-  .ob-hero-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: #f0f0ff;
-    color: #4f46e5;
-    font-size: 12px;
-    font-weight: 700;
-    padding: 4px 14px;
-    border-radius: 999px;
-    margin-bottom: 18px;
-    letter-spacing: .03em;
-    text-transform: uppercase;
-  }
-  .ob-hero h1 {
-    font-size: 28px;
-    font-weight: 800;
-    color: #0f172a;
-    margin: 0 0 10px;
-    line-height: 1.25;
-  }
-  .ob-hero p {
-    font-size: 15px;
-    color: #64748b;
-    margin: 0;
-    line-height: 1.6;
-  }
+    .ob-shell {
+      background: #fff;
+      border-radius: 20px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.18);
+      width: 100%;
+      max-width: 580px;
+      overflow: hidden;
+    }
 
-  /* ── Progress stepper ───────────────────────────── */
-  .ob-stepper {
-    display: flex;
-    align-items: center;
-    margin-bottom: 36px;
-    padding: 0 4px;
-  }
-  .ob-st-item {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    flex-shrink: 0;
-  }
-  .ob-st-circle {
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 14px;
-    font-weight: 800;
-    transition: all .25s;
-    position: relative;
-    z-index: 1;
-  }
-  .ob-st-circle.done    { background: {{ branding.primary_color }}; color: #fff; box-shadow: 0 0 0 3px rgba(79,70,229,.18); }
-  .ob-st-circle.active  { background: #fff; color: {{ branding.primary_color }}; border: 2.5px solid {{ branding.primary_color }}; box-shadow: 0 0 0 4px rgba(79,70,229,.10); }
-  .ob-st-circle.pending { background: #f1f5f9; color: #94a3b8; border: 2px solid #e2e8f0; }
-  .ob-st-label {
-    font-size: 11px;
-    font-weight: 600;
-    white-space: nowrap;
-    line-height: 1;
-  }
-  .ob-st-label.done    { color: {{ branding.primary_color }}; }
-  .ob-st-label.active  { color: {{ branding.primary_color }}; }
-  .ob-st-label.pending { color: #94a3b8; }
-  .ob-st-line {
-    flex: 1;
-    height: 2px;
-    background: #e2e8f0;
-    margin-bottom: 20px;
-    transition: background .25s;
-  }
-  .ob-st-line.done { background: {{ branding.primary_color }}; }
+    /* ── Progress header ─────────────────────────────────── */
+    .ob-header {
+      background: linear-gradient(135deg, var(--brand) 0%, #7c3aed 100%);
+      padding: 24px 28px 20px;
+      color: #fff;
+    }
+    .ob-logo {
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: -.4px;
+      margin-bottom: 18px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .ob-logo .badge {
+      background: rgba(255,255,255,.15);
+      border-radius: 6px;
+      padding: 2px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .5px;
+    }
 
-  /* ── Flash messages ─────────────────────────────── */
-  .ob-flash {
-    padding: 12px 16px;
-    border-radius: 10px;
-    font-size: 14px;
-    margin-bottom: 20px;
-  }
-  .ob-flash.success { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
-  .ob-flash.error   { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+    .ob-track {
+      display: flex;
+      align-items: center;
+    }
+    .ob-node {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      flex: 1;
+    }
+    .ob-node-dot {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: rgba(255,255,255,.18);
+      border: 2px solid rgba(255,255,255,.25);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      color: rgba(255,255,255,.55);
+      position: relative;
+      z-index: 2;
+      transition: all .3s;
+    }
+    .ob-node.done  .ob-node-dot { background: var(--success); border-color: var(--success); color: #fff; }
+    .ob-node.active .ob-node-dot {
+      background: #fff; border-color: #fff; color: var(--brand);
+      box-shadow: 0 0 0 4px rgba(255,255,255,.22);
+    }
+    .ob-node-label {
+      font-size: 9px;
+      color: rgba(255,255,255,.5);
+      margin-top: 5px;
+      white-space: nowrap;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: .4px;
+    }
+    .ob-node.done .ob-node-label,
+    .ob-node.active .ob-node-label { color: rgba(255,255,255,.88); }
+    .ob-connector {
+      flex: 1;
+      height: 2px;
+      background: rgba(255,255,255,.18);
+      margin-bottom: 20px;
+      transition: background .3s;
+    }
+    .ob-connector.done { background: var(--success); }
 
-  /* ── Step cards ─────────────────────────────────── */
-  .ob-card {
-    background: #fff;
-    border: 1.5px solid #e2e8f0;
-    border-radius: 16px;
-    padding: 24px;
-    margin-bottom: 16px;
-    transition: border-color .2s, box-shadow .2s;
-  }
-  .ob-card.active {
-    border-color: {{ branding.primary_color }};
-    box-shadow: 0 0 0 4px rgba(79,70,229,.07), 0 4px 20px rgba(79,70,229,.08);
-  }
-  .ob-card.done-card {
-    border-color: #86efac;
-    background: linear-gradient(to bottom right, #f0fdf4, #fff);
-  }
-  .ob-card.locked {
-    opacity: .45;
-    pointer-events: none;
-  }
+    /* ── Body ─────────────────────────────────────────────── */
+    .ob-body { padding: 28px 28px 24px; }
 
-  /* card header row */
-  .ob-card-hd {
-    display: flex;
-    align-items: flex-start;
-    gap: 14px;
-  }
-  .ob-card-num {
-    width: 38px;
-    height: 38px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 15px;
-    font-weight: 800;
-    flex-shrink: 0;
-    margin-top: 1px;
-  }
-  .ob-card-num.done    { background: {{ branding.primary_color }}; color: #fff; }
-  .ob-card-num.active  { background: #ede9fe; color: {{ branding.primary_color }}; }
-  .ob-card-num.pending { background: #f1f5f9; color: #94a3b8; }
+    .ob-step-tag {
+      display: inline-block;
+      background: var(--brand-lt);
+      color: var(--brand);
+      font-size: 11px;
+      font-weight: 600;
+      border-radius: 20px;
+      padding: 3px 12px;
+      margin-bottom: 12px;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+    }
+    .ob-title {
+      font-size: 22px;
+      font-weight: 800;
+      color: var(--gray-800);
+      margin-bottom: 6px;
+      line-height: 1.25;
+    }
+    .ob-desc {
+      font-size: 14px;
+      color: var(--gray-600);
+      margin-bottom: 24px;
+      line-height: 1.6;
+    }
 
-  .ob-card-meta { flex: 1; min-width: 0; }
-  .ob-card-title {
-    font-size: 16px;
-    font-weight: 700;
-    color: #0f172a;
-    margin-bottom: 4px;
-  }
-  .ob-card-desc {
-    font-size: 13.5px;
-    color: #64748b;
-    line-height: 1.55;
-  }
-  .ob-done-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    background: #dcfce7;
-    color: #166534;
-    font-size: 12px;
-    font-weight: 700;
-    padding: 4px 12px;
-    border-radius: 999px;
-    flex-shrink: 0;
-  }
+    /* ── Forms ────────────────────────────────────────────── */
+    .form-group { margin-bottom: 16px; }
+    .form-label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--gray-800);
+      margin-bottom: 6px;
+    }
+    .form-control {
+      width: 100%;
+      padding: 10px 13px;
+      border: 1.5px solid var(--gray-200);
+      border-radius: 10px;
+      font-size: 14px;
+      font-family: inherit;
+      color: var(--gray-800);
+      background: var(--gray-50);
+      outline: none;
+      transition: border-color .2s, box-shadow .2s;
+    }
+    .form-control:focus {
+      border-color: var(--brand);
+      box-shadow: 0 0 0 3px rgba(79,70,229,.1);
+      background: #fff;
+    }
+    select.form-control { cursor: pointer; }
+    textarea.form-control { resize: vertical; min-height: 76px; }
 
-  /* card body */
-  .ob-card-body {
-    margin-top: 20px;
-    padding-{{ "right" if is_rtl else "left" }}: 52px;
-  }
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    @media (max-width: 420px) { .form-row { grid-template-columns: 1fr; } }
 
-  /* ── WhatsApp phone mockup ───────────────────────── */
-  .wa-mockup {
-    background: #e5ddd5;
-    background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23d4ccc6' fill-opacity='0.4'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
-    border-radius: 14px;
-    overflow: hidden;
-    max-width: 340px;
-    border: 1px solid #d4ccc6;
-    box-shadow: 0 4px 20px rgba(0,0,0,.10);
-    margin-bottom: 16px;
-  }
-  .wa-header {
-    background: #075e54;
-    padding: 10px 16px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .wa-avatar {
-    width: 34px; height: 34px;
-    border-radius: 50%;
-    background: #25d366;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 16px;
-    flex-shrink: 0;
-  }
-  .wa-header-info { flex: 1; min-width: 0; }
-  .wa-header-name  { font-size: 13px; font-weight: 700; color: #fff; }
-  .wa-header-status { font-size: 11px; color: #a8d5b3; }
+    /* Radio cards */
+    .card-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+    @media (max-width: 420px) { .card-grid { grid-template-columns: 1fr 1fr; } }
+    .card-option input[type="radio"] { display: none; }
+    .card-option label {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+      padding: 12px 8px;
+      border: 2px solid var(--gray-200);
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--gray-600);
+      text-align: center;
+      transition: all .2s;
+      background: var(--gray-50);
+    }
+    .card-option label .icon { font-size: 20px; }
+    .card-option input:checked + label {
+      border-color: var(--brand);
+      background: var(--brand-lt);
+      color: var(--brand);
+    }
 
-  .wa-body {
-    padding: 12px 10px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    min-height: 180px;
-    direction: {{ dir }};
-  }
-  .wa-msg-wrap { display: flex; flex-direction: column; }
-  .wa-msg-wrap.bot      { align-items: flex-start; }
-  .wa-msg-wrap.customer { align-items: flex-end; }
-  .wa-sender {
-    font-size: 10px;
-    font-weight: 600;
-    color: #667781;
-    margin-bottom: 2px;
-    padding: 0 4px;
-  }
-  .wa-bubble {
-    max-width: 78%;
-    padding: 8px 12px;
-    border-radius: 10px;
-    font-size: 13px;
-    line-height: 1.45;
-    color: #111827;
-    white-space: pre-wrap;
-    position: relative;
-  }
-  .wa-bubble.bot      { background: #fff; border-bottom-left-radius: 2px; box-shadow: 0 1px 2px rgba(0,0,0,.10); }
-  .wa-bubble.customer { background: #dcf8c6; border-bottom-right-radius: 2px; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
-  .wa-bubble.bot[dir="rtl"]      { border-bottom-left-radius: 10px; border-bottom-right-radius: 2px; }
-  .wa-bubble.customer[dir="rtl"] { border-bottom-right-radius: 10px; border-bottom-left-radius: 2px; }
-  .wa-time { font-size: 10px; color: #667781; text-align: end; margin-top: 2px; padding: 0 2px; }
+    /* Buttons */
+    .ob-actions {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 24px;
+      padding-top: 18px;
+      border-top: 1px solid var(--gray-100);
+    }
+    .ob-actions.centered { justify-content: center; }
+    .ob-actions.right    { justify-content: flex-end; }
 
-  .wa-note {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    background: #fffbeb;
-    border: 1px solid #fde68a;
-    border-radius: 10px;
-    padding: 12px 16px;
-    font-size: 13px;
-    color: #92400e;
-    max-width: 340px;
-    line-height: 1.5;
-  }
-  .wa-note-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 11px 22px;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all .2s;
+      font-family: inherit;
+      white-space: nowrap;
+    }
+    .btn-primary { background: var(--brand); color: #fff; }
+    .btn-primary:hover { background: var(--brand-dk); transform: translateY(-1px); }
+    .btn-ghost   { background: transparent; color: var(--gray-400); font-size: 13px; padding: 11px 8px; }
+    .btn-ghost:hover { color: var(--gray-600); }
+    .btn-success { background: var(--success); color: #fff; }
+    .btn-success:hover { background: #059669; transform: translateY(-1px); }
+    .btn-full    { width: 100%; justify-content: center; }
+    .btn-wa      { background: #25d366; color: #fff; }
+    .btn-wa:hover { background: #1ebe57; }
 
-  /* ── Buttons ─────────────────────────────────────── */
-  .ob-btn-row {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin-top: 20px;
-  }
-  .btn-ob-primary {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 11px 24px;
-    background: {{ branding.primary_color }};
-    color: #fff;
-    border-radius: 10px;
-    font-size: 14px;
-    font-weight: 700;
-    text-decoration: none;
-    border: none;
-    cursor: pointer;
-    transition: opacity .15s, transform .1s;
-    box-shadow: 0 2px 8px rgba(79,70,229,.25);
-  }
-  .btn-ob-primary:hover  { opacity: .88; transform: translateY(-1px); }
-  .btn-ob-primary:active { transform: translateY(0); }
+    /* WA status box */
+    .wa-status-box {
+      border-radius: var(--radius);
+      padding: 18px;
+      text-align: center;
+      margin-bottom: 18px;
+    }
+    .wa-status-box.connected    { background: #ecfdf5; border: 1.5px solid #a7f3d0; }
+    .wa-status-box.not-connected{ background: #fffbeb; border: 1.5px solid #fde68a; }
+    .wa-status-icon { font-size: 34px; margin-bottom: 6px; }
+    .wa-status-text { font-size: 15px; font-weight: 700; color: var(--gray-800); }
+    .wa-status-sub  { font-size: 13px; color: var(--gray-600); margin-top: 4px; }
 
-  .btn-ob-ghost {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 10px 20px;
-    color: #64748b;
-    font-size: 13.5px;
-    font-weight: 600;
-    border: 1.5px solid #e2e8f0;
-    border-radius: 10px;
-    background: #fff;
-    cursor: pointer;
-    text-decoration: none;
-    transition: all .15s;
-  }
-  .btn-ob-ghost:hover { color: #334155; border-color: #cbd5e1; background: #f8fafc; }
+    .wa-steps { margin: 14px 0 4px; }
+    .wa-step-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--gray-100);
+    }
+    .wa-step-row:last-child { border-bottom: none; }
+    .wa-step-num {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: var(--brand-lt);
+      color: var(--brand);
+      font-size: 11px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .wa-step-content { font-size: 13px; color: var(--gray-600); line-height: 1.5; }
+    .wa-step-content strong { color: var(--gray-800); }
+    .wa-step-content a { color: var(--brand); font-weight: 600; }
 
-  .already-conn-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: #dcfce7;
-    color: #166534;
-    font-size: 13px;
-    font-weight: 700;
-    padding: 6px 14px;
-    border-radius: 999px;
-    margin-bottom: 14px;
-  }
+    /* Success */
+    .ob-success { text-align: center; padding: 8px 0 4px; }
+    .ob-success-icon { font-size: 58px; margin-bottom: 14px; animation: pop .5s ease; }
+    @keyframes pop {
+      0%   { transform: scale(.3); opacity: 0; }
+      70%  { transform: scale(1.1); }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    .ob-success-title { font-size: 24px; font-weight: 800; color: var(--gray-800); margin-bottom: 8px; }
+    .ob-success-desc  { font-size: 14px; color: var(--gray-600); line-height: 1.6; margin-bottom: 0; }
 
-  /* ── Step 3 what-next box ───────────────────────── */
-  .ob-what-next {
-    background: #f5f3ff;
-    border: 1px solid #ddd6fe;
-    border-radius: 12px;
-    padding: 16px 18px;
-    font-size: 13.5px;
-    color: #4c1d95;
-    line-height: 1.6;
-    margin-bottom: 16px;
-  }
-  .ob-what-next strong { display: block; margin-bottom: 6px; font-weight: 700; color: #3730a3; }
+    .features-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin: 20px 0 20px;
+    }
+    .feature-card {
+      background: var(--gray-50);
+      border: 1px solid var(--gray-200);
+      border-radius: var(--radius);
+      padding: 14px 10px;
+      text-align: center;
+    }
+    .feature-card .f-icon  { font-size: 22px; margin-bottom: 6px; }
+    .feature-card .f-title { font-size: 12px; font-weight: 700; color: var(--gray-800); }
+    .feature-card .f-sub   { font-size: 11px; color: var(--gray-400); margin-top: 2px; }
 
-  /* ── Responsive ─────────────────────────────────── */
-  @media (max-width: 600px) {
-    .ob-hero h1 { font-size: 22px; }
-    .ob-card-body { padding-left: 0; padding-right: 0; }
-    .wa-mockup { max-width: 100%; }
-  }
-</style>
+    /* Welcome highlight box */
+    .welcome-box {
+      background: var(--brand-lt);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-bottom: 8px;
+    }
+    .welcome-features {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+      margin-top: 14px;
+    }
+    .wf-card {
+      background: #fff;
+      border-radius: 8px;
+      padding: 10px 6px;
+      text-align: center;
+    }
+    .wf-card .icon { font-size: 18px; }
+    .wf-card .label { font-size: 10px; font-weight: 600; color: var(--gray-800); margin-top: 4px; }
+  </style>
+</head>
+<body>
+<div class="ob-shell">
 
-<div class="ob-page" dir="{{ dir }}">
-
-  <!-- Hero -->
-  <div class="ob-hero">
-    <div class="ob-hero-badge">✦ {{ branding.brand_name }}</div>
-    <h1>{{ t("ob_welcome", lang).replace("{brand}", branding.brand_name) }}</h1>
-    <p>{{ t("ob_subtitle", lang) }}</p>
-  </div>
-
-  <!-- Flash messages -->
-  {% with messages = get_flashed_messages(with_categories=true) %}
-    {% for category, message in messages %}
-      <div class="ob-flash {{ 'success' if category == 'success' else 'error' }}">{{ message }}</div>
-    {% endfor %}
-  {% endwith %}
-
-  <!-- Stepper -->
-  <div class="ob-stepper">
-    <div class="ob-st-item">
-      <div class="ob-st-circle {% if step >= 1 %}done{% elif step == 0 %}active{% else %}pending{% endif %}">
-        {% if step >= 1 %}✓{% else %}1{% endif %}
-      </div>
-      <span class="ob-st-label {% if step >= 1 %}done{% elif step == 0 %}active{% else %}pending{% endif %}">
-        {{ t("ob_step1_label", lang) }}
-      </span>
+  <!-- Progress Header -->
+  <div class="ob-header">
+    <div class="ob-logo">
+      Filtrex AI
+      <span class="badge">SETUP WIZARD</span>
     </div>
-    <div class="ob-st-line {% if step >= 1 %}done{% endif %}"></div>
-    <div class="ob-st-item">
-      <div class="ob-st-circle {% if step >= 2 %}done{% elif step == 1 %}active{% else %}pending{% endif %}">
-        {% if step >= 2 %}✓{% else %}2{% endif %}
-      </div>
-      <span class="ob-st-label {% if step >= 2 %}done{% elif step == 1 %}active{% else %}pending{% endif %}">
-        {{ t("ob_step2_label", lang) }}
-      </span>
-    </div>
-    <div class="ob-st-line {% if step >= 2 %}done{% endif %}"></div>
-    <div class="ob-st-item">
-      <div class="ob-st-circle {% if step >= 3 %}done{% elif step == 2 %}active{% else %}pending{% endif %}">
-        {% if step >= 3 %}✓{% else %}3{% endif %}
-      </div>
-      <span class="ob-st-label {% if step >= 3 %}done{% elif step == 2 %}active{% else %}pending{% endif %}">
-        {{ t("ob_step3_label", lang) }}
-      </span>
+    <div class="ob-track">
+      {% set labels = [
+        t('ob_step0_label', lang),
+        t('ob_step1_label', lang),
+        t('ob_step2_label', lang),
+        t('ob_step3_label', lang),
+        t('ob_step4_label', lang)
+      ] %}
+      {% for i in range(5) %}
+        <div class="ob-node {{ 'done' if step > i else ('active' if step == i else '') }}">
+          <div class="ob-node-dot">
+            {% if step > i %}✓{% else %}{{ i + 1 }}{% endif %}
+          </div>
+          <div class="ob-node-label">{{ labels[i] }}</div>
+        </div>
+        {% if i < 4 %}
+          <div class="ob-connector {{ 'done' if step > i else '' }}"></div>
+        {% endif %}
+      {% endfor %}
     </div>
   </div>
 
-  <!-- ═══ STEP 1: Connect WhatsApp ═══════════════════════════════════════ -->
-  <div class="ob-card {% if step == 0 %}active{% elif step >= 1 %}done-card{% else %}locked{% endif %}">
-    <div class="ob-card-hd">
-      <div class="ob-card-num {% if step >= 1 %}done{% elif step == 0 %}active{% else %}pending{% endif %}">
-        {% if step >= 1 %}✓{% else %}1{% endif %}
-      </div>
-      <div class="ob-card-meta">
-        <div class="ob-card-title">{{ t("ob_step1_title", lang) }}</div>
-        <div class="ob-card-desc">{{ t("ob_step1_desc", lang) }}</div>
-      </div>
-      {% if step >= 1 %}
-        <div class="ob-done-badge">✓ {{ t("ob_done", lang) }}</div>
-      {% endif %}
-    </div>
+  <!-- Step Body -->
+  <div class="ob-body">
 
+    {# ── STEP 0: Welcome ──────────────────────────────────────────────────── #}
     {% if step == 0 %}
-    <div class="ob-card-body">
-      {% if client.whatsapp_connected %}
-        <div class="already-conn-pill">✅ {{ t("ob_already_conn", lang) }}</div>
-        <form method="POST">
-          <input type="hidden" name="action" value="skip_whatsapp">
-          <button type="submit" class="btn-ob-primary">{{ t("ob_continue", lang) }}</button>
-        </form>
-      {% else %}
-        <!-- WhatsApp phone mockup -->
-        <div class="wa-mockup">
-          <div class="wa-header">
-            <div class="wa-avatar">🤖</div>
-            <div class="wa-header-info">
-              <div class="wa-header-name">{{ branding.brand_name }}</div>
-              <div class="wa-header-status">● online</div>
-            </div>
+    <div class="ob-step-tag">Step 1 of 5</div>
+    <div class="ob-title">{{ t('ob_step0_title', lang) }}</div>
+    <div class="ob-desc">{{ t('ob_step0_desc', lang) }}</div>
+
+    <div class="welcome-box">
+      <div style="display:flex;align-items:center;gap:14px;">
+        <div style="font-size:44px;">🤖</div>
+        <div>
+          <div style="font-size:15px;font-weight:700;color:var(--gray-800);margin-bottom:3px;">
+            {% if client.name %}{{ client.name }}'s{% else %}Your{% endif %} AI Sales Engine
           </div>
-          <div class="wa-body">
-            {% for m in demo_messages %}
-              <div class="wa-msg-wrap {{ m.from }}">
-                <div class="wa-sender">
-                  {% if m.from == 'bot' %}🤖 {{ t("ob_bot_label", lang) }}{% else %}👤 {{ t("ob_customer_label", lang) }}{% endif %}
-                </div>
-                <div class="wa-bubble {{ m.from }}" dir="{{ dir }}">{{ m.text }}</div>
-                <div class="wa-time">{{ "12:01" if loop.index == 1 else ("12:0" ~ loop.index) }}</div>
-              </div>
-            {% endfor %}
+          <div style="font-size:13px;color:var(--gray-600);line-height:1.5;">
+            Respond to WhatsApp messages, take orders &amp; book appointments — automatically, 24/7.
           </div>
         </div>
+      </div>
+      <div class="welcome-features">
+        <div class="wf-card"><div class="icon">💬</div><div class="label">Auto-Reply</div></div>
+        <div class="wf-card"><div class="icon">📦</div><div class="label">Orders</div></div>
+        <div class="wf-card"><div class="icon">📅</div><div class="label">Bookings</div></div>
+      </div>
+    </div>
 
-        <!-- Preview note -->
-        <div class="wa-note">
-          <span class="wa-note-icon">💬</span>
-          <div>
-            <strong style="display:block;margin-bottom:3px;font-weight:700;">
-              {{ t("ob_preview_title", lang) }}
-            </strong>
-            {{ t("ob_preview_note", lang) }}
+    <form method="POST">
+      <input type="hidden" name="action" value="welcome_done">
+      <div class="ob-actions centered">
+        <button type="submit" class="btn btn-primary" style="min-width:220px;font-size:15px;padding:13px 28px;">
+          {{ t('ob_get_started', lang) }}
+        </button>
+      </div>
+    </form>
+
+    {# ── STEP 1: Business Info ─────────────────────────────────────────────── #}
+    {% elif step == 1 %}
+    <div class="ob-step-tag">Step 2 of 5</div>
+    <div class="ob-title">{{ t('ob_step1_title', lang) }}</div>
+    <div class="ob-desc">{{ t('ob_step1_desc', lang) }}</div>
+
+    <form method="POST">
+      <input type="hidden" name="action" value="save_business">
+
+      <div class="form-group">
+        <label class="form-label">{{ t('ob_lbl_biz_name', lang) }}</label>
+        <input type="text" name="name" class="form-control"
+               value="{{ client.name or '' }}" placeholder="e.g. City Dental Clinic" required>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">{{ t('ob_lbl_biz_type', lang) }}</label>
+        <select name="business_type" class="form-control">
+          {% set bt = client.business_type or '' %}
+          <option value="clinic"      {{ 'selected' if bt=='clinic' }}>🏥 Clinic / Healthcare</option>
+          <option value="restaurant"  {{ 'selected' if bt=='restaurant' }}>🍽️ Restaurant / Food</option>
+          <option value="salon"       {{ 'selected' if bt=='salon' }}>💇 Salon / Beauty</option>
+          <option value="retail"      {{ 'selected' if bt=='retail' }}>🛍️ Retail / E-commerce</option>
+          <option value="real_estate" {{ 'selected' if bt=='real_estate' }}>🏠 Real Estate</option>
+          <option value="education"   {{ 'selected' if bt=='education' }}>📚 Education / Training</option>
+          <option value="services"    {{ 'selected' if bt=='services' }}>🔧 Professional Services</option>
+          <option value="other"       {{ 'selected' if bt=='other' or not bt }}>📋 Other</option>
+        </select>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">{{ t('ob_lbl_language', lang) }}</label>
+          <select name="default_language" class="form-control">
+            <option value="en" {{ 'selected' if (client.default_language or 'en')=='en' }}>🇬🇧 English</option>
+            <option value="ar" {{ 'selected' if client.default_language=='ar' }}>🇸🇦 العربية</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">{{ t('ob_lbl_currency', lang) }}</label>
+          <select name="currency" class="form-control">
+            {% set cur = client.currency or 'USD' %}
+            <option value="USD" {{ 'selected' if cur=='USD' }}>$ USD</option>
+            <option value="EUR" {{ 'selected' if cur=='EUR' }}>€ EUR</option>
+            <option value="GBP" {{ 'selected' if cur=='GBP' }}>£ GBP</option>
+            <option value="MAD" {{ 'selected' if cur=='MAD' }}>د.م MAD</option>
+            <option value="SAR" {{ 'selected' if cur=='SAR' }}>﷼ SAR</option>
+            <option value="AED" {{ 'selected' if cur=='AED' }}>د.إ AED</option>
+            <option value="EGP" {{ 'selected' if cur=='EGP' }}>ج.م EGP</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="ob-actions">
+        <span></span>
+        <button type="submit" class="btn btn-primary">{{ t('ob_continue', lang) }}</button>
+      </div>
+    </form>
+
+    {# ── STEP 2: AI Settings ──────────────────────────────────────────────── #}
+    {% elif step == 2 %}
+    <div class="ob-step-tag">Step 3 of 5</div>
+    <div class="ob-title">{{ t('ob_step2_title', lang) }}</div>
+    <div class="ob-desc">{{ t('ob_step2_desc', lang) }}</div>
+
+    <form method="POST">
+      <input type="hidden" name="action" value="save_ai">
+
+      <div class="form-group">
+        <label class="form-label">{{ t('ob_lbl_tone', lang) }}</label>
+        <div class="card-grid">
+          <div class="card-option">
+            <input type="radio" name="assistant_tone" id="tone_friendly" value="friendly"
+                   {{ 'checked' if (client.assistant_tone or 'friendly')=='friendly' }}>
+            <label for="tone_friendly"><span class="icon">😊</span>{{ t('ob_tone_friendly', lang) }}</label>
+          </div>
+          <div class="card-option">
+            <input type="radio" name="assistant_tone" id="tone_professional" value="professional"
+                   {{ 'checked' if client.assistant_tone=='professional' }}>
+            <label for="tone_professional"><span class="icon">💼</span>{{ t('ob_tone_professional', lang) }}</label>
+          </div>
+          <div class="card-option">
+            <input type="radio" name="assistant_tone" id="tone_casual" value="casual"
+                   {{ 'checked' if client.assistant_tone=='casual' }}>
+            <label for="tone_casual"><span class="icon">🎉</span>{{ t('ob_tone_casual', lang) }}</label>
           </div>
         </div>
+      </div>
 
-        <!-- Action buttons -->
-        <div class="ob-btn-row">
-          <a href="/admin/connect-whatsapp" class="btn-ob-primary">
-            <span>{% if lang == "ar" %}📲{% else %}📲{% endif %}</span>
-            {{ t("ob_connect_btn", lang) }}
-          </a>
-          <form method="POST">
-            <input type="hidden" name="action" value="skip_whatsapp">
-            <button type="submit" class="btn-ob-ghost">{{ t("ob_skip", lang) }}</button>
-          </form>
+      <div class="form-group">
+        <label class="form-label">{{ t('ob_lbl_goal', lang) }}</label>
+        <div class="card-grid">
+          <div class="card-option">
+            <input type="radio" name="assistant_goal" id="goal_book" value="book_appointments"
+                   {{ 'checked' if (client.assistant_goal or 'book_appointments')=='book_appointments' }}>
+            <label for="goal_book"><span class="icon">📅</span>{{ t('ob_goal_book', lang) }}</label>
+          </div>
+          <div class="card-option">
+            <input type="radio" name="assistant_goal" id="goal_sell" value="sell_products"
+                   {{ 'checked' if client.assistant_goal=='sell_products' }}>
+            <label for="goal_sell"><span class="icon">🛍️</span>{{ t('ob_goal_sell', lang) }}</label>
+          </div>
+          <div class="card-option">
+            <input type="radio" name="assistant_goal" id="goal_support" value="customer_support"
+                   {{ 'checked' if client.assistant_goal=='customer_support' }}>
+            <label for="goal_support"><span class="icon">🎧</span>{{ t('ob_goal_support', lang) }}</label>
+          </div>
+          <div class="card-option">
+            <input type="radio" name="assistant_goal" id="goal_leads" value="generate_leads"
+                   {{ 'checked' if client.assistant_goal=='generate_leads' }}>
+            <label for="goal_leads"><span class="icon">🎯</span>{{ t('ob_goal_leads', lang) }}</label>
+          </div>
         </div>
-      {% endif %}
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">{{ t('ob_lbl_biz_desc', lang) }}</label>
+        <textarea name="business_description" class="form-control"
+                  placeholder="{{ t('ob_biz_desc_hint', lang) }}">{{ client.business_description or '' }}</textarea>
+      </div>
+
+      <div class="ob-actions">
+        <span class="btn-ghost" style="color:var(--gray-400);font-size:12px;">Step 3 of 5</span>
+        <button type="submit" class="btn btn-primary">{{ t('ob_continue', lang) }}</button>
+      </div>
+    </form>
+
+    {# ── STEP 3: WhatsApp Connect ─────────────────────────────────────────── #}
+    {% elif step == 3 %}
+    <div class="ob-step-tag">Step 4 of 5</div>
+    <div class="ob-title">{{ t('ob_step3_title', lang) }}</div>
+    <div class="ob-desc">{{ t('ob_step3_desc', lang) }}</div>
+
+    {% if wa_connected %}
+      <div class="wa-status-box connected">
+        <div class="wa-status-icon">✅</div>
+        <div class="wa-status-text">{{ t('ob_already_conn', lang) }}</div>
+        <div class="wa-status-sub">Your WhatsApp number is linked and ready.</div>
+      </div>
+      <form method="POST">
+        <input type="hidden" name="action" value="whatsapp_done">
+        <div class="ob-actions right">
+          <button type="submit" class="btn btn-success">{{ t('ob_continue', lang) }}</button>
+        </div>
+      </form>
+    {% else %}
+      <div class="wa-status-box not-connected">
+        <div class="wa-status-icon">📱</div>
+        <div class="wa-status-text">Not connected yet</div>
+        <div class="wa-status-sub">{{ t('ob_wa_not_conn', lang) }}</div>
+      </div>
+
+      <div class="wa-steps">
+        <div class="wa-step-row">
+          <div class="wa-step-num">1</div>
+          <div class="wa-step-content">
+            Go to <a href="https://app.ultramsg.com" target="_blank">app.ultramsg.com</a> and create a free account.
+          </div>
+        </div>
+        <div class="wa-step-row">
+          <div class="wa-step-num">2</div>
+          <div class="wa-step-content">
+            Create an instance, scan the QR with your WhatsApp, then copy your <strong>Instance ID</strong> and <strong>Token</strong>.
+          </div>
+        </div>
+        <div class="wa-step-row">
+          <div class="wa-step-num">3</div>
+          <div class="wa-step-content">
+            Paste them into <a href="/admin/connect-whatsapp" target="_blank">Settings → Connect WhatsApp</a>.
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <a href="/admin/connect-whatsapp" target="_blank" class="btn btn-wa">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+          </svg>
+          Connect WhatsApp
+        </a>
+      </div>
+
+      <form method="POST" style="margin-top:4px;">
+        <input type="hidden" name="action" value="skip_whatsapp">
+        <div class="ob-actions">
+          <button type="submit" class="btn btn-ghost">{{ t('ob_skip', lang) }}</button>
+          <a href="/admin/connect-whatsapp" class="btn btn-primary">{{ t('ob_connect_btn', lang) }}</a>
+        </div>
+      </form>
+    {% endif %}
+
+    {# ── STEP 4: Success ──────────────────────────────────────────────────── #}
+    {% elif step == 4 %}
+    <div class="ob-success">
+      <div class="ob-success-icon">🎉</div>
+      <div class="ob-success-title">{{ t('ob_step4_title', lang) }}</div>
+      <div class="ob-success-desc">{{ t('ob_step4_desc', lang) }}</div>
+
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="f-icon">💬</div>
+          <div class="f-title">AI Conversations</div>
+          <div class="f-sub">Auto-reply 24/7</div>
+        </div>
+        <div class="feature-card">
+          <div class="f-icon">📦</div>
+          <div class="f-title">Order Tracking</div>
+          <div class="f-sub">Real-time dashboard</div>
+        </div>
+        <div class="feature-card">
+          <div class="f-icon">📅</div>
+          <div class="f-title">Bookings</div>
+          <div class="f-sub">Auto-scheduling</div>
+        </div>
+        <div class="feature-card">
+          <div class="f-icon">📊</div>
+          <div class="f-title">Analytics</div>
+          <div class="f-sub">Sales insights</div>
+        </div>
+      </div>
+
+      <form method="POST">
+        <input type="hidden" name="action" value="complete">
+        <button type="submit" class="btn btn-success btn-full" style="font-size:15px;padding:14px;">
+          {{ t('ob_finish', lang) }}
+        </button>
+      </form>
     </div>
     {% endif %}
+
   </div>
-
-  <!-- ═══ STEP 2: Add Catalog ════════════════════════════════════════════ -->
-  <div class="ob-card {% if step == 1 %}active{% elif step >= 2 %}done-card{% elif step < 1 %}locked{% endif %}">
-    <div class="ob-card-hd">
-      <div class="ob-card-num {% if step >= 2 %}done{% elif step == 1 %}active{% else %}pending{% endif %}">
-        {% if step >= 2 %}✓{% else %}2{% endif %}
-      </div>
-      <div class="ob-card-meta">
-        <div class="ob-card-title">{{ t("ob_step2_title", lang) }}</div>
-        <div class="ob-card-desc">
-          {{ t("ob_step2_desc", lang) }}
-          {% if catalog_count > 0 %}
-            &nbsp;{{ t("ob_already_have", lang) }} <strong>{{ catalog_count }}</strong> {{ t("ob_in_catalog", lang) }}
-          {% endif %}
-        </div>
-      </div>
-      {% if step >= 2 %}
-        <div class="ob-done-badge">✓ {{ t("ob_done", lang) }}</div>
-      {% endif %}
-    </div>
-
-    {% if step == 1 %}
-    <div class="ob-card-body">
-      {% if catalog_count > 0 %}
-        <div style="margin-bottom:16px;">
-          <span class="ob-done-badge">✅ {{ catalog_count }} {{ t("ob_items_added", lang) }}</span>
-        </div>
-        <div class="ob-btn-row">
-          <form method="POST">
-            <input type="hidden" name="action" value="skip_catalog">
-            <button type="submit" class="btn-ob-primary">{{ t("ob_continue", lang) }}</button>
-          </form>
-          <a href="/admin/catalog/new" class="btn-ob-ghost">{{ t("ob_add_another", lang) }}</a>
-        </div>
-      {% else %}
-        <div class="ob-btn-row">
-          <a href="/admin/catalog/new" class="btn-ob-primary">📦 {{ t("ob_add_item", lang) }}</a>
-          <form method="POST">
-            <input type="hidden" name="action" value="skip_catalog">
-            <button type="submit" class="btn-ob-ghost">{{ t("ob_skip", lang) }}</button>
-          </form>
-        </div>
-        <p style="font-size:12px;color:#94a3b8;margin-top:12px;line-height:1.5;">{{ t("ob_catalog_hint", lang) }}</p>
-      {% endif %}
-    </div>
-    {% endif %}
-  </div>
-
-  <!-- ═══ STEP 3: Launch ═════════════════════════════════════════════════ -->
-  <div class="ob-card {% if step == 2 %}active{% elif step >= 3 %}done-card{% else %}locked{% endif %}">
-    <div class="ob-card-hd">
-      <div class="ob-card-num {% if step >= 3 %}done{% elif step == 2 %}active{% else %}pending{% endif %}">
-        {% if step >= 3 %}✓{% else %}3{% endif %}
-      </div>
-      <div class="ob-card-meta">
-        <div class="ob-card-title">{{ t("ob_step3_title", lang) }}</div>
-        <div class="ob-card-desc">{{ t("ob_step3_desc", lang) }}</div>
-      </div>
-    </div>
-
-    {% if step == 2 %}
-    <div class="ob-card-body">
-      <div class="ob-what-next">
-        <strong>{{ t("ob_what_next", lang) }}</strong>
-        {{ t("ob_what_next_body", lang) }}
-      </div>
-      {% if not client.whatsapp_connected %}
-        <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;
-             padding:12px 16px;font-size:13px;color:#92400e;margin-bottom:16px;line-height:1.5;">
-          {{ t("ob_wa_not_conn", lang) }}
-        </div>
-      {% endif %}
-      <div class="ob-btn-row">
-        <form method="POST">
-          <input type="hidden" name="action" value="complete">
-          <button type="submit" class="btn-ob-primary">🚀 {{ t("ob_go_dashboard", lang) }}</button>
-        </form>
-      </div>
-    </div>
-    {% endif %}
-  </div>
-
 </div>
-{% endblock %}
+</body>
+</html>

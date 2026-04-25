@@ -282,38 +282,53 @@ TRANSLATIONS = {
         "wa_form_label":            "WhatsApp Number",
         "wa_form_placeholder":      "+212600000000",
         "wa_form_hint":             "Include country code, e.g. +212600000000",
-        # Onboarding
-        "ob_welcome":         "Welcome to {brand} 🚀",
-        "ob_subtitle":        "Let's get your WhatsApp AI sales engine up and running in 3 quick steps.",
-        "ob_step1_label":     "Connect WhatsApp",
-        "ob_step2_label":     "Add Catalog",
-        "ob_step3_label":     "Launch",
-        "ob_step1_title":     "Connect WhatsApp",
-        "ob_step1_desc":      "Connect your business WhatsApp number to start receiving and replying to messages automatically.",
-        "ob_preview_title":   "Conversation Preview",
-        "ob_preview_note":    "This is a preview of how your AI bot will talk to customers on WhatsApp.",
-        "ob_customer_label":  "Customer",
-        "ob_bot_label":       "Bot",
-        "ob_step2_title":     "Add your first catalog item",
-        "ob_step2_desc":      "Add a service or product so the bot knows what to sell.",
-        "ob_step3_title":     "You're ready to launch! 🎉",
-        "ob_step3_desc":      "Your AI sales engine is configured. Go to your dashboard to monitor orders and conversations.",
-        "ob_already_conn":    "✅ Already connected",
-        "ob_done":            "✓ Done",
-        "ob_continue":        "Continue →",
-        "ob_skip":            "Skip for now",
-        "ob_chat_preview":    "This is a preview of how your AI bot will converse with customers over WhatsApp.",
-        "ob_connect_btn":     "Connect WhatsApp →",
-        "ob_items_added":     "item(s) added",
-        "ob_add_item":        "Add catalog item →",
-        "ob_add_another":     "Add another",
-        "ob_catalog_hint":    "You can add items any time from the Catalog menu.",
-        "ob_what_next":       "What happens next:",
-        "ob_what_next_body":  "Customers message your WhatsApp number → the AI bot greets them, shows your catalog, collects their order, and notifies you. All automatically.",
-        "ob_wa_not_conn":     "⚠️ WhatsApp is not connected yet. You can still launch and connect later.",
-        "ob_go_dashboard":    "Go to Dashboard →",
-        "ob_already_have":    "You already have",
-        "ob_in_catalog":      "item(s) in your catalog.",
+        # Onboarding (5-step wizard)
+        "ob_welcome":            "Welcome to {brand} 🚀",
+        "ob_subtitle":           "Let's set up your AI sales engine in 5 quick steps.",
+        "ob_step0_label":        "Welcome",
+        "ob_step1_label":        "Business Info",
+        "ob_step2_label":        "AI Settings",
+        "ob_step3_label":        "WhatsApp",
+        "ob_step4_label":        "All Done!",
+        "ob_step0_title":        "Welcome to Filtrex AI 🚀",
+        "ob_step0_desc":         "Your AI-powered WhatsApp sales engine is ready. Let's personalize it in just a few steps.",
+        "ob_step1_title":        "Your Business",
+        "ob_step1_desc":         "Tell us a bit about your business so the AI can represent you perfectly.",
+        "ob_step2_title":        "AI Personality",
+        "ob_step2_desc":         "Shape how your AI assistant sounds and what it focuses on.",
+        "ob_step3_title":        "Connect WhatsApp",
+        "ob_step3_desc":         "Link your WhatsApp number so the bot can talk to your customers automatically.",
+        "ob_step4_title":        "You're all set! 🎉",
+        "ob_step4_desc":         "Your AI sales engine is live. Head to your dashboard to monitor conversations and orders.",
+        "ob_preview_title":      "Conversation Preview",
+        "ob_preview_note":       "This is a preview of how your AI bot will talk to customers on WhatsApp.",
+        "ob_customer_label":     "Customer",
+        "ob_bot_label":          "Bot",
+        "ob_already_conn":       "✅ Already connected",
+        "ob_done":               "✓ Done",
+        "ob_continue":           "Continue →",
+        "ob_skip":               "Skip for now",
+        "ob_connect_btn":        "Connect WhatsApp →",
+        "ob_wa_not_conn":        "⚠️ WhatsApp is not connected yet. You can connect later from Settings.",
+        "ob_go_dashboard":       "Go to Dashboard →",
+        "ob_lbl_biz_name":       "Business Name",
+        "ob_lbl_biz_type":       "Business Type",
+        "ob_lbl_language":       "Default Language",
+        "ob_lbl_currency":       "Currency",
+        "ob_lbl_timezone":       "Timezone",
+        "ob_lbl_tone":           "AI Tone",
+        "ob_lbl_goal":           "Primary Goal",
+        "ob_lbl_biz_desc":       "Brief Business Description",
+        "ob_tone_friendly":      "Friendly & Warm",
+        "ob_tone_professional":  "Professional",
+        "ob_tone_casual":        "Casual & Fun",
+        "ob_goal_book":          "Book Appointments",
+        "ob_goal_sell":          "Sell Products",
+        "ob_goal_support":       "Customer Support",
+        "ob_goal_leads":         "Generate Leads",
+        "ob_biz_desc_hint":      "e.g. We are a dental clinic offering cleaning, whitening, and check-ups.",
+        "ob_get_started":        "Let's Get Started →",
+        "ob_finish":             "Go to Dashboard →",
     },
     "ar": {
         # Nav
@@ -414,38 +429,53 @@ TRANSLATIONS = {
         "wa_form_label":            "رقم واتساب",
         "wa_form_placeholder":      "+212600000000",
         "wa_form_hint":             "أدخل الرقم مع رمز الدولة، مثال: +212600000000",
-        # Onboarding
-        "ob_welcome":         "مرحباً بك في {brand} 🚀",
-        "ob_subtitle":        "دعنا نشغّل محرك المبيعات الذكي لواتساب في 3 خطوات سريعة.",
-        "ob_step1_label":     "ربط واتساب",
-        "ob_step2_label":     "إضافة كتالوج",
-        "ob_step3_label":     "الإطلاق",
-        "ob_step1_title":     "ربط واتساب",
-        "ob_step1_desc":      "اربط رقم واتساب الخاص بنشاطك لبدء استقبال الرسائل والرد عليها تلقائيًا.",
-        "ob_preview_title":   "معاينة المحادثة",
-        "ob_preview_note":    "هذه معاينة لطريقة تواصل البوت مع عملائك عبر واتساب.",
-        "ob_customer_label":  "العميل",
-        "ob_bot_label":       "البوت",
-        "ob_step2_title":     "أضف أول عنصر في كتالوجك",
-        "ob_step2_desc":      "أضف خدمة أو منتجاً ليعرف البوت ما يبيعه.",
-        "ob_step3_title":     "أنت جاهز للإطلاق! 🎉",
-        "ob_step3_desc":      "تم إعداد محرك المبيعات الذكي. انتقل إلى لوحة التحكم لمتابعة الطلبات والمحادثات.",
-        "ob_already_conn":    "✅ مرتبط بالفعل",
-        "ob_done":            "✓ تم",
-        "ob_continue":        "متابعة ←",
-        "ob_skip":            "تخطي الآن",
-        "ob_chat_preview":    "هذه معاينة لكيفية تحدث البوت مع عملائك عبر واتساب.",
-        "ob_connect_btn":     "ربط واتساب ←",
-        "ob_items_added":     "عنصر مضاف",
-        "ob_add_item":        "إضافة عنصر للكتالوج ←",
-        "ob_add_another":     "إضافة آخر",
-        "ob_catalog_hint":    "يمكنك إضافة عناصر في أي وقت من قائمة الكتالوج.",
-        "ob_what_next":       "ماذا سيحدث بعد ذلك:",
-        "ob_what_next_body":  "يرسل العملاء رسالة لرقم واتساب ← يرحب بهم البوت، يعرض كتالوجك، يجمع طلبهم، ويُخطرك. كل ذلك تلقائياً.",
-        "ob_wa_not_conn":     "⚠️ واتساب غير مرتبط بعد. يمكنك الإطلاق والربط لاحقاً.",
-        "ob_go_dashboard":    "الذهاب للوحة التحكم ←",
-        "ob_already_have":    "لديك بالفعل",
-        "ob_in_catalog":      "عنصر في كتالوجك.",
+        # Onboarding (5-step wizard)
+        "ob_welcome":            "مرحباً بك في {brand} 🚀",
+        "ob_subtitle":           "دعنا نُعدّ محرك مبيعاتك الذكي في 5 خطوات سريعة.",
+        "ob_step0_label":        "الترحيب",
+        "ob_step1_label":        "معلومات النشاط",
+        "ob_step2_label":        "إعدادات الذكاء",
+        "ob_step3_label":        "واتساب",
+        "ob_step4_label":        "تمّ!",
+        "ob_step0_title":        "مرحباً بك في Filtrex AI 🚀",
+        "ob_step0_desc":         "محرك مبيعاتك الذكي عبر واتساب جاهز. دعنا نُخصّصه في خطوات بسيطة.",
+        "ob_step1_title":        "نشاطك التجاري",
+        "ob_step1_desc":         "أخبرنا قليلاً عن نشاطك حتى يمثّلك الذكاء الاصطناعي بشكل مثالي.",
+        "ob_step2_title":        "شخصية الذكاء الاصطناعي",
+        "ob_step2_desc":         "حدّد أسلوب مساعدك الذكي وما يركّز عليه.",
+        "ob_step3_title":        "ربط واتساب",
+        "ob_step3_desc":         "اربط رقم واتساب ليتحدث البوت مع عملائك تلقائياً.",
+        "ob_step4_title":        "كل شيء جاهز! 🎉",
+        "ob_step4_desc":         "محرك مبيعاتك الذكي يعمل الآن. انتقل للوحة التحكم لمتابعة المحادثات والطلبات.",
+        "ob_preview_title":      "معاينة المحادثة",
+        "ob_preview_note":       "هذه معاينة لطريقة تواصل البوت مع عملائك عبر واتساب.",
+        "ob_customer_label":     "العميل",
+        "ob_bot_label":          "البوت",
+        "ob_already_conn":       "✅ مرتبط بالفعل",
+        "ob_done":               "✓ تم",
+        "ob_continue":           "متابعة ←",
+        "ob_skip":               "تخطي الآن",
+        "ob_connect_btn":        "ربط واتساب ←",
+        "ob_wa_not_conn":        "⚠️ واتساب غير مرتبط بعد. يمكنك الربط لاحقاً من الإعدادات.",
+        "ob_go_dashboard":       "الذهاب للوحة التحكم ←",
+        "ob_lbl_biz_name":       "اسم النشاط التجاري",
+        "ob_lbl_biz_type":       "نوع النشاط",
+        "ob_lbl_language":       "اللغة الافتراضية",
+        "ob_lbl_currency":       "العملة",
+        "ob_lbl_timezone":       "المنطقة الزمنية",
+        "ob_lbl_tone":           "أسلوب الذكاء",
+        "ob_lbl_goal":           "الهدف الرئيسي",
+        "ob_lbl_biz_desc":       "وصف مختصر للنشاط",
+        "ob_tone_friendly":      "ودود ودافئ",
+        "ob_tone_professional":  "احترافي",
+        "ob_tone_casual":        "غير رسمي ومرح",
+        "ob_goal_book":          "حجز المواعيد",
+        "ob_goal_sell":          "بيع المنتجات",
+        "ob_goal_support":       "دعم العملاء",
+        "ob_goal_leads":         "توليد العملاء المحتملين",
+        "ob_biz_desc_hint":      "مثال: نحن عيادة أسنان نقدم خدمات التنظيف والتبييض والفحص.",
+        "ob_get_started":        "لنبدأ ←",
+        "ob_finish":             "الذهاب للوحة التحكم ←",
     },
 }
 
@@ -739,10 +769,14 @@ def _migrate_saas():
             print("[SAAS] migrated clients → added whatsapp_connected")
         if "onboarding_step" not in _cli_cols:
             con.execute("ALTER TABLE clients ADD COLUMN onboarding_step INTEGER DEFAULT 0")
-            # Existing clients (id=1) have already been configured — mark them done
-            con.execute("UPDATE clients SET onboarding_step=3 WHERE id=1")
+            # Existing clients (id=1) have already been configured — mark them done (5-step wizard)
+            con.execute("UPDATE clients SET onboarding_step=5 WHERE id=1")
             con.commit()
-            print("[SAAS] migrated clients → added onboarding_step, existing client=1 marked done")
+            print("[SAAS] migrated clients → added onboarding_step, existing client=1 marked done (step=5)")
+        else:
+            # Bump legacy step=3 clients (old 3-step flow) to step=5 (new 5-step flow)
+            con.execute("UPDATE clients SET onboarding_step=5 WHERE onboarding_step=3")
+            con.commit()
         if "white_label_enabled" not in _cli_cols:
             con.execute("ALTER TABLE clients ADD COLUMN brand_name          TEXT")
             con.execute("ALTER TABLE clients ADD COLUMN logo_url            TEXT")
@@ -1698,7 +1732,7 @@ def _check_activation(client_id):
 
 def _onboarding_complete(client):
     """Return True if client has finished (or skipped) all onboarding steps."""
-    return int(client.get("onboarding_step") or 0) >= 3
+    return int(client.get("onboarding_step") or 0) >= 5
 
 
 def find_catalog_match(client_id, msg, lang="ar"):
@@ -4796,92 +4830,114 @@ def admin_onboarding():
     cid    = _session_client_id()
     client = get_client(cid)
 
+    _lang = client.get("default_language") or "en"
+
     if request.method == "POST":
         action = request.form.get("action", "")
+        cur_step = int(client.get("onboarding_step") or 0)
 
-        if action == "skip_whatsapp":
-            # Advance from step 0→1 (skipped WhatsApp)
-            _new_step = max(int(client.get("onboarding_step") or 0), 1)
+        def _advance(new_step, updates=None):
             con = get_db_connection()
             try:
-                con.execute("UPDATE clients SET onboarding_step=? WHERE id=?", (_new_step, cid))
+                if updates:
+                    set_clause = ", ".join(f"{k}=?" for k in updates)
+                    vals = list(updates.values()) + [cid]
+                    con.execute(f"UPDATE clients SET {set_clause} WHERE id=?", vals)
+                con.execute("UPDATE clients SET onboarding_step=? WHERE id=?",
+                            (max(cur_step, new_step), cid))
                 con.commit()
             finally:
                 con.close()
-            print(f"[ONBOARDING_STEP] client={cid} skipped WhatsApp → step={_new_step}")
+
+        # ── Step 0 → 1: Welcome acknowledged ──────────────────────────────
+        if action == "welcome_done":
+            _advance(1)
+            print(f"[ONBOARDING_STEP_COMPLETED] client={cid} step=0 (welcome)")
             return redirect(url_for("admin_onboarding"))
 
-        elif action == "skip_catalog":
-            _new_step = max(int(client.get("onboarding_step") or 0), 2)
-            con = get_db_connection()
-            try:
-                con.execute("UPDATE clients SET onboarding_step=? WHERE id=?", (_new_step, cid))
-                con.commit()
-            finally:
-                con.close()
-            print(f"[ONBOARDING_STEP] client={cid} skipped catalog → step={_new_step}")
+        # ── Step 1 → 2: Business Info saved ───────────────────────────────
+        elif action == "save_business":
+            biz_name = request.form.get("name", "").strip()
+            biz_type = request.form.get("business_type", "").strip()
+            lang_val  = request.form.get("default_language", "en").strip()
+            currency  = request.form.get("currency", "").strip()
+            timezone  = request.form.get("timezone", "").strip()
+            updates = {}
+            if biz_name:
+                updates["name"] = biz_name
+            if biz_type:
+                updates["business_type"] = biz_type
+            if lang_val:
+                updates["default_language"] = lang_val
+            if currency:
+                updates["currency"] = currency
+            if timezone:
+                updates["timezone"] = timezone
+            _advance(2, updates if updates else None)
+            print(f"[ONBOARDING_STEP_COMPLETED] client={cid} step=1 (business_info)")
             return redirect(url_for("admin_onboarding"))
 
+        # ── Step 2 → 3: AI Settings saved ─────────────────────────────────
+        elif action == "save_ai":
+            tone      = request.form.get("assistant_tone", "friendly").strip()
+            goal      = request.form.get("assistant_goal", "book_appointments").strip()
+            biz_desc  = request.form.get("business_description", "").strip()
+            updates = {
+                "assistant_tone":       tone,
+                "assistant_goal":       goal,
+                "business_description": biz_desc,
+            }
+            _advance(3, updates)
+            print(f"[ONBOARDING_STEP_COMPLETED] client={cid} step=2 (ai_settings) tone={tone!r} goal={goal!r}")
+            return redirect(url_for("admin_onboarding"))
+
+        # ── Step 3 → 4: WhatsApp step done (or skipped) ───────────────────
+        elif action in ("whatsapp_done", "skip_whatsapp"):
+            _advance(4)
+            print(f"[ONBOARDING_STEP_COMPLETED] client={cid} step=3 (whatsapp) action={action!r}")
+            return redirect(url_for("admin_onboarding"))
+
+        # ── Step 4 → 5: Final completion ──────────────────────────────────
         elif action == "complete":
-            # Step 3 = done — mark onboarding complete
             con = get_db_connection()
             try:
-                con.execute("UPDATE clients SET onboarding_step=3 WHERE id=?", (cid,))
+                con.execute("UPDATE clients SET onboarding_step=5 WHERE id=?", (cid,))
                 con.commit()
             finally:
                 con.close()
-            print(f"[ONBOARDING_STEP] client={cid} onboarding complete → step=3")
+            print(f"[ONBOARDING_FINISHED] client={cid}")
             flash("Setup complete! Welcome to Filtrex AI.", "success")
             return redirect(url_for("admin_dashboard"))
 
         return redirect(url_for("admin_onboarding"))
 
-    # Refresh client after possible POST changes
+    # ── GET: Refresh client and render wizard ──────────────────────────────────
     client = get_client(cid)
     step = int(client.get("onboarding_step") or 0)
 
-    # If already done, go to dashboard
-    if step >= 3:
+    if step == 0:
+        print(f"[ONBOARDING_STARTED] client={cid} lang={_lang!r}")
+
+    # If already finished, go to dashboard
+    if step >= 5:
         return redirect(url_for("admin_dashboard"))
 
-    con = get_db_connection()
-    try:
-        catalog_count = con.execute(
-            "SELECT COUNT(*) FROM catalogs WHERE client_id=?", (cid,)
-        ).fetchone()[0]
-    finally:
-        con.close()
+    wa_connected = bool(client.get("whatsapp_connected"))
 
-    # Demo conversation — language-aware
-    _lang = client.get("default_language") or "en"
-    if _lang == "ar":
-        demo_messages = [
-            {"from": "customer", "text": "السلام عليكم"},
-            {"from": "bot",      "text": "وعليكم السلام! 👋 أهلاً بك. كيف يمكنني مساعدتك اليوم؟"},
-            {"from": "customer", "text": "أريد أعرف الخدمات"},
-            {"from": "bot",      "text": "بالطبع! لدينا:\n• تنظيف أسنان — 100 د.م\n• تبييض أسنان — 250 د.م\n• فحص أسنان — 50 د.م\nأي خدمة تريد؟"},
-            {"from": "customer", "text": "تنظيف أسنان"},
-            {"from": "bot",      "text": "ممتاز! 🦷 ما هو اليوم المناسب لك؟"},
-        ]
-    else:
-        demo_messages = [
-            {"from": "customer", "text": "Hi!"},
-            {"from": "bot",      "text": "Hello! 👋 Welcome. How can I help you today?"},
-            {"from": "customer", "text": "What services do you offer?"},
-            {"from": "bot",      "text": "Sure! We offer:\n• Teeth Cleaning — $50\n• Teeth Whitening — $120\n• Dental Check-up — $30\nWhich one interests you?"},
-            {"from": "customer", "text": "Teeth Cleaning please"},
-            {"from": "bot",      "text": "Great choice! 🦷 What day works best for you?"},
-        ]
-
-    print(f"[ONBOARDING_STEP] client={cid} viewing onboarding step={step} lang={_lang!r} catalog={catalog_count}")
     return render_template(
         "admin/onboarding.html",
         client=client,
         step=step,
-        catalog_count=catalog_count,
-        demo_messages=demo_messages,
+        wa_connected=wa_connected,
+        lang=_lang,
         active="dashboard"
     )
+
+
+# ── /onboarding  (short alias for guided sign-up flow) ────────────────────────
+@app.route("/onboarding", methods=["GET", "POST"])
+def onboarding_alias():
+    return admin_onboarding()
 
 
 # ── /admin/catalog ────────────────────────────────────────────────────────────
