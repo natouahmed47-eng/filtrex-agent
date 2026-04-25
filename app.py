@@ -811,6 +811,13 @@ def _migrate_saas():
             con.commit()
             print("[TRIAL] migrated clients → added is_trial, trial_started_at, trial_ends_at")
 
+        # ── conversations: add collected_data column ──────────────────────────
+        _conv_cols = [r[1] for r in con.execute("PRAGMA table_info(conversations)").fetchall()]
+        if "collected_data" not in _conv_cols:
+            con.execute("ALTER TABLE conversations ADD COLUMN collected_data TEXT DEFAULT '{}'")
+            con.commit()
+            print("[FLOW] migrated conversations → added collected_data")
+
         # ── orders: add intent + customer_phone columns ───────────────────────
         _ord_cols = [r[1] for r in con.execute("PRAGMA table_info(orders)").fetchall()]
         if "intent" not in _ord_cols:
@@ -2012,7 +2019,11 @@ def wa_save(phone, state):
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(client_id, phone) DO UPDATE SET
                    lang                   = CASE WHEN excluded.lang != '' THEN excluded.lang ELSE conversations.lang END,
-                   current_step           = excluded.current_step,
+                   current_step           = CASE
+                       WHEN conversations.current_step IN ('ask_day','ask_time','ask_name','confirm')
+                       THEN conversations.current_step
+                       ELSE excluded.current_step
+                   END,
                    known_catalog_ids_json = excluded.known_catalog_ids_json,
                    known_day              = excluded.known_day,
                    known_time             = excluded.known_time,
@@ -2778,6 +2789,283 @@ def create_intent_order(client_id, phone, intent, service=None):
         return order_id
     finally:
         con.close()
+
+
+# ── Conversation Flow Engine ──────────────────────────────────────────────────
+
+_FLOW_STEPS = ("ask_day", "ask_time", "ask_name", "confirm", "done")
+
+_FLOW_STRINGS = {
+    "ask_day": {
+        "ar": "ما اليوم المناسب لك؟ 🗓️",
+        "en": "What day works for you? 🗓️",
+        "fr": "Quel jour vous convient? 🗓️",
+        "es": "¿Qué día te conviene? 🗓️",
+        "it": "Quale giorno ti va bene? 🗓️",
+    },
+    "ask_time": {
+        "ar": "ما الوقت المناسب؟ 🕐",
+        "en": "What time works for you? 🕐",
+        "fr": "À quelle heure? 🕐",
+        "es": "¿A qué hora? 🕐",
+        "it": "A che ora? 🕐",
+    },
+    "ask_name": {
+        "ar": "ما اسمك؟ 😊",
+        "en": "What is your name? 😊",
+        "fr": "Quel est votre nom? 😊",
+        "es": "¿Cuál es tu nombre? 😊",
+        "it": "Come ti chiami? 😊",
+    },
+    "confirm_tmpl": {
+        "ar": "حجزك يوم {day} الساعة {time} باسم {name}. هل تؤكد؟ ✅",
+        "en": "Your booking: {day} at {time}, name: {name}. Confirm? ✅",
+        "fr": "Votre réservation: {day} à {time}, nom: {name}. Confirmez? ✅",
+        "es": "Tu reserva: {day} a las {time}, nombre: {name}. ¿Confirmas? ✅",
+        "it": "La tua prenotazione: {day} alle {time}, nome: {name}. Confermi? ✅",
+    },
+    "confirmed": {
+        "ar": "تم تأكيد حجزك! ✅ نحن بانتظارك 🌟",
+        "en": "Booking confirmed! ✅ We look forward to seeing you 🌟",
+        "fr": "Réservation confirmée! ✅ Nous avons hâte de vous accueillir 🌟",
+        "es": "¡Reserva confirmada! ✅ Te esperamos 🌟",
+        "it": "Prenotazione confermata! ✅ Non vediamo l'ora di vederti 🌟",
+    },
+    "cancelled": {
+        "ar": "تم إلغاء الحجز. يمكنك البدء من جديد في أي وقت.",
+        "en": "Booking cancelled. You can start again anytime.",
+        "fr": "Réservation annulée. Vous pouvez recommencer à tout moment.",
+        "es": "Reserva cancelada. Puedes volver a empezar en cualquier momento.",
+        "it": "Prenotazione annullata. Puoi ricominciare in qualsiasi momento.",
+    },
+    "need_day": {
+        "ar": "لم أفهم اليوم. اكتب مثلاً: اليوم أو غدًا.",
+        "en": "I didn't catch the day. Try: today or tomorrow.",
+        "fr": "Je n'ai pas compris le jour. Essayez: aujourd'hui ou demain.",
+        "es": "No entendí el día. Prueba: hoy o mañana.",
+        "it": "Non ho capito il giorno. Prova: oggi o domani.",
+    },
+    "need_time": {
+        "ar": "لم أفهم الوقت. اكتب مثلاً: 10:00 أو الساعة 3.",
+        "en": "I didn't catch the time. Try: 10:00 or 3pm.",
+        "fr": "Je n'ai pas compris l'heure. Essayez: 10h00 ou 15h00.",
+        "es": "No entendí la hora. Prueba: 10:00 o las 3.",
+        "it": "Non ho capito l'orario. Prova: 10:00 o le 3.",
+    },
+}
+
+def _fs(key, lang):
+    """Get a flow string in the right language, falling back to Arabic."""
+    return _FLOW_STRINGS.get(key, {}).get(lang) or _FLOW_STRINGS.get(key, {}).get("ar", "")
+
+
+_FLOW_DAY_MAP = {
+    "اليوم": "اليوم", "today": "اليوم", "aujourd'hui": "اليوم", "hoy": "اليوم", "oggi": "اليوم",
+    "غدا": "غدًا",   "غدًا": "غدًا",   "tomorrow": "غدًا", "demain": "غدًا", "mañana": "غدًا",  "domani": "غدًا",
+}
+
+def _flow_detect_day(msg):
+    """Return normalised Arabic day string or None."""
+    t = msg.lower().strip()
+    for kw, val in _FLOW_DAY_MAP.items():
+        if kw.lower() in t:
+            return val
+    return None
+
+def _flow_detect_time(msg):
+    """Return HH:MM string or None using existing helpers."""
+    try:
+        _, _, t = extract_entities(msg)
+        if t:
+            return t
+    except Exception:
+        pass
+    import re as _re
+    m = _re.search(r'\b(\d{1,2}):(\d{2})\b', msg)
+    if m:
+        candidate = f"{int(m.group(1)):02d}:{m.group(2)}"
+        if is_valid_time(candidate):
+            return candidate
+    m2 = _re.search(r'\b(\d{1,2})\b', msg)
+    if m2:
+        h = int(m2.group(1))
+        if 1 <= h <= 12:
+            h += 12 if h < 8 else 0
+        candidate = f"{h:02d}:00"
+        if is_valid_time(candidate):
+            return candidate
+    return None
+
+def _flow_detect_name(msg):
+    """Best-effort first-word name extraction (1-2 words, not a digit)."""
+    import re as _re
+    words = [w for w in _re.split(r"[\s,،]+", msg.strip()) if w and not w.isdigit()]
+    if words:
+        return " ".join(words[:2])
+    return None
+
+_AFFIRM_KW = {"نعم","اه","أه","آه","ايه","أيه","اوك","ok","yes","oui","sí","si","sì","تمام","أكيد","اكيد","صح","بالتأكيد","موافق"}
+_REJECT_KW  = {"لا","لأ","no","non","لا أريد","ما أريد","إلغاء","الغاء","cancel","annuler","cancelar","cancella"}
+
+def _flow_is_affirm(msg):
+    t = msg.lower().strip()
+    return any(k in t for k in _AFFIRM_KW)
+
+def _flow_is_reject(msg):
+    t = msg.lower().strip()
+    return any(k in t for k in _REJECT_KW)
+
+
+def flow_load(client_id, phone):
+    """Load current flow state from conversations table.
+    Returns dict with current_step and collected_data (dict) or None if no flow active.
+    Phone is stored raw (same format wa_save uses).
+    """
+    con = get_db_connection()
+    try:
+        row = con.execute(
+            "SELECT current_step, collected_data, lang FROM conversations WHERE client_id=? AND phone=?",
+            (client_id, phone)
+        ).fetchone()
+    finally:
+        con.close()
+    if not row:
+        return None
+    step = row["current_step"] or ""
+    if step not in _FLOW_STEPS:
+        return None
+    try:
+        data = json.loads(row["collected_data"] or "{}")
+    except Exception:
+        data = {}
+    return {"current_step": step, "collected_data": data, "lang": row["lang"] or "ar"}
+
+
+def flow_save(client_id, phone, step, collected_data, lang=""):
+    """Upsert flow state into conversations table.
+    Phone is stored raw (same format wa_save uses).
+    """
+    data_json = json.dumps(collected_data, ensure_ascii=False)
+    now_iso   = datetime.datetime.utcnow().isoformat()
+    con = get_db_connection()
+    try:
+        con.execute("""
+            INSERT INTO conversations (client_id, phone, current_step, collected_data, lang, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(client_id, phone) DO UPDATE SET
+                current_step   = excluded.current_step,
+                collected_data = excluded.collected_data,
+                lang           = CASE WHEN excluded.lang != '' THEN excluded.lang ELSE conversations.lang END,
+                updated_at     = excluded.updated_at
+        """, (client_id, phone, step, data_json,
+              lang if lang else "", now_iso))
+        con.commit()
+        print(f"[FLOW_STEP] client={client_id} phone={phone!r} step={step!r} data={collected_data}")
+    finally:
+        con.close()
+
+
+def flow_reset(client_id, phone):
+    """Reset the flow by clearing step back to empty (conversation over)."""
+    con = get_db_connection()
+    try:
+        con.execute("""
+            UPDATE conversations
+            SET current_step='', collected_data='{}', updated_at=?
+            WHERE client_id=? AND phone=?
+        """, (datetime.datetime.utcnow().isoformat(), client_id, phone))
+        con.commit()
+    finally:
+        con.close()
+
+
+def run_booking_flow(sender, incoming_msg, client_id, lang, flow):
+    """Execute one turn of the booking conversation flow.
+    flow = result of flow_load() — guaranteed non-None and step in _FLOW_STEPS.
+    Returns a Flask response via wa_reply().
+    """
+    step = flow["current_step"]
+    data = dict(flow["collected_data"])   # mutable copy
+
+    # ── ask_day ───────────────────────────────────────────────────────────────
+    if step == "ask_day":
+        day = _flow_detect_day(incoming_msg)
+        if not day:
+            print(f"[FLOW_STEP] ask_day — could not parse day from {incoming_msg!r}")
+            return wa_reply(sender, _fs("need_day", lang))
+        data["day"] = day
+        flow_save(client_id, sender, "ask_time", data, lang=lang)
+        return wa_reply(sender, _fs("ask_time", lang))
+
+    # ── ask_time ──────────────────────────────────────────────────────────────
+    elif step == "ask_time":
+        time_val = _flow_detect_time(incoming_msg)
+        if not time_val:
+            print(f"[FLOW_STEP] ask_time — could not parse time from {incoming_msg!r}")
+            return wa_reply(sender, _fs("need_time", lang))
+        data["time"] = time_val
+        flow_save(client_id, sender, "ask_name", data, lang=lang)
+        return wa_reply(sender, _fs("ask_name", lang))
+
+    # ── ask_name ──────────────────────────────────────────────────────────────
+    elif step == "ask_name":
+        name = _flow_detect_name(incoming_msg)
+        if not name:
+            name = incoming_msg.strip()[:30]    # last resort: use raw text
+        data["name"] = name
+        flow_save(client_id, sender, "confirm", data, lang=lang)
+        confirm_tmpl = _fs("confirm_tmpl", lang)
+        summary = confirm_tmpl.format(
+            day  = data.get("day",  "—"),
+            time = data.get("time", "—"),
+            name = data.get("name", "—"),
+        )
+        return wa_reply(sender, summary)
+
+    # ── confirm ───────────────────────────────────────────────────────────────
+    elif step == "confirm":
+        if _flow_is_affirm(incoming_msg):
+            # Create confirmed order
+            _data_json = json.dumps(data, ensure_ascii=False)
+            con = get_db_connection()
+            try:
+                cur = con.execute("""
+                    INSERT INTO orders
+                        (client_id, customer_phone, intent, name, items, status, created_at)
+                    VALUES (?, ?, 'book_appointment', ?, ?, 'confirmed', ?)
+                """, (
+                    client_id,
+                    normalize_number(sender),
+                    data.get("name", ""),
+                    _data_json,
+                    datetime.datetime.utcnow().isoformat(),
+                ))
+                con.commit()
+                _oid = cur.lastrowid
+                print(f"[FLOW_COMPLETED] order_id={_oid} client={client_id} phone={sender!r} data={data}")
+            finally:
+                con.close()
+            flow_reset(client_id, sender)
+            return wa_reply(sender, _fs("confirmed", lang))
+
+        elif _flow_is_reject(incoming_msg):
+            flow_reset(client_id, sender)
+            print(f"[FLOW_STEP] confirm — rejected by user")
+            return wa_reply(sender, _fs("cancelled", lang))
+
+        else:
+            # Re-show summary — not a clear yes or no
+            confirm_tmpl = _fs("confirm_tmpl", lang)
+            summary = confirm_tmpl.format(
+                day  = data.get("day",  "—"),
+                time = data.get("time", "—"),
+                name = data.get("name", "—"),
+            )
+            return wa_reply(sender, summary)
+
+    # Fallback — should not reach here
+    flow_reset(client_id, sender)
+    return wa_reply(sender, _fs("ask_day", lang))
 
 
 _FULL_INTENT_PROMPT = (
@@ -3865,8 +4153,17 @@ def whatsapp():
 
             elif _msg_intent in ("book_appointment", "place_order"):
                 create_intent_order(CLIENT_ID, sender, _msg_intent)
-                print(f"[INTENT_FLOW] {_msg_intent} → continue booking flow")
-                # Fall through into the regular step controller below
+                print(f"[FLOW_STARTED] client={CLIENT_ID} phone={sender!r} intent={_msg_intent!r}")
+                flow_save(CLIENT_ID, sender, "ask_day", {}, lang=_early_lang)
+                return wa_reply(sender, _fs("ask_day", _early_lang))
+
+        # ── CONVERSATION FLOW ENGINE — highest priority ───────────────────────
+        # If the customer is already inside a booking flow, route there immediately.
+        _active_flow = flow_load(CLIENT_ID, sender)
+        if _active_flow:
+            print(f"[FLOW_STEP] active flow detected step={_active_flow['current_step']!r}")
+            _flow_lang = _active_flow.get("lang") or _early_lang
+            return run_booking_flow(sender, incoming_msg, CLIENT_ID, _flow_lang, _active_flow)
 
         # ── STEP 11: CATALOG MATCH → known_catalog_ids_json ───────────────
         # _early_lang already set above
