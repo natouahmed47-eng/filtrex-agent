@@ -134,7 +134,7 @@
         <td>
           {% if c.whatsapp_connection_status == 'pending' and c.business_whatsapp_number %}
           <form method="POST"
-                action="/admin/whatsapp-requests/{{ c.id }}/mark-connected"
+                action="/admin/whatsapp-requests/{{ c.id }}/complete"
                 onsubmit="return confirm('تأكيد تفعيل ربط واتساب للعميل: {{ c.name }}؟')">
             <button type="submit" class="btn-mark">
               ✅ تم الربط

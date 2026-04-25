@@ -44,18 +44,18 @@ def _notify_admin_whatsapp_connect(client_name, number):
     """Send a WhatsApp alert to PLATFORM_ADMIN_WHATSAPP when a client submits a connection request.
     Failures are silently logged — they never break the caller."""
     if not PLATFORM_ADMIN_WHATSAPP:
-        print("[WHATSAPP_CONNECT_ADMIN_NOTIFIED] PLATFORM_ADMIN_WHATSAPP not configured — skipping alert")
+        print("[WHATSAPP_ADMIN_NOTIFIED] PLATFORM_ADMIN_WHATSAPP not configured — skipping alert")
         return
     msg = (
         "🔔 طلب ربط واتساب جديد\n\n"
         f"العميل: {client_name}\n"
         f"الرقم: {number}\n"
         "الحالة: pending\n\n"
-        "ادخل للوحة الإدارة لإكمال الربط."
+        "اذهب إلى لوحة التحكم لإكمال الربط."
     )
     try:
         ultramsg_send(PLATFORM_ADMIN_WHATSAPP, msg)
-        print(f"[WHATSAPP_CONNECT_ADMIN_NOTIFIED] alert sent to platform admin for client={client_name!r}")
+        print(f"[WHATSAPP_ADMIN_NOTIFIED] alert sent to platform admin for client={client_name!r}")
     except Exception as _exc:
         print(f"[CONNECT_REQUEST_NOTIFY_FAILED] could not send admin alert: {repr(_exc)}")
 
@@ -234,11 +234,11 @@ TRANSLATIONS = {
         "wa_number_label":          "Your WhatsApp Number",
         "wa_number_hint":           "Enter the number clients will send messages to (include country code).",
         "wa_submit_request":        "إرسال طلب الربط",
-        "wa_status_pending":        "جاري الربط ⏳",
-        "wa_status_connected":      "تم الربط ✅",
+        "wa_status_pending":        "⏳ جاري الربط",
+        "wa_status_connected":      "✅ تم ربط واتساب بنجاح",
         "wa_status_not_connected":  "غير مربوط",
-        "wa_pending_note":          "جاري الربط",
-        "wa_connected_note":        "تم الربط",
+        "wa_pending_note":          "⏳ جاري الربط",
+        "wa_connected_note":        "✅ تم ربط واتساب بنجاح",
         "wa_page_title":            "Connect WhatsApp",
         "wa_page_sub":              "Submit your number — our team will activate the connection within 24 hours.",
         "wa_status_connected_sub":  "Your WhatsApp is active and receiving messages.",
@@ -366,15 +366,15 @@ TRANSLATIONS = {
         "wa_number_label":          "رقم واتساب الخاص بك",
         "wa_number_hint":           "أدخل الرقم الذي سيرسل إليه العملاء الرسائل (مع رمز الدولة).",
         "wa_submit_request":        "إرسال طلب الربط",
-        "wa_status_pending":        "جاري الربط ⏳",
-        "wa_status_connected":      "تم الربط ✅",
+        "wa_status_pending":        "⏳ جاري الربط",
+        "wa_status_connected":      "✅ تم ربط واتساب بنجاح",
         "wa_status_not_connected":  "غير مربوط",
-        "wa_pending_note":          "جاري الربط",
-        "wa_connected_note":        "تم الربط",
+        "wa_pending_note":          "⏳ جاري الربط",
+        "wa_connected_note":        "✅ تم ربط واتساب بنجاح",
         "wa_page_title":            "ربط واتساب",
         "wa_page_sub":              "أدخل رقمك — سيقوم فريقنا بتفعيل الاتصال خلال أقل من 24 ساعة.",
-        "wa_status_connected_sub":  "واتساب الخاص بك نشط ويستقبل الرسائل.",
-        "wa_status_pending_sub":    "تم استلام طلبك. جاري التفعيل.",
+        "wa_status_connected_sub":  "✅ تم ربط واتساب بنجاح",
+        "wa_status_pending_sub":    "⏳ جاري الربط — تم استلام طلبك وسيتم التفعيل قريباً.",
         "wa_status_not_conn":       "غير مربوط",
         "wa_status_not_conn_sub":   "أدخل رقمك أدناه للبدء.",
         "wa_status_failed":         "فشل الاتصال",
@@ -4449,6 +4449,7 @@ def admin_whatsapp_requests():
     )
 
 
+@app.route("/admin/whatsapp-requests/<int:target_client_id>/complete", methods=["POST"])
 @app.route("/admin/whatsapp-requests/<int:target_client_id>/mark-connected", methods=["POST"])
 def admin_whatsapp_mark_connected(target_client_id):
     guard = _admin_guard()
@@ -4469,7 +4470,7 @@ def admin_whatsapp_mark_connected(target_client_id):
     finally:
         con.close()
 
-    print(f"[WHATSAPP_CONNECT_MARKED_CONNECTED] admin marked client={target_client_id} as connected")
+    print(f"[WHATSAPP_CONNECTED_MANUAL] admin marked client={target_client_id} as connected")
     return redirect(url_for("admin_whatsapp_requests"))
 
 
