@@ -1025,6 +1025,18 @@ def _migrate_saas():
         """)
         con.commit()
 
+        # ── STEP 7h: analytics_events ─────────────────────────────────────
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS analytics_events (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id  INTEGER,
+                event_name TEXT NOT NULL,
+                metadata   TEXT DEFAULT '{}',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        con.commit()
+
         # ── Seed default plans ────────────────────────────────────────────
         plan_count = con.execute("SELECT COUNT(*) FROM subscription_plans").fetchone()[0]
         if plan_count == 0:
@@ -1485,7 +1497,35 @@ def expire_trial_if_needed(client_id):
         con.close()
 
     print(f"[TRIAL_EXPIRED] client={client_id} → downgraded to free plan")
+    track_event(client_id, "trial_expired", {})
     return True
+
+
+# ── Analytics event tracker ───────────────────────────────────────────────────
+import json as _json_mod
+
+def track_event(client_id, event_name, metadata=None):
+    """Insert one row into analytics_events and log [EVENT_TRACKED].
+
+    Args:
+        client_id  : int or None (platform-level events like user_registered)
+        event_name : str  e.g. 'order_created', 'trial_started'
+        metadata   : dict|None  any extra key-value pairs (JSON-serialised)
+    """
+    _meta = _json_mod.dumps(metadata or {})
+    try:
+        con = get_db_connection()
+        try:
+            con.execute(
+                "INSERT INTO analytics_events (client_id, event_name, metadata) VALUES (?, ?, ?)",
+                (client_id, event_name, _meta)
+            )
+            con.commit()
+        finally:
+            con.close()
+        print(f"[EVENT_TRACKED] client={client_id} event={event_name!r} meta={_meta}")
+    except Exception as _te:
+        print(f"[EVENT_TRACK_ERROR] {event_name!r}: {_te}")
 
 
 def handle_limit_exceeded(client_id, limit_type):
@@ -2367,6 +2407,7 @@ def mark_client_whatsapp_connected(client_id, phone):
         con.commit()
     finally:
         con.close()
+    track_event(client_id, "whatsapp_connected", {"phone": phone})
 
 
 def wa_reply(to, text):
@@ -2818,7 +2859,7 @@ def detect_message_intent(msg, lang="ar"):
             if intent not in _INTENT_LABELS:
                 intent = "ask_info"
             print(f"[INTENT_DETECTED] intent={intent!r} msg={msg[:60]!r}")
-            return intent
+            return intent  # track_event called by caller with client_id context
     except Exception as _ie:
         print(f"[INTENT_DETECT_ERROR] {_ie}")
     return "ask_info"
@@ -2844,6 +2885,7 @@ def create_intent_order(client_id, phone, intent, service=None):
         con.commit()
         order_id = cur.lastrowid
         print(f"[ORDER_CREATED] order_id={order_id} client={client_id} phone={phone!r} intent={intent!r}")
+        track_event(client_id, "order_created", {"order_id": order_id, "phone": phone, "intent": intent})
         return order_id
     finally:
         con.close()
@@ -3111,6 +3153,7 @@ def run_booking_flow(sender, incoming_msg, client_id, lang, flow):
                 )
                 con.commit()
                 print(f"[PAYMENT_LINK_CREATED] order_id={_oid} url={_pay_url!r}")
+                track_event(client_id, "payment_started", {"order_id": _oid, "url": _pay_url})
             finally:
                 con.close()
 
@@ -4116,6 +4159,9 @@ def whatsapp():
             print("[WHATSAPP] ignored non-chat or empty message")
             return "", 200
 
+        # Track every valid inbound message
+        track_event(CLIENT_ID, "message_received", {"sender": sender, "len": len(incoming_msg)})
+
         # ── AUTO-CONNECT: handle "START" or "START_<token>" ──────────────
         _msg_upper = incoming_msg.strip().upper()
         if _msg_upper == "START" or _msg_upper.startswith("START_"):
@@ -4187,6 +4233,7 @@ def whatsapp():
         if _step_early == "service" and not state.get("msg_intent"):
             _msg_intent = detect_message_intent(incoming_msg, lang=_early_lang)
             state["msg_intent"] = _msg_intent
+            track_event(CLIENT_ID, "intent_detected", {"intent": _msg_intent, "lang": _early_lang})
 
             _greeting_map = {
                 "ar": f"أهلاً! كيف يمكنني مساعدتك اليوم؟",
@@ -4936,11 +4983,13 @@ def admin_onboarding():
                         WHERE id=?
                     """, (_now_iso, _end_iso, cid))
                     print(f"[TRIAL_STARTED] client={cid} ends_at={_end_iso}")
+                    track_event(cid, "trial_started", {"ends_at": _end_iso})
                 else:
                     con.execute("UPDATE clients SET onboarding_step=5 WHERE id=?", (cid,))
                 con.commit()
             finally:
                 con.close()
+            track_event(cid, "onboarding_completed", {})
             print(f"[ONBOARDING_FINISHED] client={cid}")
             flash("Setup complete! Welcome to Filtrex AI.", "success")
             return redirect(url_for("admin_dashboard"))
@@ -5721,6 +5770,7 @@ def upgrade_client_plan(client_id, plan_name, subscription_id=None):
         con.commit()
         print(f"[UPGRADE] client={client_id} → plan={plan_name!r} sub_id={subscription_id!r}")
         print(f"[USER_CONVERTED] client={client_id} plan={plan_name!r}")
+        track_event(client_id, "payment_success", {"plan": plan_name, "subscription_id": subscription_id or ""})
         return True
     except Exception as _e:
         print(f"[UPGRADE] ERROR: {repr(_e)}")
@@ -5984,8 +6034,10 @@ def admin_analytics():
         return redirect(url_for("admin_billing"))
 
     # ── Gather analytics data ─────────────────────────────────────────────
+    import json as _j
     con = get_db_connection()
     try:
+        # ── Core order / catalog stats ───────────────────────────────────
         total_orders   = con.execute(
             "SELECT COUNT(*) FROM orders WHERE client_id=?", (cid,)
         ).fetchone()[0]
@@ -5995,16 +6047,96 @@ def admin_analytics():
         recent_orders  = [dict(r) for r in con.execute(
             "SELECT * FROM orders WHERE client_id=? ORDER BY id DESC LIMIT 20", (cid,)
         ).fetchall()]
-        # Daily order counts (last 14 days)
-        daily_orders   = [dict(r) for r in con.execute("""
-            SELECT DATE(created_at) AS day, COUNT(*) AS cnt
-            FROM orders
-            WHERE client_id=? AND created_at >= DATE('now', '-14 days')
-            GROUP BY day ORDER BY day ASC
-        """, (cid,)).fetchall()]
         payments_total = con.execute(
             "SELECT COALESCE(SUM(amount), 0) FROM paypal_payments WHERE client_id=?", (cid,)
         ).fetchone()[0]
+
+        # ── analytics_events based metrics ───────────────────────────────
+        total_messages = con.execute(
+            "SELECT COUNT(*) FROM analytics_events WHERE client_id=? AND event_name='message_received'",
+            (cid,)
+        ).fetchone()[0]
+
+        total_ev_orders = con.execute(
+            "SELECT COUNT(*) FROM analytics_events WHERE client_id=? AND event_name='order_created'",
+            (cid,)
+        ).fetchone()[0]
+
+        # Unique customers (unique sender phones from message_received events)
+        total_customers = con.execute(
+            """SELECT COUNT(DISTINCT json_extract(metadata, '$.sender'))
+               FROM analytics_events
+               WHERE client_id=? AND event_name='message_received'""",
+            (cid,)
+        ).fetchone()[0]
+
+        # Active customers — sent a message in the last 7 days
+        active_customers = con.execute(
+            """SELECT COUNT(DISTINCT json_extract(metadata, '$.sender'))
+               FROM analytics_events
+               WHERE client_id=? AND event_name='message_received'
+                 AND created_at >= DATE('now', '-7 days')""",
+            (cid,)
+        ).fetchone()[0]
+
+        # WhatsApp connected flag from clients table
+        _cli_row = con.execute(
+            "SELECT whatsapp_connected FROM clients WHERE id=?", (cid,)
+        ).fetchone()
+        wa_connected_pct = 100 if (_cli_row and _cli_row["whatsapp_connected"]) else 0
+
+        # Conversion rate: trial_started vs payment_success events
+        _trial_started_cnt = con.execute(
+            "SELECT COUNT(*) FROM analytics_events WHERE client_id=? AND event_name='trial_started'",
+            (cid,)
+        ).fetchone()[0]
+        _paid_cnt = con.execute(
+            "SELECT COUNT(*) FROM analytics_events WHERE client_id=? AND event_name='payment_success'",
+            (cid,)
+        ).fetchone()[0]
+        conversion_rate = (
+            round((_paid_cnt / _trial_started_cnt) * 100, 1)
+            if _trial_started_cnt > 0 else 0
+        )
+
+        # ── Chart: messages over time (last 14 days) ─────────────────────
+        daily_messages = [dict(r) for r in con.execute(
+            """SELECT DATE(created_at) AS day, COUNT(*) AS cnt
+               FROM analytics_events
+               WHERE client_id=? AND event_name='message_received'
+                 AND created_at >= DATE('now', '-14 days')
+               GROUP BY day ORDER BY day ASC""",
+            (cid,)
+        ).fetchall()]
+
+        # ── Chart: revenue over time (last 14 days from paypal_payments) ─
+        daily_revenue = [dict(r) for r in con.execute(
+            """SELECT DATE(created_at) AS day,
+                      ROUND(SUM(amount), 2) AS total
+               FROM paypal_payments
+               WHERE client_id=? AND created_at >= DATE('now', '-14 days')
+               GROUP BY day ORDER BY day ASC""",
+            (cid,)
+        ).fetchall()]
+
+        # ── Chart: orders over time (last 14 days) ───────────────────────
+        daily_orders = [dict(r) for r in con.execute(
+            """SELECT DATE(created_at) AS day, COUNT(*) AS cnt
+               FROM orders
+               WHERE client_id=? AND created_at >= DATE('now', '-14 days')
+               GROUP BY day ORDER BY day ASC""",
+            (cid,)
+        ).fetchall()]
+
+        # ── Intent breakdown ──────────────────────────────────────────────
+        intent_rows = [dict(r) for r in con.execute(
+            """SELECT json_extract(metadata, '$.intent') AS intent, COUNT(*) AS cnt
+               FROM analytics_events
+               WHERE client_id=? AND event_name='intent_detected'
+               GROUP BY intent ORDER BY cnt DESC LIMIT 8""",
+            (cid,)
+        ).fetchall()]
+
     finally:
         con.close()
 
@@ -6016,12 +6148,25 @@ def admin_analytics():
         "admin/analytics.html",
         client=client,
         sub=sub,
+        # KPI cards
+        total_customers=total_customers,
+        active_customers=active_customers,
+        wa_connected_pct=wa_connected_pct,
+        total_messages=total_messages,
         total_orders=total_orders,
-        catalog_count=catalog_count,
-        recent_orders=recent_orders,
-        daily_orders=daily_orders,
-        messages_used=messages_used,
         payments_total=payments_total,
+        conversion_rate=conversion_rate,
+        # legacy
+        catalog_count=catalog_count,
+        messages_used=messages_used,
+        total_ev_orders=total_ev_orders,
+        # charts
+        daily_messages=daily_messages,
+        daily_revenue=daily_revenue,
+        daily_orders=daily_orders,
+        intent_rows=intent_rows,
+        # orders table
+        recent_orders=recent_orders,
         active="analytics"
     )
 
@@ -6700,6 +6845,8 @@ def signup():
                     new_user_id = cur_u.lastrowid
                     con.commit()
                     print(f"[AUTH_SIGNUP] user_id={new_user_id} client_id={new_client_id} email={email!r} referral_code={new_ref_code!r}")
+                    track_event(new_client_id, "user_registered", {"email": email})
+                    track_event(new_client_id, "trial_started", {"ends_at": _t_end.isoformat(timespec="seconds")})
 
                     # ── Affiliate tracking ────────────────────────────────
                     aff_code = (request.form.get("aff_code") or "").strip().upper()

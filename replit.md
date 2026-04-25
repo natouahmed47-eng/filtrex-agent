@@ -14,7 +14,7 @@ A Flask-based WhatsApp sales assistant and SaaS platform. Converts conversations
 
 | Table | Purpose |
 |---|---|
-| `clients` | Business tenants (name, type, currency, timezone, UltraMsg config) |
+| `clients` | Business tenants (name, type, currency, timezone, UltraMsg config, is_trial, trial_started_at, trial_ends_at) |
 | `catalogs` | Products/services per client (price, sale_price, description, duration, stock) |
 | `catalog_aliases` | Multilingual message-matching aliases per catalog item |
 | `catalog_options` | Key-value options per catalog item (size, color, etc.) |
@@ -24,6 +24,10 @@ A Flask-based WhatsApp sales assistant and SaaS platform. Converts conversations
 | `whatsapp_state` | Per-phone conversation state (step, language, known fields) |
 | `users` | Admin login accounts |
 | `business_settings` | Legacy per-user settings |
+| `analytics_events` | SaaS event stream: client_id, event_name, metadata(JSON), created_at |
+| `subscription_plans` | Plan definitions (Free/Starter/Pro/Business) |
+| `client_subscriptions` | Active plan per client |
+| `paypal_payments` | PayPal webhook payment records |
 
 ## Admin Panel Routes
 
@@ -53,6 +57,34 @@ A Flask-based WhatsApp sales assistant and SaaS platform. Converts conversations
 - `svc_price(title, lang)` — DB-first, hardcoded fallback
 - `svc_benefit(title, lang)` — DB-first (description field), hardcoded fallback
 - `build_upsell(svc, lang)` — DB-first upsell, hardcoded fallback
+- `track_event(client_id, event_name, metadata)` — Insert into analytics_events, logs [EVENT_TRACKED]
+- `get_trial_status(client)` — Returns trial countdown dict (days/hours/minutes/expired/warning)
+- `expire_trial_if_needed(client_id)` — Downgrades expired trials, logs [TRIAL_EXPIRED]
+- `upgrade_client_plan(client_id, plan_name, subscription_id)` — Activates paid plan, logs [USER_CONVERTED]
+
+## Analytics Events Tracked
+
+| Event | Trigger |
+|---|---|
+| `user_registered` | New account created via /signup |
+| `onboarding_completed` | Onboarding wizard step 4 complete |
+| `whatsapp_connected` | Bot number linked via START flow |
+| `message_received` | Every valid inbound WA message |
+| `intent_detected` | AI classifies first message intent |
+| `order_created` | `create_intent_order()` called |
+| `payment_started` | Payment link generated and sent |
+| `payment_success` | PayPal BILLING.SUBSCRIPTION.ACTIVATED |
+| `trial_started` | 3-day trial activated |
+| `trial_expired` | Trial exceeded end date |
+
+## Trial System
+
+- 3-day free trial starts on signup or onboarding complete
+- Trial info injected via context processor `_inject_trial_info()` into every admin template
+- Banner in `admin/layout.html` shows countdown (indigo) → warning <24h (amber) → expired (red)
+- WA replies blocked when trial expires; booking creation blocked in `wa_save_booking`
+- `/api/cron/trial-reminders?secret=<CRON_SECRET>` — sends Day 1/2/3 bilingual reminders
+- PayPal webhook at `/paypal/webhook` handles conversion, calls `upgrade_client_plan()`
 
 ## Multi-Tenant Design
 

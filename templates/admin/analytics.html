@@ -3,88 +3,108 @@
 {% block content %}
 
 <style>
-  .analytics-wrap { max-width: 960px; margin: 0 auto; padding: 0 4px; }
+  .an-wrap { max-width: 1040px; margin: 0 auto; padding: 0 4px; }
 
-  .analytics-hero { margin-bottom: 28px; }
-  .analytics-hero h1 { font-size: 22px; font-weight: 800; color: #111; margin-bottom: 4px; }
-  .analytics-hero p  { font-size: 14px; color: #6b7280; }
+  .an-hero { margin-bottom: 28px; }
+  .an-hero h1 { font-size: 22px; font-weight: 800; color: #111; margin-bottom: 4px; }
+  .an-hero p  { font-size: 14px; color: #6b7280; }
 
-  .stat-grid {
+  /* KPI grid */
+  .kpi-grid {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 16px;
-    margin-bottom: 32px;
+    gap: 14px;
+    margin-bottom: 28px;
   }
-  @media(max-width:780px){ .stat-grid { grid-template-columns: 1fr 1fr; } }
-  @media(max-width:460px){ .stat-grid { grid-template-columns: 1fr; } }
+  @media(max-width:820px){ .kpi-grid { grid-template-columns: 1fr 1fr; } }
+  @media(max-width:460px){ .kpi-grid { grid-template-columns: 1fr; } }
 
-  .stat-card {
+  .kpi-card {
     background: #fff;
     border: 1.5px solid #e5e7eb;
     border-radius: 14px;
-    padding: 20px 22px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
+    padding: 18px 20px;
+    display: flex; flex-direction: column; gap: 5px;
   }
-  .stat-card .label { font-size: 12px; color: #6b7280; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
-  .stat-card .value { font-size: 28px; font-weight: 800; color: #111; }
-  .stat-card .sub   { font-size: 12px; color: #9ca3af; }
+  .kpi-card .kpi-icon { font-size: 20px; margin-bottom: 2px; }
+  .kpi-card .kpi-label { font-size: 11px; color: #6b7280; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; }
+  .kpi-card .kpi-val   { font-size: 30px; font-weight: 800; color: #111; line-height: 1; }
+  .kpi-card .kpi-sub   { font-size: 11px; color: #9ca3af; }
 
-  .section-title {
-    font-size: 15px; font-weight: 700; color: #111;
-    margin: 28px 0 12px;
+  /* Section header */
+  .sec-title {
+    font-size: 14px; font-weight: 700; color: #374151;
+    margin: 28px 0 10px;
     padding-bottom: 8px;
     border-bottom: 1.5px solid #f3f4f6;
   }
 
+  /* Chart card */
+  .chart-card {
+    background: #fff; border: 1.5px solid #e5e7eb;
+    border-radius: 14px; padding: 20px 24px;
+    margin-bottom: 20px;
+  }
+  .chart-title { font-size: 12px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 14px; }
+
   /* Bar chart */
-  .bar-chart { display: flex; align-items: flex-end; gap: 6px; height: 120px; margin-bottom: 8px; }
-  .bar-col   { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; }
-  .bar-fill  {
-    width: 100%; border-radius: 6px 6px 0 0;
-    background: linear-gradient(180deg, #6366f1 0%, #818cf8 100%);
-    min-height: 4px;
+  .bar-chart { display: flex; align-items: flex-end; gap: 5px; height: 100px; }
+  .bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; }
+  .bar-fill {
+    width: 100%; border-radius: 5px 5px 0 0;
+    min-height: 3px;
     transition: height .3s;
   }
-  .bar-label { font-size: 10px; color: #9ca3af; white-space: nowrap; }
-  .bar-val   { font-size: 10px; color: #6b7280; font-weight: 600; }
+  .bar-fill.indigo { background: linear-gradient(180deg,#6366f1,#818cf8); }
+  .bar-fill.emerald { background: linear-gradient(180deg,#10b981,#34d399); }
+  .bar-fill.amber { background: linear-gradient(180deg,#f59e0b,#fbbf24); }
+  .bar-label { font-size: 9px; color: #9ca3af; white-space: nowrap; }
+  .bar-val   { font-size: 9px; color: #6b7280; font-weight: 700; }
+
+  /* Two-col chart grid */
+  .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media(max-width:680px){ .chart-grid { grid-template-columns: 1fr; } }
+
+  /* Intent pills */
+  .intent-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .intent-label { font-size: 12px; font-weight: 600; color: #374151; min-width: 110px; }
+  .intent-bar-wrap { flex: 1; background: #f3f4f6; border-radius: 99px; height: 8px; overflow: hidden; }
+  .intent-bar-fill { height: 100%; border-radius: 99px; background: linear-gradient(90deg,#6366f1,#818cf8); }
+  .intent-cnt { font-size: 11px; color: #9ca3af; min-width: 24px; text-align: right; }
 
   /* Orders table */
-  .orders-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  .orders-table th {
+  .ord-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .ord-table th {
     background: #f9fafb; padding: 10px 14px;
     text-align: left; font-weight: 700; color: #374151;
     border-bottom: 1.5px solid #e5e7eb;
   }
-  [dir=rtl] .orders-table th { text-align: right; }
-  .orders-table td {
-    padding: 10px 14px; border-bottom: 1px solid #f3f4f6; color: #374151; vertical-align: middle;
-  }
-  .orders-table tr:last-child td { border-bottom: none; }
-  .badge-status {
+  [dir=rtl] .ord-table th { text-align: right; }
+  .ord-table td { padding: 10px 14px; border-bottom: 1px solid #f3f4f6; color: #374151; vertical-align: middle; }
+  .ord-table tr:last-child td { border-bottom: none; }
+  .badge-s {
     display: inline-block; padding: 2px 10px;
     border-radius: 99px; font-size: 11px; font-weight: 700;
   }
-  .badge-confirmed { background: #dcfce7; color: #16a34a; }
-  .badge-pending   { background: #fef3c7; color: #92400e; }
-  .badge-cancelled { background: #fee2e2; color: #b91c1c; }
+  .badge-confirmed { background:#dcfce7;color:#16a34a; }
+  .badge-pending   { background:#fef3c7;color:#92400e; }
+  .badge-cancelled { background:#fee2e2;color:#b91c1c; }
 
-  .card-box {
-    background: #fff; border: 1.5px solid #e5e7eb;
-    border-radius: 14px; overflow: hidden; margin-bottom: 24px;
-  }
+  .card-box { background:#fff;border:1.5px solid #e5e7eb;border-radius:14px;overflow:hidden;margin-bottom:20px; }
 
-  .upgrade-notice {
-    background: #fef3c7; border: 1.5px solid #fde68a;
-    border-radius: 12px; padding: 16px 20px;
-    font-size: 13px; color: #92400e; margin-bottom: 24px;
+  .upgrade-notice { background:#fef3c7;border:1.5px solid #fde68a;border-radius:12px;padding:14px 18px;font-size:13px;color:#92400e;margin-bottom:20px; }
+
+  .wa-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 10px; border-radius: 99px; font-size: 12px; font-weight: 700;
   }
+  .wa-connected    { background:#dcfce7; color:#16a34a; }
+  .wa-disconnected { background:#fee2e2; color:#b91c1c; }
 </style>
 
-<div class="analytics-wrap">
+<div class="an-wrap">
 
-  <div class="analytics-hero">
+  <div class="an-hero">
     <h1>📊 Analytics</h1>
     <p>
       {% if sub %}
@@ -101,47 +121,130 @@
     {% endfor %}
   {% endwith %}
 
-  <!-- ── KPI cards ───────────────────────────────────────────────── -->
-  <div class="stat-grid">
-    <div class="stat-card">
-      <span class="label">Total Orders</span>
-      <span class="value">{{ total_orders }}</span>
-      <span class="sub">all time</span>
+  <!-- ── KPI Cards ────────────────────────────────────────────── -->
+  <div class="kpi-grid">
+
+    <div class="kpi-card">
+      <span class="kpi-icon">👥</span>
+      <span class="kpi-label">Total Customers</span>
+      <span class="kpi-val">{{ total_customers }}</span>
+      <span class="kpi-sub">unique contacts</span>
     </div>
-    <div class="stat-card">
-      <span class="label">Messages Used</span>
-      <span class="value">{{ messages_used }}</span>
-      <span class="sub">
-        {% if sub and sub.max_messages and sub.max_messages != -1 %}
-          / {{ sub.max_messages }} limit
+
+    <div class="kpi-card">
+      <span class="kpi-icon">🟢</span>
+      <span class="kpi-label">Active (7d)</span>
+      <span class="kpi-val">{{ active_customers }}</span>
+      <span class="kpi-sub">messaged in last 7 days</span>
+    </div>
+
+    <div class="kpi-card">
+      <span class="kpi-icon">📱</span>
+      <span class="kpi-label">WhatsApp</span>
+      <span class="kpi-val" style="font-size:18px;padding-top:4px;">
+        {% if wa_connected_pct == 100 %}
+          <span class="wa-badge wa-connected">✅ Connected</span>
         {% else %}
-          unlimited
+          <span class="wa-badge wa-disconnected">❌ Not Connected</span>
         {% endif %}
       </span>
+      <span class="kpi-sub">bot integration status</span>
     </div>
-    <div class="stat-card">
-      <span class="label">Catalog Items</span>
-      <span class="value">{{ catalog_count }}</span>
-      <span class="sub">active products</span>
+
+    <div class="kpi-card">
+      <span class="kpi-icon">💬</span>
+      <span class="kpi-label">Total Messages</span>
+      <span class="kpi-val">{{ total_messages }}</span>
+      <span class="kpi-sub">inbound messages tracked</span>
     </div>
-    <div class="stat-card">
-      <span class="label">Revenue Logged</span>
-      <span class="value">${{ "%.2f"|format(payments_total) }}</span>
-      <span class="sub">PayPal payments</span>
+
+    <div class="kpi-card">
+      <span class="kpi-icon">🛒</span>
+      <span class="kpi-label">Total Orders</span>
+      <span class="kpi-val">{{ total_orders }}</span>
+      <span class="kpi-sub">all time</span>
     </div>
+
+    <div class="kpi-card">
+      <span class="kpi-icon">💰</span>
+      <span class="kpi-label">Total Revenue</span>
+      <span class="kpi-val" style="font-size:22px;padding-top:4px;">${{ "%.2f"|format(payments_total) }}</span>
+      <span class="kpi-sub">PayPal payments received</span>
+    </div>
+
+    <div class="kpi-card">
+      <span class="kpi-icon">🎯</span>
+      <span class="kpi-label">Conversion Rate</span>
+      <span class="kpi-val">{{ conversion_rate }}%</span>
+      <span class="kpi-sub">trial → paid</span>
+    </div>
+
+    <div class="kpi-card">
+      <span class="kpi-icon">📦</span>
+      <span class="kpi-label">Catalog Items</span>
+      <span class="kpi-val">{{ catalog_count }}</span>
+      <span class="kpi-sub">active products/services</span>
+    </div>
+
   </div>
 
-  <!-- ── 14-day bar chart ────────────────────────────────────────── -->
+  <!-- ── Charts row ────────────────────────────────────────────── -->
+  <div class="sec-title">Trends — Last 14 Days</div>
+  <div class="chart-grid">
+
+    <!-- Messages chart -->
+    <div class="chart-card">
+      <div class="chart-title">💬 Messages Received</div>
+      {% if daily_messages %}
+        {% set msg_max = daily_messages | map(attribute='cnt') | max %}
+        <div class="bar-chart">
+          {% for row in daily_messages %}
+            {% set pct = ((row.cnt / msg_max) * 100)|int if msg_max > 0 else 0 %}
+            <div class="bar-col">
+              <span class="bar-val">{{ row.cnt }}</span>
+              <div class="bar-fill indigo" style="height:{{ [pct,3]|max }}%;"></div>
+              <span class="bar-label">{{ row.day[-5:] }}</span>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div style="text-align:center;color:#9ca3af;font-size:13px;padding:24px 0;">No data yet</div>
+      {% endif %}
+    </div>
+
+    <!-- Revenue chart -->
+    <div class="chart-card">
+      <div class="chart-title">💰 Revenue (USD)</div>
+      {% if daily_revenue %}
+        {% set rev_max = daily_revenue | map(attribute='total') | max %}
+        <div class="bar-chart">
+          {% for row in daily_revenue %}
+            {% set pct = ((row.total / rev_max) * 100)|int if rev_max > 0 else 0 %}
+            <div class="bar-col">
+              <span class="bar-val">${{ row.total }}</span>
+              <div class="bar-fill emerald" style="height:{{ [pct,3]|max }}%;"></div>
+              <span class="bar-label">{{ row.day[-5:] }}</span>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div style="text-align:center;color:#9ca3af;font-size:13px;padding:24px 0;">No revenue data yet</div>
+      {% endif %}
+    </div>
+
+  </div>
+
+  <!-- Orders chart (full width) -->
   {% if daily_orders %}
-    {% set max_cnt = daily_orders | map(attribute='cnt') | max %}
-    <div class="section-title">Orders — Last 14 Days</div>
-    <div class="card-box" style="padding: 20px 24px;">
+    <div class="chart-card">
+      <div class="chart-title">🛒 Orders Per Day</div>
+      {% set ord_max = daily_orders | map(attribute='cnt') | max %}
       <div class="bar-chart">
         {% for row in daily_orders %}
-          {% set pct = ((row.cnt / max_cnt) * 100)|int if max_cnt > 0 else 0 %}
+          {% set pct = ((row.cnt / ord_max) * 100)|int if ord_max > 0 else 0 %}
           <div class="bar-col">
             <span class="bar-val">{{ row.cnt }}</span>
-            <div class="bar-fill" style="height: {{ [pct, 4]|max }}%;"></div>
+            <div class="bar-fill amber" style="height:{{ [pct,3]|max }}%;"></div>
             <span class="bar-label">{{ row.day[-5:] }}</span>
           </div>
         {% endfor %}
@@ -149,11 +252,31 @@
     </div>
   {% endif %}
 
-  <!-- ── Recent orders table ────────────────────────────────────── -->
-  <div class="section-title">Recent Orders</div>
+  <!-- ── Intent Breakdown ──────────────────────────────────────── -->
+  {% if intent_rows %}
+    <div class="sec-title">Customer Intent Breakdown</div>
+    <div class="chart-card">
+      <div class="chart-title">🧠 Top Detected Intents</div>
+      {% set intent_max = intent_rows | map(attribute='cnt') | max %}
+      {% for row in intent_rows %}
+        {% if row.intent %}
+          <div class="intent-row">
+            <span class="intent-label">{{ row.intent }}</span>
+            <div class="intent-bar-wrap">
+              <div class="intent-bar-fill" style="width:{{ ((row.cnt / intent_max) * 100)|int }}%;"></div>
+            </div>
+            <span class="intent-cnt">{{ row.cnt }}</span>
+          </div>
+        {% endif %}
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  <!-- ── Recent Orders table ──────────────────────────────────── -->
+  <div class="sec-title">Recent Orders</div>
   <div class="card-box">
     {% if recent_orders %}
-      <table class="orders-table">
+      <table class="ord-table">
         <thead>
           <tr>
             <th>#</th>
@@ -169,12 +292,12 @@
             <tr>
               <td>{{ o.id }}</td>
               <td>{{ o.name or '—' }}</td>
-              <td>{{ o.phone or '—' }}</td>
+              <td>{{ o.phone or o.customer_phone or '—' }}</td>
               <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
                 {{ o.items or '—' }}
               </td>
               <td>
-                <span class="badge-status badge-{{ o.status or 'pending' }}">
+                <span class="badge-s badge-{{ o.status or 'pending' }}">
                   {{ (o.status or 'pending')|capitalize }}
                 </span>
               </td>
@@ -184,26 +307,19 @@
         </tbody>
       </table>
     {% else %}
-      <div style="padding:32px; text-align:center; color:#9ca3af; font-size:14px;">
-        No orders yet.
-      </div>
+      <div style="padding:32px;text-align:center;color:#9ca3af;font-size:14px;">No orders yet.</div>
     {% endif %}
   </div>
 
-  <!-- ── Upgrade CTA if near limit ────────────────────────────────── -->
+  <!-- ── Quota warning ────────────────────────────────────────── -->
   {% if sub and sub.max_messages and sub.max_messages != -1 %}
     {% set pct_msg = ((messages_used / sub.max_messages) * 100)|int %}
     {% if pct_msg >= 80 %}
       <div class="upgrade-notice">
         ⚠️ You have used <strong>{{ pct_msg }}%</strong> of your monthly message quota.
-        {% if pct_msg >= 100 %}
-          You have reached your current plan limit. Please upgrade to continue.
-        {% else %}
-          Consider upgrading before you hit the limit.
-        {% endif %}
-        <a href="/admin/billing" style="font-weight:700;color:#92400e;text-decoration:underline;margin-left:8px;">
-          Upgrade Plan →
-        </a>
+        {% if pct_msg >= 100 %}You have reached your limit. Please upgrade to continue.
+        {% else %}Consider upgrading before you hit the limit.{% endif %}
+        <a href="/admin/billing" style="font-weight:700;color:#92400e;text-decoration:underline;margin-left:8px;">Upgrade →</a>
       </div>
     {% endif %}
   {% endif %}
