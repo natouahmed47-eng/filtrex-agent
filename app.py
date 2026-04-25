@@ -1145,6 +1145,25 @@ def check_limit(client_id, limit_type):
     return allowed, sub
 
 
+def check_plan_limit(client_id, limit_name):
+    """
+    Public alias for check_limit() using the user-facing limit names:
+    'messages' | 'catalog_items' | 'orders'
+    Returns (allowed: bool, sub: dict|None).
+    """
+    return check_limit(client_id, limit_name)
+
+
+def increment_usage(client_id, usage_type):
+    """
+    Increment a usage counter for the client's active subscription.
+    usage_type: 'messages_used' | 'orders_used'
+    Logs [USAGE_INCREMENTED].
+    """
+    _billing_increment(client_id, usage_type)
+    print(f"[USAGE_INCREMENTED] client={client_id} type={usage_type}")
+
+
 def generate_referral_code(client_id):
     """Generate a unique referral code for a client."""
     digits = random.randint(1000, 9999)
@@ -2542,9 +2561,10 @@ _UPSELL_CANONICAL_MAP = {
 }
 
 def can_show_upsell(state):
-    # ── PLAN GATE: upsell is a pro / business feature ──────────────────────
+    # ── PLAN ENFORCE: upsell is a pro / business feature ───────────────────
+    print(f"[PLAN_ENFORCE] checking feature=upsell — client={CLIENT_ID}")
     if not has_feature(CLIENT_ID, "upsell"):
-        print(f"[FEATURE_BLOCKED] can_show_upsell client={CLIENT_ID} → upsell not available on current plan")
+        print(f"[FEATURE_BLOCKED] upsell — client={CLIENT_ID} → upgrade required")
         return False
 
     step          = state.get("current_step", "service")
@@ -2836,14 +2856,15 @@ def wa_save_booking(phone, state, name):
     print(f"[SAVE_BOOKING] name={name}")
     print(f"[SAVE_BOOKING] state={state}")
 
-    # ── BILLING: order limit check ─────────────────────────────────────────
-    _ord_ok, _ord_sub = check_usage_limit(CLIENT_ID, "orders")
+    # ── PLAN ENFORCE: order limit ──────────────────────────────────────────
+    print(f"[PLAN_ENFORCE] checking orders limit — client={CLIENT_ID}")
+    _ord_ok, _ord_sub = check_plan_limit(CLIENT_ID, "orders")
     if not _ord_ok:
         _ord_plan = (_ord_sub or {}).get("plan_name", "Free")
-        _ord_lim  = (_ord_sub or {}).get("max_orders", 20)
-        print(f"[BILLING_BLOCKED] wa_save_booking stopped — client={CLIENT_ID} plan={_ord_plan!r} orders_limit={_ord_lim}")
+        _ord_lim  = (_ord_sub or {}).get("max_orders", 10)
+        print(f"[LIMIT_BLOCKED] orders — client={CLIENT_ID} plan={_ord_plan!r} limit={_ord_lim}")
         return  # abort save silently
-    _billing_increment(CLIENT_ID, "orders_used")
+    increment_usage(CLIENT_ID, "orders_used")
 
     day  = state.get("known_day")  or ""
     time = state.get("known_time") or ""
@@ -3020,22 +3041,17 @@ def whatsapp():
             print("[WHATSAPP] ignored non-chat or empty message")
             return "", 200
 
-        # ── PAYWALL: message limit check ──────────────────────────────────
-        _msg_allowed, _msg_sub = check_usage_limit(CLIENT_ID, "messages")
+        # ── PLAN ENFORCE: message limit ────────────────────────────────────
+        print(f"[PLAN_ENFORCE] checking messages limit — client={CLIENT_ID}")
+        _msg_allowed, _msg_sub = check_plan_limit(CLIENT_ID, "messages")
         if not _msg_allowed:
             _plan_n = (_msg_sub or {}).get("plan_name", "Free")
             _used   = (_msg_sub or {}).get("messages_used", 0)
             _limit  = (_msg_sub or {}).get("max_messages", 100)
-            print(f"[PAYWALL_TRIGGER] client={CLIENT_ID} plan={_plan_n!r} messages={_used}/{_limit}")
-            print(f"[BILLING_BLOCKED] WhatsApp reply blocked — sending upgrade notice to {sender!r}")
-            _paywall_msg = (
-                "⚠️ لقد وصلت إلى حد الرسائل الشهري في خطتك الحالية.\n"
-                "للمتابعة، يرجى ترقية خطتك على لوحة التحكم.\n\n"
-                "⚠️ You've reached your monthly message limit.\n"
-                "Please upgrade your plan to continue."
-            )
+            print(f"[LIMIT_BLOCKED] messages — client={CLIENT_ID} plan={_plan_n!r} used={_used}/{_limit}")
+            _paywall_msg = "لقد وصلت إلى حد باقتك الحالية. يرجى الترقية للاستمرار."
             return wa_reply(sender, _paywall_msg)
-        _billing_increment(CLIENT_ID, "messages_used")
+        increment_usage(CLIENT_ID, "messages_used")
 
         state = wa_load(sender)
         _step_early = state.get("current_step", "service")
@@ -3764,14 +3780,15 @@ def admin_catalog_new():
         if not title:
             flash("Title is required.", "error")
         else:
-            # ── BILLING: catalog item limit ───────────────────────────────
-            _cat_ok, _cat_sub = check_usage_limit(cid, "catalog_items")
+            # ── PLAN ENFORCE: catalog item limit ──────────────────────────
+            print(f"[PLAN_ENFORCE] checking catalog_items limit — client={cid}")
+            _cat_ok, _cat_sub = check_plan_limit(cid, "catalog_items")
             if not _cat_ok:
                 _cat_plan = (_cat_sub or {}).get("plan_name", "Free")
                 _cat_lim  = (_cat_sub or {}).get("max_catalog_items", 5)
+                print(f"[LIMIT_BLOCKED] catalog_items — client={cid} plan={_cat_plan!r} limit={_cat_lim}")
                 flash(
-                    f"Catalog item limit reached ({_cat_lim} items on {_cat_plan} plan). "
-                    f"Upgrade your plan to add more items.",
+                    "لقد وصلت إلى حد باقتك الحالية. يرجى الترقية للاستمرار.",
                     "error"
                 )
                 return redirect(url_for("admin_catalog"))
@@ -4077,6 +4094,15 @@ def admin_settings():
         return guard
     cid = _session_client_id()
     client = get_client(cid)
+
+    # ── PLAN ENFORCE: white_label fields require business plan ─────────────
+    if request.method == "POST" and request.form.get("white_label_enabled"):
+        print(f"[PLAN_ENFORCE] checking feature=white_label — client={cid}")
+        if not has_feature(cid, "white_label"):
+            print(f"[FEATURE_BLOCKED] white_label — client={cid} → upgrade required")
+            flash("لقد وصلت إلى حد باقتك الحالية. يرجى الترقية للاستمرار.", "error")
+            return redirect(url_for("admin_billing"))
+
     if request.method == "POST":
         name             = request.form.get("name", "").strip()
         business_type    = request.form.get("business_type", "clinic")
@@ -4431,15 +4457,12 @@ def admin_analytics():
     cid    = _session_client_id()
     client = get_client(cid)
 
-    # ── PLAN GATE: analytics requires pro or business ─────────────────────
+    # ── PLAN ENFORCE: analytics requires pro or business ──────────────────
+    print(f"[PLAN_ENFORCE] checking feature=analytics — client={cid}")
     if not has_feature(cid, "analytics"):
         plan_now = get_client_plan(cid)
-        print(f"[FEATURE_BLOCKED] admin_analytics client={cid} plan={plan_now!r} → analytics not in plan")
-        flash(
-            "Analytics is not available on your current plan. "
-            "Upgrade to Pro or Business to unlock analytics.",
-            "error"
-        )
+        print(f"[FEATURE_BLOCKED] analytics — client={cid} plan={plan_now!r} → upgrade required")
+        flash("لقد وصلت إلى حد باقتك الحالية. يرجى الترقية للاستمرار.", "error")
         return redirect(url_for("admin_billing"))
 
     # ── Gather analytics data ─────────────────────────────────────────────
@@ -4636,15 +4659,15 @@ def api_post_orders():
     if not phone or not items:
         return jsonify({"error": "phone and items are required"}), 400
 
-    # ── PLAN GATE: order limit ─────────────────────────────────────────────
-    _ord_ok, _ord_sub = check_limit(cid, "orders")
+    # ── PLAN ENFORCE: order limit ──────────────────────────────────────────
+    print(f"[PLAN_ENFORCE] checking orders limit — client={cid}")
+    _ord_ok, _ord_sub = check_plan_limit(cid, "orders")
     if not _ord_ok:
         _ord_plan = (_ord_sub or {}).get("plan_name", "Free")
         _ord_lim  = (_ord_sub or {}).get("max_orders", 10)
-        print(f"[LIMIT_EXCEEDED] api_post_orders blocked client={cid} "
-              f"plan={_ord_plan!r} limit={_ord_lim}")
+        print(f"[LIMIT_BLOCKED] orders — client={cid} plan={_ord_plan!r} limit={_ord_lim}")
         return jsonify({
-            "error": "You have reached your current plan limit. Please upgrade to continue.",
+            "error": "لقد وصلت إلى حد باقتك الحالية. يرجى الترقية للاستمرار.",
             "limit_type": "orders",
             "plan": _ord_plan,
             "limit": _ord_lim,
