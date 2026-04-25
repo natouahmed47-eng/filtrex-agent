@@ -808,6 +808,16 @@ def _migrate_saas():
             con.commit()
             print("[TRIAL] migrated clients → added is_trial, trial_started_at, trial_ends_at")
 
+        # ── AI Brain columns ──────────────────────────────────────────────────
+        if "assistant_tone" not in _cli_cols:
+            con.execute("ALTER TABLE clients ADD COLUMN assistant_tone        TEXT DEFAULT 'friendly'")
+            con.execute("ALTER TABLE clients ADD COLUMN assistant_goal        TEXT DEFAULT 'book_appointments'")
+            con.execute("ALTER TABLE clients ADD COLUMN business_description  TEXT DEFAULT ''")
+            con.execute("ALTER TABLE clients ADD COLUMN policies              TEXT DEFAULT ''")
+            con.execute("ALTER TABLE clients ADD COLUMN fallback_message      TEXT DEFAULT ''")
+            con.commit()
+            print("[AI_BRAIN] migrated clients → assistant_tone, assistant_goal, business_description, policies, fallback_message")
+
         # users: add email + client_id columns for multi-tenant auth
         _usr_cols = [r[1] for r in con.execute("PRAGMA table_info(users)").fetchall()]
         if "affiliate_id" not in _usr_cols:
@@ -2029,38 +2039,78 @@ def wa_clear(phone):
         print(f"[DB] wa_clear connection closed")
     print(f"[WHATSAPP] state_cleared phone={phone}")
 
-WHATSAPP_SYSTEM_PROMPT = """You are a smart WhatsApp business assistant for a dental clinic.
+def build_ai_prompt(client, lang="ar", catalog_items=None):
+    """Build a dynamic system prompt from client AI Brain settings.
+    Logs [AI_BRAIN_LOADED] and [AI_PROMPT_BUILT].
+    """
+    biz_name    = (client or {}).get("name")             or "Business"
+    biz_type    = (client or {}).get("business_type")    or "business"
+    tone        = (client or {}).get("assistant_tone")   or "friendly"
+    goal        = (client or {}).get("assistant_goal")   or "book_appointments"
+    description = (client or {}).get("business_description") or ""
+    policies    = (client or {}).get("policies")         or ""
+    fallback    = (client or {}).get("fallback_message") or ""
 
-LANGUAGE RULE (MOST IMPORTANT):
-- ALWAYS reply in the exact same language the user is writing in.
-- If the user writes in English → reply in English.
-- If the user writes in Arabic → reply in Arabic.
-- If the user writes in French → reply in French.
-- Never switch languages unless the user switches first.
+    print(f"[AI_BRAIN_LOADED] biz={biz_name!r} type={biz_type!r} tone={tone!r} goal={goal!r} lang={lang!r}")
 
-IMPORTANT RULES:
-- NEVER restart the conversation
-- Always continue based on the user's last message
-- If user asks about service → continue booking flow
-- If user repeats the same request → continue, do NOT restart
+    # ── Tone mapping ──────────────────────────────────────────────────────────
+    _tone_map = {
+        "friendly":    "Be warm, helpful, and conversational.",
+        "professional":"Be formal, precise, and courteous.",
+        "luxury":      "Be refined, elegant, and exclusive. Use premium vocabulary.",
+        "short":       "Be very concise — 1 to 2 lines per reply maximum.",
+        "persuasive":  "Be confident and sales-driven. Highlight value and urgency.",
+    }
+    tone_instruction = _tone_map.get(tone, _tone_map["friendly"])
 
-BOOKING FLOW:
-1. If user asks for a service → suggest booking
-2. If user asks price → give price, then ask for booking day
-3. If user gives day → ask for exact time
-4. If user gives time → ask for name
-5. If user gives name → confirm booking
+    # ── Goal mapping ──────────────────────────────────────────────────────────
+    _goal_map = {
+        "sell_products":     "Your main goal is to help customers find and purchase products.",
+        "book_appointments": "Your main goal is to guide customers to book an appointment. Follow this flow: service → day → time → name → confirm.",
+        "customer_support":  "Your main goal is to resolve customer questions and issues efficiently.",
+        "collect_leads":     "Your main goal is to collect the customer's name, phone number, and interest.",
+        "mixed":             "Your goal is to sell, support, and book as needed based on the customer's request.",
+    }
+    goal_instruction = _goal_map.get(goal, _goal_map["book_appointments"])
 
-STYLE:
-- Short (2-3 lines max)
-- Direct
-- Friendly
-- Sales-focused
+    # ── Catalog section ───────────────────────────────────────────────────────
+    catalog_section = ""
+    if catalog_items:
+        lines = []
+        for it in catalog_items:
+            price = it.get("sale_price") or it.get("price") or 0
+            lines.append(f"- {it['title']}: {price}")
+        catalog_section = "\n\nPRODUCTS / SERVICES:\n" + "\n".join(lines)
 
-DO NOT:
-- Reset conversation
-- Repeat greeting
-- Ask unnecessary questions"""
+    # ── Policies section ──────────────────────────────────────────────────────
+    policies_section = f"\n\nPOLICIES:\n{policies.strip()}" if policies.strip() else ""
+
+    # ── Description section ───────────────────────────────────────────────────
+    desc_section = f"\n\nABOUT THE BUSINESS:\n{description.strip()}" if description.strip() else ""
+
+    # ── Fallback ──────────────────────────────────────────────────────────────
+    fallback_section = (
+        f"\n\nFALLBACK: If you cannot answer, say: \"{fallback.strip()}\""
+        if fallback.strip() else ""
+    )
+
+    prompt = (
+        f"You are a smart WhatsApp AI assistant for {biz_name} ({biz_type}).\n\n"
+        f"TONE: {tone_instruction}\n\n"
+        f"GOAL: {goal_instruction}"
+        f"{desc_section}"
+        f"{catalog_section}"
+        f"{policies_section}"
+        f"{fallback_section}\n\n"
+        f"RULES:\n"
+        f"- Reply language: {lang}\n"
+        f"- Never restart the conversation.\n"
+        f"- Always continue from the customer's last message.\n"
+        f"- Keep replies short (2-3 lines max) unless detail is needed.\n"
+        f"- Do not repeat greetings or ask unnecessary questions."
+    )
+    print(f"[AI_PROMPT_BUILT] length={len(prompt)} chars")
+    return prompt
 
 def detect_lang(msg):
     print(f"[LANG_DETECT] detecting for msg={msg[:40]!r}")
@@ -2140,16 +2190,9 @@ def get_reply_language(client, incoming_msg):
     print(f"[REPLY_LANGUAGE] detected={detected!r} client_default={client_default!r} → using={reply_lang!r}")
     return reply_lang
 
-def openai_chat(user_message, lang="ar"):
+def openai_chat(user_message, lang="ar", client_obj=None, catalog_items=None):
     print(f"[OPENAI] sending message={user_message!r} lang={lang!r}")
-    lang_note = (
-        f"\n\nReply language: {lang}"
-        f"\n\nLANGUAGE RULES (STRICT):"
-        f"\n- Reply in the customer's detected language if you can confidently identify it."
-        f"\n- Otherwise reply in the configured language: {lang}"
-        f"\n- Never mix languages in the same answer unless the customer mixes languages."
-        f"\n- Supported languages: ar (العربية), fr (Français), en (English), es (Español), it (Italiano)."
-    )
+    system_prompt = build_ai_prompt(client_obj, lang=lang, catalog_items=catalog_items)
     resp = requests.post(
         "https://api.openai.com/v1/chat/completions",
         headers={
@@ -2159,7 +2202,7 @@ def openai_chat(user_message, lang="ar"):
         json={
             "model": "gpt-4o-mini",
             "messages": [
-                {"role": "system", "content": WHATSAPP_SYSTEM_PROMPT + lang_note},
+                {"role": "system", "content": system_prompt},
                 {"role": "user",   "content": user_message}
             ]
         },
@@ -3910,7 +3953,7 @@ def whatsapp():
                 }
                 _ask = _ask_map.get(step, "Ask the user what service they need.")
                 print(f"[FLOW] asking_for={step!r} (after mid-booking greeting)")
-                return wa_reply(sender, openai_chat(_ask, lang=lang))
+                return wa_reply(sender, openai_chat(_ask, lang=lang, client_obj=_wh_client))
 
         # ── UPSELL REJECTION DETECTION ────────────────────────────────────
         if state.get("upsell_offered") and not state.get("upsell_rejected") and (is_rejection(incoming_msg) or _parsed_rejection):
@@ -3924,7 +3967,7 @@ def whatsapp():
                 "confirm": "Ask the user to confirm their booking (yes or no).",
             }
             _ask = _ask_map.get(step, "Ask the user what service they need.")
-            return wa_reply(sender, openai_chat(_ask, lang=lang))
+            return wa_reply(sender, openai_chat(_ask, lang=lang, client_obj=_wh_client))
 
         # ── ONE-SHOT SHORTCUT — all fields present → go directly to confirmation
         _sc_svcs = ensure_svc_list(state.get("known_service"))
@@ -4085,10 +4128,10 @@ def whatsapp():
                         price=f"{int(_rp)} {_cur}",
                     )
                 else:
-                    reply = openai_chat(incoming_msg, lang=lang)
+                    reply = openai_chat(incoming_msg, lang=lang, client_obj=_wh_client)
 
             else:
-                reply = openai_chat(incoming_msg, lang=lang)
+                reply = openai_chat(incoming_msg, lang=lang, client_obj=_wh_client)
 
         # ── STEP: day ─────────────────────────────────────────────────────
         elif step == "day":
@@ -4096,7 +4139,7 @@ def whatsapp():
                 print(f"[DAY_INVALID] rejected={incoming_msg!r}")
                 return wa_reply(sender, openai_chat(
                     "Ask the user to choose a valid day like today or tomorrow only.",
-                    lang=lang,
+                    lang=lang, client_obj=_wh_client,
                 ))
             svc = detect_wa_service(incoming_msg)
             if svc and not ensure_svc_list(state.get("known_service")):
@@ -4108,7 +4151,7 @@ def whatsapp():
                 wa_save(sender, state)
                 return wa_reply(sender, openai_chat(
                     "Ask the user for their name to complete the booking.",
-                    lang=lang,
+                    lang=lang, client_obj=_wh_client,
                 ))
             else:
                 state["current_step"] = "time"
@@ -4116,7 +4159,7 @@ def whatsapp():
                 wa_save(sender, state)
                 return wa_reply(sender, openai_chat(
                     "Ask the user for the exact time.",
-                    lang=lang,
+                    lang=lang, client_obj=_wh_client,
                 ))
 
         # ── STEP: time ────────────────────────────────────────────────────
@@ -4130,12 +4173,12 @@ def whatsapp():
                     slots_str = " / ".join(top)
                     return wa_reply(sender, openai_chat(
                         f"Ask the user to choose one of these available times: {slots_str}",
-                        lang=lang,
+                        lang=lang, client_obj=_wh_client,
                     ))
                 else:
                     return wa_reply(sender, openai_chat(
                         "Ask the user for the exact time.",
-                        lang=lang,
+                        lang=lang, client_obj=_wh_client,
                     ))
             else:
                 time_val = normalize_time_input(incoming_msg)
@@ -4143,7 +4186,7 @@ def whatsapp():
                     print(f"[TIME_INVALID] rejected={incoming_msg!r} normalized={time_val!r}")
                     return wa_reply(sender, openai_chat(
                         "Ask the user to provide a valid time (example: 16:00).",
-                        lang=lang,
+                        lang=lang, client_obj=_wh_client,
                     ))
                 _svcs_t = ensure_svc_list(state.get("known_service"))
                 svc = _svcs_t[0] if _svcs_t else ""
@@ -4178,7 +4221,7 @@ def whatsapp():
                 print("[DEBUG] invalid name detected — rejecting")
                 return wa_reply(sender, openai_chat(
                     "Ask the user politely to provide their name only (one or two words). Do not accept sentences.",
-                    lang=lang,
+                    lang=lang, client_obj=_wh_client,
                 ))
 
             print("[DEBUG] name accepted — saving booking")
@@ -4200,7 +4243,7 @@ def whatsapp():
                 "confirm": "Ask the user to confirm their booking (yes or no).",
             }
             _prompt = _reprompts.get(step, "Ask the user what service they need.")
-            reply = openai_chat(_prompt, lang=lang)
+            reply = openai_chat(_prompt, lang=lang, client_obj=_wh_client)
 
         print(f"[WHATSAPP] reply={reply!r}")
         return wa_reply(sender, reply)
@@ -4870,6 +4913,47 @@ def admin_settings():
         flash("Settings saved.", "success")
         return redirect(url_for("admin_settings"))
     return render_template("admin/settings.html", client=client, active="settings")
+
+
+# ── /admin/ai-brain ────────────────────────────────────────────────────────────
+@app.route("/admin/ai-brain", methods=["GET", "POST"])
+def admin_ai_brain():
+    guard = _admin_guard()
+    if guard:
+        return guard
+    cid    = _session_client_id()
+    client = get_client(cid)
+
+    if request.method == "POST":
+        business_name       = request.form.get("name", "").strip()
+        business_type       = request.form.get("business_type", "clinic").strip()
+        default_language    = request.form.get("default_language", "ar").strip()
+        assistant_tone      = request.form.get("assistant_tone", "friendly").strip()
+        assistant_goal      = request.form.get("assistant_goal", "book_appointments").strip()
+        business_description= request.form.get("business_description", "").strip()
+        policies            = request.form.get("policies", "").strip()
+        fallback_message    = request.form.get("fallback_message", "").strip()
+
+        con = get_db_connection()
+        try:
+            con.execute("""
+                UPDATE clients
+                SET name=?, business_type=?, default_language=?,
+                    assistant_tone=?, assistant_goal=?,
+                    business_description=?, policies=?, fallback_message=?
+                WHERE id=?
+            """, (business_name, business_type, default_language,
+                  assistant_tone, assistant_goal,
+                  business_description, policies, fallback_message, cid))
+            con.commit()
+        finally:
+            con.close()
+        print(f"[AI_BRAIN_LOADED] saved for client={cid} tone={assistant_tone!r} goal={assistant_goal!r}")
+        flash("AI Brain settings saved.", "success")
+        return redirect(url_for("admin_ai_brain"))
+
+    return render_template("admin/ai-brain.html", client=client, active="ai-brain")
+
 
 # ── /admin/billing + PayPal routes ───────────────────────────────────────────
 # ── PayPal plan-ID → internal plan name map ──────────────────────────────────

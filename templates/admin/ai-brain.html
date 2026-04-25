@@ -1,0 +1,163 @@
+{% extends "admin/layout.html" %}
+{% block content %}
+<style>
+.brain-wrap { max-width: 780px; margin: 0 auto; padding: 32px 16px; }
+.brain-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 16px; padding: 28px 32px; margin-bottom: 24px; }
+.brain-section-title { font-size: 13px; font-weight: 700; color: #6366f1; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 18px; }
+.brain-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.brain-grid.single { grid-template-columns: 1fr; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label { font-size: 13px; font-weight: 600; color: #374151; }
+.field input, .field select, .field textarea {
+  border: 1.5px solid #e2e8f0; border-radius: 10px; padding: 10px 14px;
+  font-size: 14px; color: #1e293b; background: #f8fafc;
+  transition: border-color .15s;
+  width: 100%; box-sizing: border-box;
+}
+.field textarea { resize: vertical; min-height: 90px; }
+.field input:focus, .field select:focus, .field textarea:focus {
+  border-color: #6366f1; outline: none; background: #fff;
+}
+.field .hint { font-size: 11px; color: #94a3b8; margin-top: 3px; }
+.btn-save {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff; border: none; border-radius: 10px;
+  padding: 12px 32px; font-size: 14px; font-weight: 600;
+  cursor: pointer; transition: opacity .15s;
+}
+.btn-save:hover { opacity: .9; }
+.flash-success {
+  background: #f0fdf4; border: 1px solid #86efac; color: #166534;
+  border-radius: 10px; padding: 12px 18px; margin-bottom: 20px; font-size: 14px;
+}
+.preview-box {
+  background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 10px;
+  padding: 16px; font-size: 12px; color: #64748b; font-family: monospace;
+  white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow-y: auto;
+}
+</style>
+
+<div class="brain-wrap">
+  <h1 style="font-size:22px;font-weight:700;color:#1e293b;margin-bottom:6px;">🧠 AI Brain</h1>
+  <p style="font-size:14px;color:#64748b;margin-bottom:24px;">
+    Configure your AI assistant's identity, tone, goal, and knowledge base.
+    The AI will use these settings to reply to every customer message.
+  </p>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for cat, msg in messages %}
+      <div class="flash-{{ cat }}">{{ msg }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  <form method="POST">
+
+    <!-- ── Business Identity ──────────────────────────────────────────── -->
+    <div class="brain-card">
+      <div class="brain-section-title">Business Identity</div>
+      <div class="brain-grid">
+        <div class="field">
+          <label>Business Name</label>
+          <input type="text" name="name"
+                 value="{{ client.name or '' }}"
+                 placeholder="e.g. Parfum Paris">
+        </div>
+        <div class="field">
+          <label>Business Type</label>
+          <select name="business_type">
+            {% set bt = client.business_type or 'clinic' %}
+            <option value="clinic"       {{ 'selected' if bt=='clinic' }}>🏥 Clinic</option>
+            <option value="restaurant"   {{ 'selected' if bt=='restaurant' }}>🍽️ Restaurant</option>
+            <option value="ecommerce"    {{ 'selected' if bt=='ecommerce' }}>🛒 E-Commerce</option>
+            <option value="beauty_salon" {{ 'selected' if bt=='beauty_salon' }}>💅 Beauty Salon</option>
+            <option value="real_estate"  {{ 'selected' if bt=='real_estate' }}>🏠 Real Estate</option>
+            <option value="custom"       {{ 'selected' if bt=='custom' }}>⚙️ Custom</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Default Language</label>
+          <select name="default_language">
+            {% set dl = client.default_language or 'ar' %}
+            <option value="ar" {{ 'selected' if dl=='ar' }}>🇸🇦 العربية</option>
+            <option value="fr" {{ 'selected' if dl=='fr' }}>🇫🇷 Français</option>
+            <option value="en" {{ 'selected' if dl=='en' }}>🇬🇧 English</option>
+            <option value="es" {{ 'selected' if dl=='es' }}>🇪🇸 Español</option>
+            <option value="it" {{ 'selected' if dl=='it' }}>🇮🇹 Italiano</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── AI Personality ─────────────────────────────────────────────── -->
+    <div class="brain-card">
+      <div class="brain-section-title">AI Personality</div>
+      <div class="brain-grid">
+        <div class="field">
+          <label>Tone</label>
+          <select name="assistant_tone">
+            {% set at = client.assistant_tone or 'friendly' %}
+            <option value="friendly"     {{ 'selected' if at=='friendly' }}>😊 Friendly</option>
+            <option value="professional" {{ 'selected' if at=='professional' }}>💼 Professional</option>
+            <option value="luxury"       {{ 'selected' if at=='luxury' }}>✨ Luxury</option>
+            <option value="short"        {{ 'selected' if at=='short' }}>⚡ Short & Direct</option>
+            <option value="persuasive"   {{ 'selected' if at=='persuasive' }}>🎯 Persuasive</option>
+          </select>
+          <div class="hint">How your assistant speaks to customers.</div>
+        </div>
+        <div class="field">
+          <label>Goal</label>
+          <select name="assistant_goal">
+            {% set ag = client.assistant_goal or 'book_appointments' %}
+            <option value="sell_products"     {{ 'selected' if ag=='sell_products' }}>🛒 Sell Products</option>
+            <option value="book_appointments" {{ 'selected' if ag=='book_appointments' }}>📅 Book Appointments</option>
+            <option value="customer_support"  {{ 'selected' if ag=='customer_support' }}>🎧 Customer Support</option>
+            <option value="collect_leads"     {{ 'selected' if ag=='collect_leads' }}>📋 Collect Leads</option>
+            <option value="mixed"             {{ 'selected' if ag=='mixed' }}>🔀 Mixed</option>
+          </select>
+          <div class="hint">Primary objective for each conversation.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Knowledge Base ─────────────────────────────────────────────── -->
+    <div class="brain-card">
+      <div class="brain-section-title">Knowledge Base</div>
+      <div class="brain-grid single">
+        <div class="field">
+          <label>Business Description</label>
+          <textarea name="business_description"
+                    placeholder="Describe your business, what you offer, your unique value, target customers…">{{ client.business_description or '' }}</textarea>
+          <div class="hint">Used by the AI to introduce your business and answer general questions.</div>
+        </div>
+        <div class="field">
+          <label>Policies</label>
+          <textarea name="policies"
+                    placeholder="• Delivery within 3–5 days&#10;• Free cancellation 24h before appointment&#10;• Working hours: Mon–Sat 9am–7pm">{{ client.policies or '' }}</textarea>
+          <div class="hint">Delivery, refund, booking, working hours — one policy per line.</div>
+        </div>
+        <div class="field">
+          <label>Fallback Message</label>
+          <input type="text" name="fallback_message"
+                 value="{{ client.fallback_message or '' }}"
+                 placeholder="Please contact us directly at +212 6XX XXX XXX">
+          <div class="hint">Sent when the AI cannot answer the customer's question.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Prompt Preview ─────────────────────────────────────────────── -->
+    <div class="brain-card">
+      <div class="brain-section-title">Live Prompt Preview</div>
+      <p style="font-size:12px;color:#94a3b8;margin-bottom:10px;">
+        This is the exact instruction your AI receives for every message. Save to update.
+      </p>
+      <div class="preview-box" id="prompt-preview">Save your settings to see the generated prompt.</div>
+    </div>
+
+    <div style="display:flex;justify-content:flex-end;">
+      <button type="submit" class="btn-save">💾 Save AI Brain</button>
+    </div>
+
+  </form>
+</div>
+{% endblock %}
