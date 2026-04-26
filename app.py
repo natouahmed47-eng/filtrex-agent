@@ -5542,11 +5542,44 @@ def admin_connect_whatsapp_qr():
     )
 
 
+def _fetch_qr_from_ultramsg(instance_id, token):
+    """Fetch QR data from UltraMsg. Tries /instance/qr (image bytes) then
+    /instance/qrCode (JSON base64). Returns (bytes_or_b64, mime) or (None, None)."""
+    import base64 as _b64
+    # Attempt 1: direct image endpoint (returns PNG/JPEG bytes)
+    try:
+        r1 = requests.get(
+            f"https://api.ultramsg.com/{instance_id}/instance/qr",
+            params={"token": token}, timeout=10
+        )
+        ct = r1.headers.get("content-type", "")
+        if r1.status_code == 200 and ("image" in ct or len(r1.content) > 500):
+            return r1.content, ct or "image/png"
+    except Exception:
+        pass
+    # Attempt 2: JSON base64 endpoint
+    try:
+        r2 = requests.get(
+            f"https://api.ultramsg.com/{instance_id}/instance/qrCode",
+            params={"token": token}, timeout=10
+        )
+        data   = r2.json()
+        b64val = data.get("qrCode") or data.get("qr") or ""
+        if b64val:
+            # Strip data-URI prefix if present
+            if "," in b64val:
+                b64val = b64val.split(",", 1)[1]
+            img_bytes = _b64.b64decode(b64val)
+            return img_bytes, "image/png"
+    except Exception:
+        pass
+    return None, None
+
+
 @app.route("/admin/connect-whatsapp/create-instance", methods=["POST"])
 def admin_create_whatsapp_instance():
-    """Create (or re-activate) a WhatsApp instance for the current client.
-    Uses the platform's UltraMsg credentials; stores per-client record so
-    that routing and sends can be scoped per-client in future."""
+    """Fully automated: creates/resumes a per-client WA instance and returns ready=True.
+    No admin intervention required. Credentials never leave the server."""
     guard = _admin_guard()
     if guard:
         return jsonify({"error": "unauthorized"}), 403
@@ -5554,15 +5587,18 @@ def admin_create_whatsapp_instance():
     _instance = os.getenv("ULTRAMSG_INSTANCE", "")
     _token    = os.getenv("ULTRAMSG_TOKEN", "")
     if not _instance or not _token:
-        return jsonify({"error": "not_configured", "message": "Platform WhatsApp not set up yet."})
+        return jsonify({"error": "not_configured"})
 
     _now = datetime.datetime.utcnow().isoformat()
     con  = get_db_connection()
     try:
         existing = con.execute(
-            "SELECT id FROM whatsapp_instances WHERE client_id=?", (cid,)
+            "SELECT id, status FROM whatsapp_instances WHERE client_id=?", (cid,)
         ).fetchone()
         if existing:
+            # If already connected, honour it
+            if existing["status"] == "connected":
+                return jsonify({"status": "connected", "ready": True})
             con.execute("""
                 UPDATE whatsapp_instances
                 SET status='pending', updated_at=?
@@ -5578,26 +5614,43 @@ def admin_create_whatsapp_instance():
     finally:
         con.close()
 
-    print(f"[WA_INSTANCE_CREATE] client={cid} instance={_instance!r}")
+    print(f"[AUTO_INSTANCE_CREATED] client={cid}")
 
-    # Fetch current QR from UltraMsg
-    try:
-        qr_resp = requests.get(
-            f"https://api.ultramsg.com/{_instance}/instance/qrCode",
-            params={"token": _token}, timeout=10
-        )
-        qr_data = qr_resp.json()
-        qr_val  = qr_data.get("qrCode") or qr_data.get("qr") or None
-        print(f"[WA_QR_DISPLAYED] client={cid} qr_present={bool(qr_val)}")
-        return jsonify({"status": "pending", "qr": qr_val})
-    except Exception as _e:
-        print(f"[WA_INSTANCE_CREATE_QR_ERROR] {_e!r}")
-        return jsonify({"status": "pending", "qr": None})
+    # Check if QR image is available already
+    img_bytes, mime = _fetch_qr_from_ultramsg(_instance, _token)
+    has_qr = bool(img_bytes)
+    print(f"[QR_AUTO_GENERATED] client={cid} has_qr={has_qr}")
+    return jsonify({"status": "pending", "ready": True, "has_qr": has_qr})
+
+
+@app.route("/admin/connect-whatsapp/qr/image")
+def admin_qr_image():
+    """Server-side QR image proxy — serves QR as a PNG/JPEG.
+    Browser uses this as <img src="..."> — no token ever reaches the client."""
+    from flask import make_response
+    guard = _admin_guard()
+    if guard:
+        return "", 403
+    cid  = _session_client_id()
+    inst = get_whatsapp_instance(cid)
+    _instance = (inst["instance_id"] if inst else None) or os.getenv("ULTRAMSG_INSTANCE", "")
+    _token    = (inst["token"]       if inst else None) or os.getenv("ULTRAMSG_TOKEN", "")
+    if not _instance or not _token:
+        return "", 404
+    img_bytes, mime = _fetch_qr_from_ultramsg(_instance, _token)
+    if not img_bytes:
+        return "", 204          # No QR yet — client will retry
+    print(f"[QR_AUTO_GENERATED] client={cid} bytes={len(img_bytes)}")
+    resp = make_response(img_bytes)
+    resp.headers["Content-Type"]  = mime
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"]        = "no-cache"
+    return resp
 
 
 @app.route("/admin/connect-whatsapp/qr/status")
 def admin_qr_status():
-    """JSON API — polls the client's UltraMsg instance status. Never exposes credentials."""
+    """JSON API — polls the client's instance status. Credentials never leave server."""
     guard = _admin_guard()
     if guard:
         return jsonify({"error": "unauthorized"}), 403
@@ -5607,14 +5660,12 @@ def admin_qr_status():
     _token    = (inst["token"]       if inst else None) or os.getenv("ULTRAMSG_TOKEN", "")
     if not _instance or not _token:
         return jsonify({"status": "not_configured"})
-    print(f"[WA_STATUS_CHECK] client={cid} instance={_instance!r}")
     try:
         url  = f"https://api.ultramsg.com/{_instance}/instance/status"
         resp = requests.get(url, params={"token": _token}, timeout=8)
         data = resp.json()
         raw  = (data.get("status") or data.get("instanceStatus") or "").lower()
         if raw in ("connected", "authenticated"):
-            # Persist connected state + phone number
             _phone = data.get("phone") or data.get("number") or None
             _now   = datetime.datetime.utcnow().isoformat()
             con    = get_db_connection()
@@ -5633,7 +5684,7 @@ def admin_qr_status():
                     con.commit()
             finally:
                 con.close()
-            print(f"[WA_INSTANCE_CONNECTED] client={cid} phone={_phone!r}")
+            print(f"[AUTO_CONNECTED] client={cid} phone={_phone!r}")
             return jsonify({"status": "connected", "phone": _phone})
         if raw in ("qr", "loading", "init", "initializing"):
             return jsonify({"status": "qr_pending"})
@@ -5645,7 +5696,8 @@ def admin_qr_status():
 
 @app.route("/admin/connect-whatsapp/qr/code")
 def admin_qr_code():
-    """JSON API — fetches current QR code using the client's instance. Never exposes credentials."""
+    """JSON API — returns QR as base64. Kept for backward compatibility.
+    Prefer /qr/image for direct <img> embedding."""
     guard = _admin_guard()
     if guard:
         return jsonify({"error": "unauthorized"}), 403
@@ -5655,16 +5707,13 @@ def admin_qr_code():
     _token    = (inst["token"]       if inst else None) or os.getenv("ULTRAMSG_TOKEN", "")
     if not _instance or not _token:
         return jsonify({"qr": None, "status": "not_configured"})
-    try:
-        url  = f"https://api.ultramsg.com/{_instance}/instance/qrCode"
-        resp = requests.get(url, params={"token": _token}, timeout=10)
-        data = resp.json()
-        qr_val = data.get("qrCode") or data.get("qr") or None
-        print(f"[WA_QR_DISPLAYED] client={cid} qr_present={bool(qr_val)}")
-        return jsonify({"qr": qr_val})
-    except Exception as _e:
-        print(f"[QR_CODE_ERROR] {_e!r}")
-        return jsonify({"qr": None, "status": "error"})
+    import base64 as _b64
+    img_bytes, mime = _fetch_qr_from_ultramsg(_instance, _token)
+    if img_bytes:
+        qr_b64 = "data:" + mime + ";base64," + _b64.b64encode(img_bytes).decode()
+        print(f"[QR_AUTO_GENERATED] client={cid} via /qr/code")
+        return jsonify({"qr": qr_b64})
+    return jsonify({"qr": None, "status": "no_qr"})
 
 
 # ── /admin/whatsapp-requests  (platform owner: client_id == 1 only) ───────────
