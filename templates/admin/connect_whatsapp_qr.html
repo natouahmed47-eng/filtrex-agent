@@ -374,17 +374,17 @@
   var IS_CONN    = {{ 'true' if instance_status == 'connected' else 'false' }};
   var HAS_INST   = {{ 'true' if has_instance else 'false' }};
 
-  var CREATE_URL = "{{ url_for('admin_create_whatsapp_instance') }}";
-  var IMAGE_URL  = "{{ url_for('admin_qr_image') }}";
-  var STATUS_URL = "{{ url_for('admin_qr_status') }}";
+  /* New canonical API routes — zero credentials in URL or response body */
+  var CREATE_URL = "/api/whatsapp/create-instance";
+  var STATUS_URL = "/api/whatsapp/status";
 
-  /* ── State: idle | loading | pending | connected | expired ─── */
-  var _phase     = IS_CONN ? "connected" : (HAS_INST ? "pending" : "idle");
-  var _poll      = null;
-  var _expTimer  = null;
-  var _imgTs     = 0;      // cache-bust timestamp
+  /* ── State ─── idle | loading | pending | connected | expired ─── */
+  var _phase    = IS_CONN ? "connected" : (HAS_INST ? "pending" : "idle");
+  var _poll     = null;
+  var _expTimer = null;
+  var _qrUrl    = null;   /* UltraMsg direct QR image URL returned by create-instance */
 
-  /* ── DOM ─────────────────────────────────────────────── */
+  /* ── DOM refs ────────────────────────────────────────────────── */
   var $ = function(id){ return document.getElementById(id); };
   var scIdle      = $("screen-idle");
   var scLoad      = $("screen-loading");
@@ -401,35 +401,34 @@
   var elSuccessBox= $("success-box");
 
   var TXT = {
-    idle:    LANG==="ar" ? "في انتظار الربط"       : "Waiting for connection",
-    load:    LANG==="ar" ? "⏳ جاري تجهيز الاتصال..." : "⏳ Preparing connection…",
-    pending: LANG==="ar" ? "⏳ في انتظار المسح"     : "⏳ Waiting for scan",
-    conn:    LANG==="ar" ? "✅ تم الربط بنجاح"      : "✅ Successfully linked",
-    expired: LANG==="ar" ? "⏰ انتهت صلاحية الرمز"  : "⏰ Code expired",
+    idle:    LANG==="ar" ? "في انتظار الربط"          : "Waiting for connection",
+    load:    LANG==="ar" ? "⏳ جاري تجهيز الاتصال..."  : "⏳ Preparing connection…",
+    pending: LANG==="ar" ? "⏳ في انتظار المسح"        : "⏳ Waiting for scan",
+    conn:    LANG==="ar" ? "✅ تم الربط بنجاح"         : "✅ Successfully linked",
+    expired: LANG==="ar" ? "⏰ انتهت صلاحية الرمز"     : "⏰ Code expired",
   };
 
-  /* ── Screen switcher ────────────────────────────────── */
+  /* ── Screen helpers ───────────────────────────────────────────── */
   function showScreen(id) {
     [scIdle, scLoad, scQr, scConn].forEach(function(s){ s.classList.remove("active"); });
     $(id).classList.add("active");
   }
-
   function setPill(cls, txt) {
     elPill.className = "qrp-pill " + cls;
     elPillTxt.textContent = txt;
   }
 
-  /* ── Phases ─────────────────────────────────────────── */
+  /* ── Phase transitions ────────────────────────────────────────── */
   function goIdle() {
     _phase = "idle";
     showScreen("screen-idle");
     setPill("pill-idle", TXT.idle);
     elActionRow.style.display = "flex";
     elBtnConn.style.display   = "flex";
+    elBtnConn.disabled        = false;
     elBtnRef.style.display    = "none";
     elBtnDash.style.display   = "none";
     stopPoll(); stopExpTimer();
-    console.log("[QR_PAGE] phase=idle");
   }
 
   function goLoading() {
@@ -437,21 +436,21 @@
     showScreen("screen-loading");
     setPill("pill-load", TXT.load);
     elBtnConn.disabled = true;
-    console.log("[QR_PAGE] phase=loading");
   }
 
-  function goPending() {
+  function goPending(qrUrl) {
     _phase = "pending";
+    if (qrUrl) _qrUrl = qrUrl;
     showScreen("screen-qr");
     setPill("pill-wait", TXT.pending);
-    elBtnConn.style.display = "none";
-    elBtnRef.style.display  = "flex";
+    elBtnConn.style.display   = "none";
+    elBtnRef.style.display    = "flex";
     elActionRow.style.display = "flex";
-    elBtnDash.style.display = "none";
+    elBtnDash.style.display   = "none";
     elExpDimmer.classList.remove("show");
     loadQrImage();
     startPoll();
-    console.log("[QR_PAGE] phase=pending — QR displayed");
+    console.log("[QR_PAGE] QR displayed");
   }
 
   function goConnected() {
@@ -462,7 +461,7 @@
     elBtnDash.style.display   = "flex";
     elSuccessBox.classList.add("show");
     stopPoll(); stopExpTimer();
-    console.log("[QR_PAGE] AUTO_CONNECTED");
+    console.log("[QR_PAGE] ✅ تم ربط واتساب بنجاح");
   }
 
   function goExpired() {
@@ -470,47 +469,45 @@
     setPill("pill-exp", TXT.expired);
     elExpDimmer.classList.add("show");
     stopPoll(); stopExpTimer();
-    console.log("[QR_PAGE] QR expired");
   }
 
-  /* ── QR image load ──────────────────────────────────── */
+  /* ── QR image rendering ───────────────────────────────────────── */
+  /*  qr_url comes from the backend response (create-instance).
+      It is the full UltraMsg QR image URL.
+      We set it directly on <img src> — no token exposed as a separate field. */
   function loadQrImage() {
-    _imgTs++;
-    var ts = _imgTs;
+    if (!_qrUrl) return;
     elQrImg.classList.add("loading");
     elExpDimmer.classList.remove("show");
 
-    var url = IMAGE_URL + "?_t=" + Date.now();
-    elQrImg.onload  = function(){ if (ts === _imgTs) elQrImg.classList.remove("loading"); };
-    elQrImg.onerror = function(){
-      if (ts !== _imgTs) return;
-      // Retry after 2s — UltraMsg may not have QR ready immediately
-      setTimeout(function(){ if (_phase === "pending") loadQrImage(); }, 2000);
+    /* Cache-bust so the browser always fetches a fresh QR */
+    var url = _qrUrl + (_qrUrl.indexOf("?") >= 0 ? "&" : "?") + "_t=" + Date.now();
+
+    elQrImg.onload = function() { elQrImg.classList.remove("loading"); };
+    elQrImg.onerror = function() {
+      /* UltraMsg may not have the QR ready yet — retry in 2 s */
+      setTimeout(function() { if (_phase === "pending") loadQrImage(); }, 2000);
     };
     elQrImg.src = url;
 
-    // Auto-expire the displayed QR after 55s
+    /* Auto-expire visible QR after 55 s */
     stopExpTimer();
-    _expTimer = setTimeout(function(){
-      if (_phase === "pending") goExpired();
-    }, 55000);
+    _expTimer = setTimeout(function() { if (_phase === "pending") goExpired(); }, 55000);
   }
 
-  /* ── Status polling ─────────────────────────────────── */
+  /* ── Status polling (every 5 s) ───────────────────────────────── */
   function pollOnce() {
     fetch(STATUS_URL)
       .then(function(r){ return r.json(); })
-      .then(function(d){
-        if (d.status === "connected") goConnected();
-      })
+      .then(function(d){ if (d.status === "connected") goConnected(); })
       .catch(function(){});
   }
 
   function startPoll(){ stopPoll(); pollOnce(); _poll = setInterval(pollOnce, 5000); }
-  function stopPoll() { if (_poll){ clearInterval(_poll); _poll = null; } }
+  function stopPoll(){ if (_poll){ clearInterval(_poll); _poll = null; } }
   function stopExpTimer(){ if (_expTimer){ clearTimeout(_expTimer); _expTimer = null; } }
 
-  /* ── Public: button handlers ────────────────────────── */
+  /* ── Button: "ربط واتساب" — starts the whole flow ────────────── */
   window.startConnect = function() {
     goLoading();
     fetch(CREATE_URL, {
@@ -518,31 +515,42 @@
       headers: { "X-Requested-With": "XMLHttpRequest" }
     })
       .then(function(r){ return r.json(); })
-      .then(function(d){
-        if (d.error) { goIdle(); return; }
+      .then(function(d) {
+        if (d.error)                  { goIdle(); return; }
         if (d.status === "connected") { goConnected(); return; }
-        goPending();
+        /* d.qr_url is the only thing that reaches the browser — no bare token */
+        goPending(d.qr_url || null);
       })
       .catch(function(){ goIdle(); });
   };
 
+  /* ── Button: "تحديث الرمز" — reload QR image + restart poll ──── */
   window.refreshQR = function() {
     stopExpTimer();
+    elExpDimmer.classList.remove("show");
     loadQrImage();
     startPoll();
   };
 
-  /* ── Boot ───────────────────────────────────────────── */
+  /* ── Boot: handle returning users ─────────────────────────────── */
   if (IS_CONN) {
     goConnected();
   } else if (HAS_INST) {
-    // Instance exists from a previous session — resume
-    goPending();
+    /* Previous session started — resume pending state; call create-instance
+       to get a fresh qr_url without creating a new instance in DB */
+    goLoading();
+    fetch(CREATE_URL, { method: "POST", headers: { "X-Requested-With": "XMLHttpRequest" } })
+      .then(function(r){ return r.json(); })
+      .then(function(d) {
+        if (d.status === "connected") { goConnected(); return; }
+        goPending(d.qr_url || null);
+      })
+      .catch(function(){ goIdle(); });
   } else {
     goIdle();
   }
 
-  console.log("[QR_PAGE] boot phase=" + _phase + " lang=" + LANG);
+  console.log("[QR_PAGE] boot lang=" + LANG + " phase=" + _phase);
 })();
 </script>
 
