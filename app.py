@@ -4571,20 +4571,102 @@ def whatsapp():
             print(f"[COMPLETED] completed={state.get('completed')} step={_step_early!r} — offering new booking")
             return wa_reply(sender, _new_booking_q.get(_cl, _new_booking_q["ar"]))
 
-        if is_noise_message(incoming_msg) and _step_early != "service":
-            print(f"[NOISE] ignored mid-booking greeting at step={_step_early!r}")
-            return "", 200
+        # ── Language detection ──────────────────────────────────────────────
+        lang = state.get("lang") or detect_lang(incoming_msg) or "ar"
 
-        # ── Language detection (shared across all branches below) ────────────
-        _early_lang = state.get("lang") or detect_lang(incoming_msg) or "ar"
+        # ── Active booking flow — route immediately, highest priority ────────
+        _active_flow = flow_load(_WH_CID, sender)
+        if _active_flow:
+            print(f"[BOOKING_FLOW] active flow found — routing client={_WH_CID}")
+            return run_booking_flow(sender, incoming_msg, _WH_CID, lang, _active_flow)
 
-        # ── CATALOG QUERY HANDLER — generic, AI-driven, no hardcoded terms ──────
-        # Triggers on universal availability/price/inquiry keywords.
-        # AI receives the full structured catalog and decides what matches and
-        # how to answer — works for any business type.
-        _msg_lower_ck = incoming_msg.lower()
-        _catalog_triggered = any(kw in _msg_lower_ck for kw in _CATALOG_TRIGGER_WORDS)
-        if _catalog_triggered:
+        print(f"[CATALOG_LOADED] client={_WH_CID} items={len(_ai_catalog)}")
+
+        # ── 1. Pure greeting — respond warmly, NO blocking flags ─────────────
+        _GREETING_WORDS = [
+            "سلام", "مرحبا", "اهلا", "أهلا", "هلا", "مرحباً",
+            "السلام عليكم", "وعليكم السلام",
+            "hi", "hello", "hey", "bonjour", "salut", "bonsoir",
+        ]
+        _txt_lower = incoming_msg.lower().strip()
+        if any(g in _txt_lower for g in _GREETING_WORDS) and len(incoming_msg.strip()) < 35:
+            _welcome = {
+                "ar": "أهلاً 👋 كيف يمكنني مساعدتك؟",
+                "en": "Hello 👋 How can I help you today?",
+                "fr": "Bonjour 👋 Comment puis-je vous aider?",
+            }
+            print(f"[GREETING_REPLY] client={_WH_CID} lang={lang!r}")
+            return wa_reply(sender, _welcome.get(lang, _welcome["ar"]))
+
+        # ── 2. Empty catalog guard ────────────────────────────────────────────
+        if not _ai_catalog:
+            _empty_msg = {
+                "ar": "لا توجد منتجات أو خدمات مضافة حاليًا في الكتالوج.",
+                "en": "No products or services are currently available.",
+                "fr": "Aucun produit ou service n'est disponible actuellement.",
+            }
+            print(f"[EMPTY_CATALOG] client={_WH_CID} — returning empty catalog message")
+            return wa_reply(sender, _empty_msg.get(lang, _empty_msg["ar"]))
+
+        # ── 3. Match message against catalog items (generic — no hardcoded terms) ──
+        _matches = _catalog_match_by_keywords(_ai_catalog, incoming_msg)
+        print(f"[GENERIC_CATALOG_AI_MATCH] client={_WH_CID} msg={incoming_msg!r} matches={len(_matches)}")
+
+        reply = ""
+        if _matches:
+            _lines = []
+            for m in _matches:
+                _p = m.get("sale_price") or m.get("price") or 0
+                _c = (m.get("currency") or "").strip()
+                _lines.append(f"• {m['title']} — {_p} {_c}".strip())
+            _match_hdr = {
+                "ar": "هذا ما لدينا:\n\n",
+                "en": "Here's what we have:\n\n",
+                "fr": "Voici ce que nous avons:\n\n",
+            }
+            _match_cta = {
+                "ar": "\n\nهل تريد الطلب أو الحجز؟ 😊",
+                "en": "\n\nWould you like to order or book? 😊",
+                "fr": "\n\nVoulez-vous commander ou réserver? 😊",
+            }
+            reply = (
+                _match_hdr.get(lang, _match_hdr["ar"])
+                + "\n".join(_lines)
+                + _match_cta.get(lang, _match_cta["ar"])
+            )
+        else:
+            # ── 4. No match → show ALL catalog items ─────────────────────────
+            _lines = []
+            for m in _ai_catalog:
+                _p = m.get("sale_price") or m.get("price") or 0
+                _c = (m.get("currency") or "").strip()
+                _lines.append(f"• {m['title']} — {_p} {_c}".strip())
+            _all_hdr = {
+                "ar": "هذه منتجاتنا وخدماتنا المتوفرة:\n\n",
+                "en": "Here are our available products and services:\n\n",
+                "fr": "Voici nos produits et services disponibles:\n\n",
+            }
+            reply = _all_hdr.get(lang, _all_hdr["ar"]) + "\n".join(_lines)
+
+        # ── 5. Empty reply guard — NEVER send empty ───────────────────────────
+        if not (reply or "").strip():
+            print(f"[EMPTY_REPLY_GUARD] reply was empty — AI fallback client={_WH_CID}")
+            reply = openai_chat(
+                incoming_msg, lang=lang, client_obj=_wh_client, catalog_items=_ai_catalog
+            )
+        if not (reply or "").strip():
+            _fallback = {
+                "ar": "كيف يمكنني مساعدتك؟",
+                "en": "How can I help you?",
+                "fr": "Comment puis-je vous aider?",
+            }
+            reply = _fallback.get(lang, _fallback["ar"])
+
+        print(f"[CATALOG_RESPONSE_SENT] client={_WH_CID} preview={reply[:80]!r}")
+        return wa_reply(sender, reply)
+
+        # ── dead code sentinel — old catalog/intent/booking blocks removed ──
+        if False:
             print(f"[CATALOG_LOADED] query detected — client={_WH_CID} catalog_size={len(_ai_catalog)}")
 
             # Persist intent so this session is never re-classified as greeting
@@ -5229,6 +5311,12 @@ def whatsapp():
         import traceback
         print(f"[WHATSAPP] EXCEPTION: {repr(e)}")
         print(traceback.format_exc())
+        try:
+            _err_sender = (request.get_json(force=True, silent=True) or {}).get("data", {}).get("from", "")
+            if _err_sender:
+                wa_reply(_err_sender, "كيف يمكنني مساعدتك؟")
+        except Exception:
+            pass
         return "", 200
 
 def _admin_guard():
