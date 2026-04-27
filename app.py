@@ -2235,8 +2235,8 @@ def wa_clear(phone):
     print(f"[WHATSAPP] state_cleared phone={phone}")
 
 def load_catalog_for_ai(client_id):
-    """Load all active catalog items for a client to inject into the AI system prompt.
-    Returns a list of dicts. Logs [CATALOG_LOAD_FOR_AI]."""
+    """Load all active catalog items for a client.
+    Logs [CATALOG_LOADED]. Returns list of dicts or []."""
     try:
         con = get_db_connection()
         try:
@@ -2249,11 +2249,105 @@ def load_catalog_for_ai(client_id):
             items = [dict(r) for r in rows]
         finally:
             con.close()
-        print(f"[CATALOG_LOAD_FOR_AI] client={client_id} items={len(items)}")
+        print(f"[CATALOG_LOADED] client={client_id} count={len(items)}")
         return items
     except Exception as _e:
-        print(f"[CATALOG_LOAD_FOR_AI] ERROR client={client_id} err={_e!r}")
+        print(f"[CATALOG_LOADED] ERROR client={client_id} err={_e!r}")
         return []
+
+
+# ── Keywords that signal a catalog-intent query ────────────────────────────────
+_CATALOG_TRIGGER_WORDS = [
+    # Arabic availability
+    "هل لديكم", "هل عندكم", "هل عندك", "هل توفر", "هل يوجد", "هل توجد",
+    "يوجد لديكم", "لديكم", "عندكم", "عندك", "توفر", "متوفر",
+    # Arabic price
+    "سعر", "سعره", "سعرها", "بكم", "بكم هي", "كم سعر", "كم ثمن",
+    "ثمن", "التكلفة", "كم تكلفة", "تكلفة",
+    # English
+    "do you have", "is there", "do you sell",
+    "price", "cost", "how much", "what is the price",
+]
+
+
+def _catalog_match_by_keywords(catalog_items, msg):
+    """Fuzzy-match catalog items against a customer message.
+
+    Algorithm:
+    1. Tokenise the message into words ≥ 3 chars (Arabic or Latin).
+    2. For each token, check if it appears as a sub-string of any item's
+       title, description, or category (case-insensitive).
+    3. Return all items that had at least one token match, sorted by
+       number of matches descending.
+    """
+    import re as _re
+    msg_clean = msg.lower().strip()
+    # Tokenise — words of 3+ chars
+    tokens = [w for w in _re.split(r'[\s،,؟?!.]+', msg_clean) if len(w) >= 3]
+    if not tokens:
+        return []
+
+    scored = []
+    for item in catalog_items:
+        haystack = " ".join([
+            (item.get("title")       or ""),
+            (item.get("description") or ""),
+            (item.get("category")    or ""),
+        ]).lower()
+        hits = sum(1 for tok in tokens if tok in haystack)
+        if hits > 0:
+            scored.append((hits, item))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [item for _, item in scored]
+
+
+def _format_catalog_reply(matched_items, all_items, lang, msg):
+    """Build a rich WhatsApp reply from catalog match results.
+
+    matched_items  — items whose title/desc matched the query
+    all_items      — full catalog (used for 'not found' guard)
+    """
+    not_found = {
+        "ar": "عذراً، هذه الخدمة أو المنتج غير متوفر حالياً في الكتالوج. 😊\nهل يمكنني مساعدتك في شيء آخر؟",
+        "en": "Sorry, this service or product is not currently in our catalog. 😊\nCan I help you with something else?",
+        "fr": "Désolé, ce service ou produit n'est pas disponible actuellement. 😊\nPuis-je vous aider avec autre chose?",
+    }
+    yes_hdr = {
+        "ar": "نعم، لدينا ما يلي:",
+        "en": "Yes, we have the following:",
+        "fr": "Oui, nous avons:",
+    }
+    order_cta = {
+        "ar": "هل ترغب في الطلب أو الحجز؟ 😊",
+        "en": "Would you like to order or book? 😊",
+        "fr": "Voulez-vous commander ou réserver? 😊",
+    }
+    _lang = lang if lang in not_found else "ar"
+
+    if not matched_items:
+        return not_found[_lang]
+
+    lines = [yes_hdr[_lang]]
+    for it in matched_items:
+        regular  = it.get("price") or 0
+        sale     = it.get("sale_price")
+        cur      = (it.get("currency") or "").strip()
+        title    = it.get("title", "")
+        desc     = (it.get("description") or "").strip()
+
+        if sale and float(sale) > 0 and float(sale) < float(regular):
+            price_str = f"💎 *{title}*: ~~{regular} {cur}~~ → *{sale} {cur}*"
+        else:
+            price_str = f"💎 *{title}*: *{regular} {cur}*"
+
+        lines.append(price_str)
+        if desc:
+            lines.append(f"   _{desc}_")
+
+    lines.append("")
+    lines.append(order_cta[_lang])
+    return "\n".join(lines)
 
 
 def build_ai_prompt(client, lang="ar", catalog_items=None):
@@ -2291,30 +2385,41 @@ def build_ai_prompt(client, lang="ar", catalog_items=None):
     goal_instruction = _goal_map.get(goal, _goal_map["book_appointments"])
 
     # ── Catalog section ───────────────────────────────────────────────────────
-    catalog_section  = ""
-    has_catalog      = bool(catalog_items)
+    catalog_section = ""
+    has_catalog     = bool(catalog_items)
     if has_catalog:
         lines = []
         for it in catalog_items:
-            effective_price = it.get("sale_price") or it.get("price") or 0
-            cur  = (it.get("currency") or "").strip()
-            cat  = (it.get("category") or "").strip()
-            desc = (it.get("description") or "").strip()
-            line = f"• {it['title']}: {effective_price} {cur}".strip()
+            regular  = it.get("price") or 0
+            sale     = it.get("sale_price")
+            cur      = (it.get("currency") or "").strip()
+            cat      = (it.get("category") or "").strip()
+            desc     = (it.get("description") or "").strip()
+            title    = it.get("title", "")
+            # Show both prices when a sale price exists
+            if sale and float(sale) > 0 and float(sale) < float(regular):
+                price_str = f"{regular} {cur} (عرض: {sale} {cur})"
+            else:
+                price_str = f"{regular} {cur}"
+            line = f"- {title}: {price_str}"
             if cat:
-                line += f" [{cat}]"
+                line += f" | الفئة: {cat}"
             if desc:
-                line += f" — {desc}"
+                line += f" | {desc}"
             lines.append(line)
-        catalog_section = "\n\nCATALOG (active products/services):\n" + "\n".join(lines)
+        catalog_section = (
+            "\n\nالمنتجات والخدمات المتاحة (CATALOG):\n" + "\n".join(lines)
+        )
 
-    # Catalog-enforcement rule: only answer prices from catalog
+    # Catalog enforcement rules
     if has_catalog:
         catalog_rule = (
-            "\n- IMPORTANT: Answer prices and availability ONLY from the CATALOG above."
-            "\n- If a customer asks about a service or product NOT listed in the catalog,"
-            " reply EXACTLY: \"هذه الخدمة غير موجودة حاليًا في الكتالوج.\""
-            "\n- Never invent prices or services not in the catalog."
+            "\n- If the user asks about product/service availability or price:"
+            " answer ONLY from the CATALOG listed above."
+            "\n- If the user asks about something NOT in the catalog, reply:"
+            " \"عذراً، هذه الخدمة غير متوفرة حالياً في الكتالوج.\""
+            "\n- Always show the exact price and sale price from the catalog."
+            "\n- Never invent prices or items not in the catalog."
         )
     else:
         catalog_rule = ""
@@ -4425,15 +4530,39 @@ def whatsapp():
             print(f"[NOISE] ignored mid-booking greeting at step={_step_early!r}")
             return "", 200
 
-        # ── INTENT DETECTION — only on fresh conversation start ───────────────
+        # ── Language detection (shared across all branches below) ────────────
         _early_lang = state.get("lang") or detect_lang(incoming_msg) or "ar"
+
+        # ── CATALOG KEYWORD CHECK — runs before intent detection ──────────────
+        # Intercepts availability / price questions and answers directly from
+        # the catalog, bypassing OpenAI when a clear match exists.
+        _msg_lower_ck = incoming_msg.lower()
+        _catalog_triggered = any(kw in _msg_lower_ck for kw in _CATALOG_TRIGGER_WORDS)
+        if _catalog_triggered and _ai_catalog:
+            print(f"[CATALOG_LOADED] triggered by keyword — client={_WH_CID} catalog_size={len(_ai_catalog)}")
+            _ck_matches = _catalog_match_by_keywords(_ai_catalog, incoming_msg)
+            if _ck_matches:
+                print(f"[CATALOG_MATCH_FOUND] client={_WH_CID} matches={[m['title'] for m in _ck_matches]} msg={incoming_msg!r}")
+                _ck_reply = _format_catalog_reply(_ck_matches, _ai_catalog, _early_lang, incoming_msg)
+                print(f"[AI_RESPONSE_WITH_CATALOG] client={_WH_CID} items={len(_ck_matches)}")
+                return wa_reply(sender, _ck_reply)
+            else:
+                # Trigger words present but nothing in catalog matches → let AI handle it
+                # (catalog_items are already injected in the prompt via _ai_catalog)
+                print(f"[CATALOG_LOADED] no match — falling through to AI client={_WH_CID}")
+                _ck_ai = openai_chat(incoming_msg, lang=_early_lang,
+                                     client_obj=_wh_client, catalog_items=_ai_catalog)
+                print(f"[AI_RESPONSE_WITH_CATALOG] client={_WH_CID} (no direct match, AI used)")
+                return wa_reply(sender, _ck_ai)
+
+        # ── INTENT DETECTION — only on fresh conversation start ───────────────
         if _step_early == "service" and not state.get("msg_intent"):
             _msg_intent = detect_message_intent(incoming_msg, lang=_early_lang)
             state["msg_intent"] = _msg_intent
             track_event(_WH_CID, "intent_detected", {"intent": _msg_intent, "lang": _early_lang})
 
             _greeting_map = {
-                "ar": f"أهلاً! كيف يمكنني مساعدتك اليوم؟",
+                "ar": "أهلاً! كيف يمكنني مساعدتك اليوم؟",
                 "en": "Hello! How can I help you today?",
                 "fr": "Bonjour! Comment puis-je vous aider aujourd'hui?",
                 "es": "¡Hola! ¿Cómo puedo ayudarte hoy?",
@@ -4448,29 +4577,35 @@ def whatsapp():
                 return wa_reply(sender, _greeting_map.get(_wc, _greeting_map["ar"]))
 
             elif _msg_intent == "ask_price":
-                print(f"[INTENT_FLOW] ask_price → fetch catalog")
-                _price_con = get_db_connection()
-                try:
-                    _price_rows = _price_con.execute("""
-                        SELECT title, price, currency FROM catalogs
-                        WHERE client_id=? AND is_active=1 ORDER BY title
-                    """, (_WH_CID,)).fetchall()
-                finally:
-                    _price_con.close()
-                if _price_rows:
-                    _lines = [f"• {r['title']}: {r['price']} {r['currency']}" for r in _price_rows]
+                print(f"[INTENT_FLOW] ask_price → catalog")
+                print(f"[CATALOG_LOADED] ask_price branch client={_WH_CID} items={len(_ai_catalog)}")
+                if _ai_catalog:
+                    _lines = []
+                    for _pr in _ai_catalog:
+                        _sp = _pr.get("sale_price")
+                        _pp = _pr.get("price") or 0
+                        _cu = (_pr.get("currency") or "").strip()
+                        if _sp and float(_sp) > 0:
+                            _lines.append(f"• {_pr['title']}: {_pp} {_cu} (عرض: {_sp} {_cu})")
+                        else:
+                            _lines.append(f"• {_pr['title']}: {_pp} {_cu}")
                     _price_hdr = {
-                        "ar": "أسعارنا:", "en": "Our prices:", "fr": "Nos prix:",
-                        "es": "Nuestros precios:", "it": "I nostri prezzi:",
+                        "ar": "أسعارنا 💎", "en": "Our prices 💎",
+                        "fr": "Nos prix 💎", "es": "Nuestros precios 💎",
                     }
                     _price_msg = _price_hdr.get(_early_lang, _price_hdr["ar"]) + "\n" + "\n".join(_lines)
+                    print(f"[AI_RESPONSE_WITH_CATALOG] ask_price client={_WH_CID} items={len(_ai_catalog)}")
                 else:
-                    _price_msg = openai_chat(incoming_msg, lang=_early_lang, client_obj=_wh_client, catalog_items=_ai_catalog)
+                    _price_msg = openai_chat(incoming_msg, lang=_early_lang,
+                                             client_obj=_wh_client, catalog_items=_ai_catalog)
                 return wa_reply(sender, _price_msg)
 
             elif _msg_intent == "ask_info":
-                print(f"[INTENT_FLOW] ask_info → AI reply")
-                _info_reply = openai_chat(incoming_msg, lang=_early_lang, client_obj=_wh_client, catalog_items=_ai_catalog)
+                print(f"[INTENT_FLOW] ask_info → AI with catalog")
+                print(f"[CATALOG_LOADED] ask_info branch client={_WH_CID} items={len(_ai_catalog)}")
+                _info_reply = openai_chat(incoming_msg, lang=_early_lang,
+                                          client_obj=_wh_client, catalog_items=_ai_catalog)
+                print(f"[AI_RESPONSE_WITH_CATALOG] ask_info client={_WH_CID}")
                 return wa_reply(sender, _info_reply)
 
             elif _msg_intent in ("book_appointment", "place_order"):
