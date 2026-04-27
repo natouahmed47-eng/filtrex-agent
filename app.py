@@ -2537,29 +2537,43 @@ def get_reply_language(client, incoming_msg):
     return reply_lang
 
 def openai_chat(user_message, lang="ar", client_obj=None, catalog_items=None):
-    print(f"[OPENAI] sending message={user_message!r} lang={lang!r}")
+    _cat_count = len(catalog_items) if catalog_items else 0
+    print(f"[AI_CALLED] msg={user_message!r} lang={lang!r} catalog_items={_cat_count}")
     system_prompt = build_ai_prompt(client_obj, lang=lang, catalog_items=catalog_items)
-    resp = requests.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-            "Content-Type": "application/json"
-        },
-        json={
-            "model": "gpt-4o-mini",
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": user_message}
-            ]
-        },
-        timeout=20
-    )
-    print(f"[OPENAI] response status={resp.status_code} body={resp.text[:300]!r}")
-    if resp.status_code == 200:
-        return resp.json()["choices"][0]["message"]["content"].strip()
-    _err = {"ar": "عذراً، حدث خطأ. يرجى المحاولة مجدداً.",
-            "en": "Sorry, an error occurred. Please try again.",
-            "fr": "Désolé, une erreur s'est produite. Veuillez réessayer."}
+    try:
+        resp = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user",   "content": user_message}
+                ]
+            },
+            timeout=20
+        )
+        print(f"[OPENAI] response status={resp.status_code} body={resp.text[:300]!r}")
+        if resp.status_code == 200:
+            _reply = resp.json()["choices"][0]["message"]["content"].strip()
+            print(f"[AI_RESPONSE_SENT] reply_preview={_reply[:120]!r}")
+            return _reply
+    except Exception as _oe:
+        print(f"[AI_CALLED] ERROR — {_oe!r}")
+    # Fallback — business-specific message, never a greeting
+    _fallback_msg = ((client_obj or {}).get("fallback_message") or "").strip()
+    if _fallback_msg:
+        print(f"[AI_RESPONSE_SENT] using client fallback message")
+        return _fallback_msg
+    _err = {
+        "ar": "عذراً، لم أتمكن من الإجابة الآن. يرجى المحاولة مجدداً أو التواصل معنا مباشرة.",
+        "en": "Sorry, I couldn't respond right now. Please try again or contact us directly.",
+        "fr": "Désolé, je n'ai pas pu répondre. Veuillez réessayer ou nous contacter directement.",
+    }
+    print(f"[AI_RESPONSE_SENT] using generic error fallback lang={lang!r}")
     return _err.get(lang, _err["ar"])
 
 def normalize_number(raw):
@@ -3088,12 +3102,19 @@ def detect_message_intent(msg, lang="ar"):
     Falls back to 'ask_info' on any error.
     """
     prompt = (
-        "حدد نية هذه الرسالة فقط بكلمة واحدة من القائمة التالية:\n"
+        "حدد نية هذه الرسالة بكلمة واحدة فقط من القائمة التالية:\n"
         "book_appointment\n"
         "place_order\n"
         "ask_price\n"
         "ask_info\n"
         "greeting\n\n"
+        "قواعد التصنيف:\n"
+        "- greeting: فقط إذا كانت الرسالة تحية بحتة مثل (مرحبا، السلام عليكم، hello) بدون أي سؤال\n"
+        "- ask_info: أي سؤال عن منتج أو خدمة مثل (هل لديكم X، عندكم X، هل يوجد X)\n"
+        "- ask_price: أي سؤال عن السعر مثل (كم سعر X، بكم X)\n"
+        "- book_appointment: طلب حجز موعد\n"
+        "- place_order: طلب شراء منتج\n"
+        "مهم: الأسئلة مثل 'هل لديكم عطور' هي ask_info وليست greeting\n\n"
         f"الرسالة:\n{msg}"
     )
     try:
@@ -4449,6 +4470,7 @@ def whatsapp():
 
         # Track every valid inbound message
         track_event(_WH_CID, "message_received", {"sender": sender, "len": len(incoming_msg)})
+        print(f"[WHATSAPP_MESSAGE_RECEIVED] client={_WH_CID} sender={sender!r} msg={incoming_msg!r}")
 
         # ── AUTO-CONNECT: handle "START" or "START_<token>" ──────────────
         _msg_upper = incoming_msg.strip().upper()
@@ -4537,26 +4559,30 @@ def whatsapp():
         _early_lang = state.get("lang") or detect_lang(incoming_msg) or "ar"
 
         # ── CATALOG KEYWORD CHECK — runs before intent detection ──────────────
-        # Intercepts availability / price questions and answers directly from
-        # the catalog, bypassing OpenAI when a clear match exists.
+        # Intercepts availability / price questions regardless of catalog size.
+        # Responds directly when a keyword match is found; falls to AI otherwise.
         _msg_lower_ck = incoming_msg.lower()
         _catalog_triggered = any(kw in _msg_lower_ck for kw in _CATALOG_TRIGGER_WORDS)
-        if _catalog_triggered and _ai_catalog:
-            print(f"[CATALOG_LOADED] triggered by keyword — client={_WH_CID} catalog_size={len(_ai_catalog)}")
-            _ck_matches = _catalog_match_by_keywords(_ai_catalog, incoming_msg)
-            if _ck_matches:
-                print(f"[CATALOG_MATCH_FOUND] client={_WH_CID} matches={[m['title'] for m in _ck_matches]} msg={incoming_msg!r}")
-                _ck_reply = _format_catalog_reply(_ck_matches, _ai_catalog, _early_lang, incoming_msg)
-                print(f"[AI_RESPONSE_WITH_CATALOG] client={_WH_CID} items={len(_ck_matches)}")
-                return wa_reply(sender, _ck_reply)
-            else:
-                # Trigger words present but nothing in catalog matches → let AI handle it
-                # (catalog_items are already injected in the prompt via _ai_catalog)
-                print(f"[CATALOG_LOADED] no match — falling through to AI client={_WH_CID}")
-                _ck_ai = openai_chat(incoming_msg, lang=_early_lang,
-                                     client_obj=_wh_client, catalog_items=_ai_catalog)
-                print(f"[AI_RESPONSE_WITH_CATALOG] client={_WH_CID} (no direct match, AI used)")
-                return wa_reply(sender, _ck_ai)
+        if _catalog_triggered:
+            print(f"[CATALOG_LOADED] keyword triggered — client={_WH_CID} catalog_size={len(_ai_catalog)}")
+            # Persist intent so this user is never re-classified as greeting
+            if not state.get("msg_intent"):
+                state["msg_intent"] = "ask_catalog"
+                wa_save(sender, state)
+            if _ai_catalog:
+                _ck_matches = _catalog_match_by_keywords(_ai_catalog, incoming_msg)
+                if _ck_matches:
+                    print(f"[CATALOG_MATCH_FOUND] client={_WH_CID} matches={[m['title'] for m in _ck_matches]} msg={incoming_msg!r}")
+                    _ck_reply = _format_catalog_reply(_ck_matches, _ai_catalog, _early_lang, incoming_msg)
+                    print(f"[AI_CALLED] catalog direct-match — client={_WH_CID}")
+                    print(f"[AI_RESPONSE_SENT] client={_WH_CID} items={len(_ck_matches)}")
+                    return wa_reply(sender, _ck_reply)
+            # No direct match (or empty catalog) → let AI handle with catalog injected
+            print(f"[AI_CALLED] catalog keyword, no direct match — client={_WH_CID}")
+            _ck_ai = openai_chat(incoming_msg, lang=_early_lang,
+                                 client_obj=_wh_client, catalog_items=_ai_catalog)
+            print(f"[AI_RESPONSE_SENT] client={_WH_CID} (AI with catalog context)")
+            return wa_reply(sender, _ck_ai)
 
         # ── INTENT DETECTION — only on fresh conversation start ───────────────
         if _step_early == "service" and not state.get("msg_intent"):
@@ -4575,9 +4601,21 @@ def whatsapp():
             wa_save(sender, state)   # persist msg_intent before any early return
 
             if _msg_intent == "greeting":
-                print(f"[INTENT_FLOW] greeting → send welcome")
+                # Only send the greeting once — if already greeted, process with AI instead
+                if state.get("has_greeted"):
+                    print(f"[INTENT_FLOW] greeting repeated — routing to AI (already greeted)")
+                    print(f"[AI_CALLED] repeated greeting → AI fallback client={_WH_CID}")
+                    _g_ai = openai_chat(incoming_msg, lang=_early_lang,
+                                        client_obj=_wh_client, catalog_items=_ai_catalog)
+                    print(f"[AI_RESPONSE_SENT] client={_WH_CID}")
+                    return wa_reply(sender, _g_ai)
+                print(f"[INTENT_FLOW] greeting → send welcome (first time)")
+                state["has_greeted"] = True
+                wa_save(sender, state)
                 _wc = (_wh_client or {}).get("default_language") or _early_lang
-                return wa_reply(sender, _greeting_map.get(_wc, _greeting_map["ar"]))
+                _gr = _greeting_map.get(_wc, _greeting_map["ar"])
+                print(f"[AI_RESPONSE_SENT] greeting client={_WH_CID}")
+                return wa_reply(sender, _gr)
 
             elif _msg_intent == "ask_price":
                 print(f"[INTENT_FLOW] ask_price → catalog")
@@ -4597,18 +4635,20 @@ def whatsapp():
                         "fr": "Nos prix 💎", "es": "Nuestros precios 💎",
                     }
                     _price_msg = _price_hdr.get(_early_lang, _price_hdr["ar"]) + "\n" + "\n".join(_lines)
-                    print(f"[AI_RESPONSE_WITH_CATALOG] ask_price client={_WH_CID} items={len(_ai_catalog)}")
+                    print(f"[AI_RESPONSE_SENT] ask_price catalog client={_WH_CID} items={len(_ai_catalog)}")
                 else:
+                    print(f"[AI_CALLED] ask_price no catalog → AI client={_WH_CID}")
                     _price_msg = openai_chat(incoming_msg, lang=_early_lang,
                                              client_obj=_wh_client, catalog_items=_ai_catalog)
+                    print(f"[AI_RESPONSE_SENT] ask_price AI client={_WH_CID}")
                 return wa_reply(sender, _price_msg)
 
             elif _msg_intent == "ask_info":
-                print(f"[INTENT_FLOW] ask_info → AI with catalog")
-                print(f"[CATALOG_LOADED] ask_info branch client={_WH_CID} items={len(_ai_catalog)}")
+                print(f"[INTENT_FLOW] ask_info → AI with catalog client={_WH_CID} items={len(_ai_catalog)}")
+                print(f"[AI_CALLED] ask_info client={_WH_CID}")
                 _info_reply = openai_chat(incoming_msg, lang=_early_lang,
                                           client_obj=_wh_client, catalog_items=_ai_catalog)
-                print(f"[AI_RESPONSE_WITH_CATALOG] ask_info client={_WH_CID}")
+                print(f"[AI_RESPONSE_SENT] ask_info client={_WH_CID}")
                 return wa_reply(sender, _info_reply)
 
             elif _msg_intent in ("book_appointment", "place_order"):
@@ -4819,8 +4859,9 @@ def whatsapp():
 
         print(f"[FLOW] current_step={step!r}")
 
-        # ── GREETING — only reset if state is empty AND message is pure greeting
-        if is_greeting(incoming_msg):
+        # ── GREETING — only act on pure greetings that haven't been greeted yet ──
+        # Guard: if user was already greeted, never send welcome again
+        if is_greeting(incoming_msg) and not state.get("has_greeted"):
             _state_has_data = bool(
                 ensure_svc_list(state.get("known_service")) or
                 state.get("known_day") or state.get("known_time") or state.get("known_name")
@@ -4830,14 +4871,15 @@ def whatsapp():
                 _intent.get("time")     or _intent.get("name")
             )
             if _state_has_data:
-                # State already has booking progress — never reset, fall through
                 print(f"[GREETING] skipping reset — state has existing data (guard)")
             elif _intent_has_data:
-                # Message is a greeting + booking data — don't reset, fall through
                 print(f"[GREETING] skipping reset — intent has data={_intent}")
             elif step == "service":
                 print(f"[GREETING] pure greeting — resetting state for sender={sender!r}")
+                state["has_greeted"] = True
+                wa_save(sender, state)
                 wa_clear(sender)
+                print(f"[AI_RESPONSE_SENT] greeting/service-ask client={_WH_CID}")
                 return wa_reply(sender, build_ask_service(_WH_CID, lang))
             else:
                 _ask_map = {
@@ -4848,7 +4890,10 @@ def whatsapp():
                 }
                 _ask = _ask_map.get(step, "Ask the user what service they need.")
                 print(f"[FLOW] asking_for={step!r} (after mid-booking greeting)")
-                return wa_reply(sender, openai_chat(_ask, lang=lang, client_obj=_wh_client, catalog_items=_ai_catalog))
+                print(f"[AI_CALLED] mid-booking greeting re-prompt client={_WH_CID}")
+                _g2 = openai_chat(_ask, lang=lang, client_obj=_wh_client, catalog_items=_ai_catalog)
+                print(f"[AI_RESPONSE_SENT] client={_WH_CID}")
+                return wa_reply(sender, _g2)
 
         # ── UPSELL REJECTION DETECTION ────────────────────────────────────
         if state.get("upsell_offered") and not state.get("upsell_rejected") and (is_rejection(incoming_msg) or _parsed_rejection):
