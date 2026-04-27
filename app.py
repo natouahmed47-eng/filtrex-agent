@@ -2235,13 +2235,14 @@ def wa_clear(phone):
     print(f"[WHATSAPP] state_cleared phone={phone}")
 
 def load_catalog_for_ai(client_id):
-    """Load all active catalog items for a client.
-    Logs [CATALOG_LOADED]. Returns list of dicts or []."""
+    """Load all active catalog items for the client.
+    Returns list of dicts with all fields needed for AI context.
+    Logs [CATALOG_LOADED]."""
     try:
         con = get_db_connection()
         try:
             rows = con.execute("""
-                SELECT title, description, price, sale_price, currency, category
+                SELECT title, description, price, sale_price, currency, category, type
                 FROM   catalogs
                 WHERE  client_id = ? AND is_active = 1
                 ORDER  BY id ASC
@@ -2249,11 +2250,40 @@ def load_catalog_for_ai(client_id):
             items = [dict(r) for r in rows]
         finally:
             con.close()
-        print(f"[CATALOG_LOADED] client={client_id} count={len(items)}")
+        print(f"[CATALOG_LOADED] client={client_id} count={len(items)} titles={[i['title'] for i in items]}")
         return items
     except Exception as _e:
         print(f"[CATALOG_LOADED] ERROR client={client_id} err={_e!r}")
         return []
+
+
+def _build_catalog_context(catalog_items):
+    """Build a structured, generic catalog block for the AI system prompt.
+    Works for any business type — no hardcoded industry terms.
+    Returns a formatted string or empty string if no items."""
+    if not catalog_items:
+        return ""
+    lines = ["Available catalog:"]
+    for it in catalog_items:
+        title    = (it.get("title")       or "").strip()
+        itype    = (it.get("type")        or "").strip()
+        category = (it.get("category")    or "").strip()
+        desc     = (it.get("description") or "").strip()
+        price    = it.get("price")    or 0
+        sale     = it.get("sale_price")
+        cur      = (it.get("currency") or "").strip()
+        block = [f"- {title}"]
+        if itype:
+            block.append(f"  type: {itype}")
+        if category:
+            block.append(f"  category: {category}")
+        if desc:
+            block.append(f"  description: {desc}")
+        block.append(f"  price: {price} {cur}".strip())
+        if sale and float(sale) > 0:
+            block.append(f"  sale_price: {sale} {cur}".strip())
+        lines.extend(block)
+    return "\n".join(lines)
 
 
 # ── Keywords that signal a catalog-intent query ────────────────────────────────
@@ -2384,45 +2414,29 @@ def build_ai_prompt(client, lang="ar", catalog_items=None):
     }
     goal_instruction = _goal_map.get(goal, _goal_map["book_appointments"])
 
-    # ── Catalog section ───────────────────────────────────────────────────────
-    catalog_section = ""
+    # ── Catalog section — generic, works for any business type ───────────────
     has_catalog     = bool(catalog_items)
-    if has_catalog:
-        lines = []
-        for it in catalog_items:
-            regular  = it.get("price") or 0
-            sale     = it.get("sale_price")
-            cur      = (it.get("currency") or "").strip()
-            cat      = (it.get("category") or "").strip()
-            desc     = (it.get("description") or "").strip()
-            title    = it.get("title", "")
-            # Show both prices when a sale price exists
-            if sale and float(sale) > 0 and float(sale) < float(regular):
-                price_str = f"{regular} {cur} (عرض: {sale} {cur})"
-            else:
-                price_str = f"{regular} {cur}"
-            line = f"- {title}: {price_str}"
-            if cat:
-                line += f" | الفئة: {cat}"
-            if desc:
-                line += f" | {desc}"
-            lines.append(line)
-        catalog_section = (
-            "\n\nالمنتجات والخدمات المتاحة (CATALOG):\n" + "\n".join(lines)
-        )
+    _catalog_block  = _build_catalog_context(catalog_items) if has_catalog else ""
+    catalog_section = f"\n\n{_catalog_block}" if _catalog_block else ""
 
-    # Catalog enforcement rules
+    # Generic catalog enforcement rules — no hardcoded industry terms
     if has_catalog:
         catalog_rule = (
-            "\n- If the user asks about product/service availability or price:"
-            " answer ONLY from the CATALOG listed above."
-            "\n- If the user asks about something NOT in the catalog, reply:"
-            " \"عذراً، هذه الخدمة غير متوفرة حالياً في الكتالوج.\""
-            "\n- Always show the exact price and sale price from the catalog."
-            "\n- Never invent prices or items not in the catalog."
+            "\n- CATALOG RULES (apply to every message):"
+            "\n  1. When the customer asks about availability, price, products, services,"
+            " booking, or ordering — answer ONLY from the catalog above."
+            "\n  2. Match the customer's request to catalog items dynamically."
+            " Do not hardcode any product or service name."
+            "\n  3. If the item is in the catalog: show its name, price, sale price (if any),"
+            " and ask if the customer wants to proceed."
+            "\n  4. If the item is NOT in the catalog: say it is not currently available."
+            " Do not invent products, services, prices, or discounts."
+            "\n  5. Always reply in the customer's language."
         )
     else:
-        catalog_rule = ""
+        catalog_rule = (
+            "\n- No catalog items are currently available for this business."
+        )
 
     # ── Policies section ──────────────────────────────────────────────────────
     policies_section = f"\n\nPOLICIES:\n{policies.strip()}" if policies.strip() else ""
@@ -2437,7 +2451,9 @@ def build_ai_prompt(client, lang="ar", catalog_items=None):
     )
 
     prompt = (
-        f"You are a smart WhatsApp AI assistant for {biz_name} ({biz_type}).\n\n"
+        f"You are a business assistant for {biz_name} ({biz_type}).\n"
+        f"Use ONLY the catalog below when answering product/service/price/availability questions.\n"
+        f"Do not invent products, services, prices, or discounts.\n\n"
         f"TONE: {tone_instruction}\n\n"
         f"GOAL: {goal_instruction}"
         f"{desc_section}"
@@ -2445,7 +2461,7 @@ def build_ai_prompt(client, lang="ar", catalog_items=None):
         f"{policies_section}"
         f"{fallback_section}\n\n"
         f"RULES:\n"
-        f"- Reply language: {lang}\n"
+        f"- Reply language: {lang}. Always reply in the customer's language.\n"
         f"- Never restart the conversation.\n"
         f"- Always continue from the customer's last message.\n"
         f"- Keep replies short (2-3 lines max) unless detail is needed.\n"
@@ -2559,22 +2575,26 @@ def openai_chat(user_message, lang="ar", client_obj=None, catalog_items=None):
         print(f"[OPENAI] response status={resp.status_code} body={resp.text[:300]!r}")
         if resp.status_code == 200:
             _reply = resp.json()["choices"][0]["message"]["content"].strip()
-            print(f"[AI_RESPONSE_SENT] reply_preview={_reply[:120]!r}")
-            return _reply
+            if _reply:
+                print(f"[AI_RESPONSE_SENT] reply_preview={_reply[:120]!r}")
+                return _reply
+            # GPT returned 200 but empty content
+            print(f"[EMPTY_REPLY_GUARD] AI returned empty content — using fallback lang={lang!r}")
     except Exception as _oe:
         print(f"[AI_CALLED] ERROR — {_oe!r}")
-    # Fallback — business-specific message, never a greeting
+    # Fallback — use client's configured fallback first, never a greeting
     _fallback_msg = ((client_obj or {}).get("fallback_message") or "").strip()
     if _fallback_msg:
-        print(f"[AI_RESPONSE_SENT] using client fallback message")
+        print(f"[EMPTY_REPLY_GUARD] using client fallback_message")
         return _fallback_msg
     _err = {
         "ar": "عذراً، لم أتمكن من الإجابة الآن. يرجى المحاولة مجدداً أو التواصل معنا مباشرة.",
         "en": "Sorry, I couldn't respond right now. Please try again or contact us directly.",
         "fr": "Désolé, je n'ai pas pu répondre. Veuillez réessayer ou nous contacter directement.",
     }
-    print(f"[AI_RESPONSE_SENT] using generic error fallback lang={lang!r}")
-    return _err.get(lang, _err["ar"])
+    _safe = _err.get(lang, _err["ar"])
+    print(f"[EMPTY_REPLY_GUARD] using generic error fallback lang={lang!r}")
+    return _safe
 
 def normalize_number(raw):
     """Return a WhatsApp number in the canonical form  DIGITS@c.us.
@@ -4558,31 +4578,48 @@ def whatsapp():
         # ── Language detection (shared across all branches below) ────────────
         _early_lang = state.get("lang") or detect_lang(incoming_msg) or "ar"
 
-        # ── CATALOG KEYWORD CHECK — runs before intent detection ──────────────
-        # Intercepts availability / price questions regardless of catalog size.
-        # Responds directly when a keyword match is found; falls to AI otherwise.
+        # ── CATALOG QUERY HANDLER — generic, AI-driven, no hardcoded terms ──────
+        # Triggers on universal availability/price/inquiry keywords.
+        # AI receives the full structured catalog and decides what matches and
+        # how to answer — works for any business type.
         _msg_lower_ck = incoming_msg.lower()
         _catalog_triggered = any(kw in _msg_lower_ck for kw in _CATALOG_TRIGGER_WORDS)
         if _catalog_triggered:
-            print(f"[CATALOG_LOADED] keyword triggered — client={_WH_CID} catalog_size={len(_ai_catalog)}")
-            # Persist intent so this user is never re-classified as greeting
+            print(f"[CATALOG_LOADED] query detected — client={_WH_CID} catalog_size={len(_ai_catalog)}")
+
+            # Persist intent so this session is never re-classified as greeting
             if not state.get("msg_intent"):
                 state["msg_intent"] = "ask_catalog"
                 wa_save(sender, state)
-            if _ai_catalog:
-                _ck_matches = _catalog_match_by_keywords(_ai_catalog, incoming_msg)
-                if _ck_matches:
-                    print(f"[CATALOG_MATCH_FOUND] client={_WH_CID} matches={[m['title'] for m in _ck_matches]} msg={incoming_msg!r}")
-                    _ck_reply = _format_catalog_reply(_ck_matches, _ai_catalog, _early_lang, incoming_msg)
-                    print(f"[AI_CALLED] catalog direct-match — client={_WH_CID}")
-                    print(f"[AI_RESPONSE_SENT] client={_WH_CID} items={len(_ck_matches)}")
-                    return wa_reply(sender, _ck_reply)
-            # No direct match (or empty catalog) → let AI handle with catalog injected
-            print(f"[AI_CALLED] catalog keyword, no direct match — client={_WH_CID}")
-            _ck_ai = openai_chat(incoming_msg, lang=_early_lang,
-                                 client_obj=_wh_client, catalog_items=_ai_catalog)
-            print(f"[AI_RESPONSE_SENT] client={_WH_CID} (AI with catalog context)")
-            return wa_reply(sender, _ck_ai)
+
+            # Empty catalog guard
+            if not _ai_catalog:
+                _empty_msgs = {
+                    "ar": "لا توجد منتجات أو خدمات مضافة حاليًا في الكتالوج.",
+                    "en": "No products or services are currently available in our catalog.",
+                    "fr": "Aucun produit ou service n'est actuellement disponible dans notre catalogue.",
+                }
+                _empty_reply = _empty_msgs.get(_early_lang, _empty_msgs["ar"])
+                print(f"[EMPTY_REPLY_GUARD] empty catalog — client={_WH_CID}")
+                print(f"[CATALOG_RESPONSE_SENT] empty-catalog guard — client={_WH_CID}")
+                return wa_reply(sender, _empty_reply)
+
+            # AI decides: which item matches, what price to show, how to reply
+            # No niche-specific matching — catalog context is fully generic
+            print(f"[GENERIC_CATALOG_AI_MATCH] routing to AI — client={_WH_CID} items={len(_ai_catalog)}")
+            _cat_reply = openai_chat(
+                incoming_msg, lang=_early_lang,
+                client_obj=_wh_client, catalog_items=_ai_catalog
+            )
+
+            # Empty-response guard — never return blank
+            if not (_cat_reply or "").strip():
+                _fb = (((_wh_client or {}).get("fallback_message")) or "").strip()
+                _cat_reply = _fb or _empty_msgs.get(_early_lang, _empty_msgs["ar"])
+                print(f"[EMPTY_REPLY_GUARD] AI returned empty — using fallback — client={_WH_CID}")
+
+            print(f"[CATALOG_RESPONSE_SENT] client={_WH_CID} reply_preview={(_cat_reply or '')[:100]!r}")
+            return wa_reply(sender, _cat_reply)
 
         # ── INTENT DETECTION — only on fresh conversation start ───────────────
         if _step_early == "service" and not state.get("msg_intent"):
