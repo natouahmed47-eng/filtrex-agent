@@ -14,11 +14,12 @@
   transition: border-color .15s;
   width: 100%; box-sizing: border-box;
 }
-.field textarea { resize: vertical; min-height: 90px; }
+.field textarea { resize: vertical; min-height: 100px; }
 .field input:focus, .field select:focus, .field textarea:focus {
   border-color: #6366f1; outline: none; background: #fff;
 }
-.field .hint { font-size: 11px; color: #94a3b8; margin-top: 3px; }
+.field .hint { font-size: 12px; color: #64748b; margin-top: 4px; line-height: 1.5; }
+.field .hint.warn { color: #b45309; background: #fffbeb; border: 1px solid #fde68a; border-radius: 7px; padding: 6px 10px; }
 .btn-save {
   background: linear-gradient(135deg, #6366f1, #8b5cf6);
   color: #fff; border: none; border-radius: 10px;
@@ -30,19 +31,41 @@
   background: #f0fdf4; border: 1px solid #86efac; color: #166534;
   border-radius: 10px; padding: 12px 18px; margin-bottom: 20px; font-size: 14px;
 }
-.preview-box {
-  background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 10px;
-  padding: 16px; font-size: 12px; color: #64748b; font-family: monospace;
-  white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow-y: auto;
+.catalog-notice {
+  background: #eff6ff; border: 1px solid #93c5fd; border-radius: 14px;
+  padding: 18px 24px; margin-bottom: 24px; display: flex; gap: 14px; align-items: flex-start;
 }
+.catalog-notice-icon { font-size: 22px; flex-shrink: 0; margin-top: 1px; }
+.catalog-notice-body { flex: 1; }
+.catalog-notice-body strong { font-size: 14px; color: #1e40af; display: block; margin-bottom: 4px; }
+.catalog-notice-body p { font-size: 13px; color: #1d4ed8; margin: 0 0 10px; line-height: 1.5; }
+.catalog-notice-body a {
+  display: inline-block; background: #2563eb; color: #fff;
+  border-radius: 8px; padding: 7px 16px; font-size: 13px; font-weight: 600;
+  text-decoration: none; transition: background .15s;
+}
+.catalog-notice-body a:hover { background: #1d4ed8; }
 </style>
 
 <div class="brain-wrap">
   <h1 style="font-size:22px;font-weight:700;color:#1e293b;margin-bottom:6px;">🧠 AI Brain</h1>
   <p style="font-size:14px;color:#64748b;margin-bottom:24px;">
-    Configure your AI assistant's identity, tone, goal, and knowledge base.
-    The AI will use these settings to reply to every customer message.
+    تحكم في هوية مساعدك الذكي وأسلوبه وهدفه ومعلومات نشاطك التجاري.
+    سيستخدم الذكاء الاصطناعي هذه الإعدادات للرد على كل رسالة واردة.
   </p>
+
+  <!-- ── Catalog separation notice ──────────────────────────────────── -->
+  <div class="catalog-notice">
+    <div class="catalog-notice-icon">🛒</div>
+    <div class="catalog-notice-body">
+      <strong>المنتجات والخدمات تُدار في الكتالوج — وليس هنا</strong>
+      <p>
+        لا تكتب أسماء المنتجات أو الأسعار في هذه الصفحة.<br>
+        الذكاء الاصطناعي يقرأ الكتالوج تلقائيًا عند كل رسالة ويدمجه مع إعدادات هذه الصفحة.
+      </p>
+      <a href="{{ url_for('admin_catalog') }}">📦 إدارة الكتالوج</a>
+    </div>
+  </div>
 
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% for cat, msg in messages %}
@@ -54,28 +77,28 @@
 
     <!-- ── Business Identity ──────────────────────────────────────────── -->
     <div class="brain-card">
-      <div class="brain-section-title">Business Identity</div>
+      <div class="brain-section-title">هوية النشاط التجاري</div>
       <div class="brain-grid">
         <div class="field">
-          <label>Business Name</label>
+          <label>اسم النشاط التجاري</label>
           <input type="text" name="name"
                  value="{{ client.name or '' }}"
-                 placeholder="e.g. Parfum Paris">
+                 placeholder="مثال: عيادة الشفاء">
         </div>
         <div class="field">
-          <label>Business Type</label>
+          <label>نوع النشاط</label>
           <select name="business_type">
             {% set bt = client.business_type or 'clinic' %}
-            <option value="clinic"       {{ 'selected' if bt=='clinic' }}>🏥 Clinic</option>
-            <option value="restaurant"   {{ 'selected' if bt=='restaurant' }}>🍽️ Restaurant</option>
-            <option value="ecommerce"    {{ 'selected' if bt=='ecommerce' }}>🛒 E-Commerce</option>
-            <option value="beauty_salon" {{ 'selected' if bt=='beauty_salon' }}>💅 Beauty Salon</option>
-            <option value="real_estate"  {{ 'selected' if bt=='real_estate' }}>🏠 Real Estate</option>
-            <option value="custom"       {{ 'selected' if bt=='custom' }}>⚙️ Custom</option>
+            <option value="clinic"       {{ 'selected' if bt=='clinic' }}>🏥 عيادة</option>
+            <option value="restaurant"   {{ 'selected' if bt=='restaurant' }}>🍽️ مطعم</option>
+            <option value="ecommerce"    {{ 'selected' if bt=='ecommerce' }}>🛒 تجارة إلكترونية</option>
+            <option value="beauty_salon" {{ 'selected' if bt=='beauty_salon' }}>💅 صالون تجميل</option>
+            <option value="real_estate"  {{ 'selected' if bt=='real_estate' }}>🏠 عقارات</option>
+            <option value="custom"       {{ 'selected' if bt=='custom' }}>⚙️ أخرى</option>
           </select>
         </div>
         <div class="field">
-          <label>Default Language</label>
+          <label>اللغة الافتراضية</label>
           <select name="default_language">
             {% set dl = client.default_language or 'ar' %}
             <option value="ar" {{ 'selected' if dl=='ar' }}>🇸🇦 العربية</option>
@@ -90,72 +113,103 @@
 
     <!-- ── AI Personality ─────────────────────────────────────────────── -->
     <div class="brain-card">
-      <div class="brain-section-title">AI Personality</div>
+      <div class="brain-section-title">شخصية المساعد الذكي</div>
       <div class="brain-grid">
         <div class="field">
-          <label>Tone</label>
+          <label>الأسلوب</label>
           <select name="assistant_tone">
             {% set at = client.assistant_tone or 'friendly' %}
-            <option value="friendly"     {{ 'selected' if at=='friendly' }}>😊 Friendly</option>
-            <option value="professional" {{ 'selected' if at=='professional' }}>💼 Professional</option>
-            <option value="luxury"       {{ 'selected' if at=='luxury' }}>✨ Luxury</option>
-            <option value="short"        {{ 'selected' if at=='short' }}>⚡ Short & Direct</option>
-            <option value="persuasive"   {{ 'selected' if at=='persuasive' }}>🎯 Persuasive</option>
+            <option value="friendly"     {{ 'selected' if at=='friendly' }}>😊 ودود</option>
+            <option value="professional" {{ 'selected' if at=='professional' }}>💼 احترافي</option>
+            <option value="luxury"       {{ 'selected' if at=='luxury' }}>✨ فاخر</option>
+            <option value="short"        {{ 'selected' if at=='short' }}>⚡ مختصر ومباشر</option>
+            <option value="persuasive"   {{ 'selected' if at=='persuasive' }}>🎯 إقناعي</option>
           </select>
-          <div class="hint">How your assistant speaks to customers.</div>
+          <div class="hint">أسلوب ردود المساعد على العملاء.</div>
         </div>
         <div class="field">
-          <label>Goal</label>
+          <label>الهدف الرئيسي</label>
           <select name="assistant_goal">
             {% set ag = client.assistant_goal or 'book_appointments' %}
-            <option value="sell_products"     {{ 'selected' if ag=='sell_products' }}>🛒 Sell Products</option>
-            <option value="book_appointments" {{ 'selected' if ag=='book_appointments' }}>📅 Book Appointments</option>
-            <option value="customer_support"  {{ 'selected' if ag=='customer_support' }}>🎧 Customer Support</option>
-            <option value="collect_leads"     {{ 'selected' if ag=='collect_leads' }}>📋 Collect Leads</option>
-            <option value="mixed"             {{ 'selected' if ag=='mixed' }}>🔀 Mixed</option>
+            <option value="sell_products"     {{ 'selected' if ag=='sell_products' }}>🛒 بيع المنتجات</option>
+            <option value="book_appointments" {{ 'selected' if ag=='book_appointments' }}>📅 حجز المواعيد</option>
+            <option value="customer_support"  {{ 'selected' if ag=='customer_support' }}>🎧 دعم العملاء</option>
+            <option value="collect_leads"     {{ 'selected' if ag=='collect_leads' }}>📋 جمع بيانات العملاء</option>
+            <option value="mixed"             {{ 'selected' if ag=='mixed' }}>🔀 مختلط</option>
           </select>
-          <div class="hint">Primary objective for each conversation.</div>
+          <div class="hint">الهدف الأساسي في كل محادثة.</div>
         </div>
       </div>
     </div>
 
-    <!-- ── Knowledge Base ─────────────────────────────────────────────── -->
+    <!-- ── Business Information ────────────────────────────────────────── -->
     <div class="brain-card">
-      <div class="brain-section-title">Knowledge Base</div>
+      <div class="brain-section-title">معلومات النشاط التجاري</div>
       <div class="brain-grid single">
+
         <div class="field">
-          <label>Business Description</label>
+          <label>وصف النشاط التجاري</label>
           <textarea name="business_description"
-                    placeholder="Describe your business, what you offer, your unique value, target customers…">{{ client.business_description or '' }}</textarea>
-          <div class="hint">Used by the AI to introduce your business and answer general questions.</div>
+                    placeholder="مثال: صالون تجميل متخصص في العناية بالبشرة والشعر، يخدم النساء والرجال في قلب المدينة…">{{ client.business_description or '' }}</textarea>
+          <div class="hint warn">
+            ⚠️ اكتب وصفًا عامًا للنشاط فقط — لا تضع المنتجات أو الأسعار هنا.<br>
+            المنتجات والأسعار تُضاف في <a href="{{ url_for('admin_catalog') }}" style="color:#92400e;font-weight:600;">الكتالوج</a>.
+          </div>
         </div>
+
         <div class="field">
-          <label>Policies</label>
+          <label>السياسات</label>
           <textarea name="policies"
-                    placeholder="• Delivery within 3–5 days&#10;• Free cancellation 24h before appointment&#10;• Working hours: Mon–Sat 9am–7pm">{{ client.policies or '' }}</textarea>
-          <div class="hint">Delivery, refund, booking, working hours — one policy per line.</div>
+                    placeholder="• التوصيل خلال 3–5 أيام&#10;• إلغاء مجاني قبل 24 ساعة من الموعد&#10;• ساعات العمل: الإثنين–السبت 9ص–7م">{{ client.policies or '' }}</textarea>
+          <div class="hint warn">
+            ⚠️ اكتب السياسات فقط مثل: التوصيل، الإلغاء، ساعات العمل.<br>
+            لا تضع أسماء المنتجات أو الأسعار هنا.
+          </div>
         </div>
+
         <div class="field">
-          <label>Fallback Message</label>
+          <label>رسالة الاحتياط (Fallback)</label>
           <input type="text" name="fallback_message"
                  value="{{ client.fallback_message or '' }}"
-                 placeholder="Please contact us directly at +212 6XX XXX XXX">
-          <div class="hint">Sent when the AI cannot answer the customer's question.</div>
+                 placeholder="مثال: يرجى التواصل معنا مباشرة على +212 6XX XXX XXX">
+          <div class="hint">تُرسل عندما لا يستطيع الذكاء الاصطناعي الإجابة على سؤال العميل.</div>
         </div>
+
       </div>
     </div>
 
     <!-- ── Prompt Preview ─────────────────────────────────────────────── -->
-    <div class="brain-card">
-      <div class="brain-section-title">Live Prompt Preview</div>
-      <p style="font-size:12px;color:#94a3b8;margin-bottom:10px;">
-        This is the exact instruction your AI receives for every message. Save to update.
+    <div class="brain-card" style="border-color:#e0e7ff;">
+      <div class="brain-section-title" style="color:#4f46e5;">كيف يعمل الذكاء الاصطناعي</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px;color:#374151;">
+        <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:14px;">
+          <div style="font-weight:700;color:#166534;margin-bottom:6px;">🧠 AI Brain (هذه الصفحة)</div>
+          <ul style="margin:0;padding-right:16px;line-height:1.8;color:#166534;">
+            <li>اسم ونوع النشاط</li>
+            <li>اللغة الافتراضية</li>
+            <li>الأسلوب والهدف</li>
+            <li>الوصف العام</li>
+            <li>السياسات</li>
+            <li>رسالة الاحتياط</li>
+          </ul>
+        </div>
+        <div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:10px;padding:14px;">
+          <div style="font-weight:700;color:#1e40af;margin-bottom:6px;">📦 الكتالوج (منفصل)</div>
+          <ul style="margin:0;padding-right:16px;line-height:1.8;color:#1e40af;">
+            <li>أسماء المنتجات والخدمات</li>
+            <li>الأسعار وأسعار العروض</li>
+            <li>الفئات والأوصاف</li>
+            <li>المدة والمخزون</li>
+          </ul>
+        </div>
+      </div>
+      <p style="font-size:12px;color:#94a3b8;margin:14px 0 0;">
+        الذكاء الاصطناعي يدمج كلا المصدرين تلقائيًا عند كل رسالة — لا حاجة لتكرار البيانات.
       </p>
-      <div class="preview-box" id="prompt-preview">Save your settings to see the generated prompt.</div>
     </div>
 
     <div style="display:flex;justify-content:flex-end;">
-      <button type="submit" class="btn-save">💾 Save AI Brain</button>
+      <button type="submit" class="btn-save">💾 حفظ إعدادات AI Brain</button>
     </div>
 
   </form>

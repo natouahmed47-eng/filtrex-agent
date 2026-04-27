@@ -2452,7 +2452,10 @@ def build_ai_prompt(client, lang="ar", catalog_items=None):
         f"- Do not repeat greetings or ask unnecessary questions."
         f"{catalog_rule}"
     )
-    print(f"[AI_PROMPT_BUILT] length={len(prompt)} chars catalog_items={len(catalog_items) if catalog_items else 0}")
+    _cat_count = len(catalog_items) if catalog_items else 0
+    if _cat_count > 0:
+        print(f"[CATALOG_SEPARATE_FROM_BRAIN] catalog merged into prompt — {_cat_count} items (NOT from brain fields)")
+    print(f"[AI_PROMPT_BUILT] length={len(prompt)} chars catalog_items={_cat_count}")
     return prompt
 
 def detect_lang(msg):
@@ -6166,10 +6169,12 @@ def admin_ai_brain():
             con.commit()
         finally:
             con.close()
-        print(f"[AI_BRAIN_LOADED] saved for client={cid} tone={assistant_tone!r} goal={assistant_goal!r}")
-        flash("AI Brain settings saved.", "success")
+        print(f"[AI_BRAIN_SAVED] client={cid} tone={assistant_tone!r} goal={assistant_goal!r} lang={default_language!r}")
+        print(f"[CATALOG_SEPARATE_FROM_BRAIN] products/prices NOT stored in brain — client={cid}")
+        flash("تم حفظ إعدادات AI Brain بنجاح.", "success")
         return redirect(url_for("admin_ai_brain"))
 
+    print(f"[CATALOG_SEPARATE_FROM_BRAIN] AI Brain loaded without catalog — client={cid}")
     return render_template("admin/ai-brain.html", client=client, active="ai-brain")
 
 
