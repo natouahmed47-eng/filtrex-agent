@@ -1,67 +1,109 @@
 {% extends "admin/layout.html" %}
-{% block title %}{{ 'Edit' if item else 'New' }} Catalog Item{% endblock %}
+{% block title %}{{ 'تعديل عنصر' if item else 'إضافة عنصر جديد' }}{% endblock %}
 {% block content %}
+
 <div class="page-head">
   <div>
-    <h1 class="page-title">{{ 'Edit Item' if item else 'New Catalog Item' }}</h1>
-    <p class="page-sub">{{ 'Update details for this item' if item else 'Add a product or service to your catalog' }}</p>
+    <h1 class="page-title">{{ '✏️ تعديل عنصر' if item else '➕ إضافة عنصر جديد' }}</h1>
+    <p class="page-sub">
+      {{ 'تحديث بيانات هذا العنصر في الكتالوج' if item else 'أضف خدمة أو منتجاً إلى الكتالوج — سيستخدمه البوت للرد على العملاء' }}
+    </p>
   </div>
-  <a href="/admin/catalog" class="btn btn-ghost btn-sm">← Back</a>
+  <a href="/admin/catalog" class="btn btn-ghost btn-sm">← العودة</a>
 </div>
 
 <div class="form-card">
-  <form method="post">
-    <div class="form-row">
-      <label>Title (Arabic or local language)</label>
-      <input type="text" name="title" value="{{ item.title if item else '' }}" required placeholder="e.g. تنظيف الأسنان"/>
+  <form method="post" dir="rtl">
+
+    <!-- Row 1: Name + Type -->
+    <div style="display:grid;grid-template-columns:2fr 1fr;gap:16px">
+      <div class="form-row">
+        <label>اسم الخدمة / المنتج <span style="color:#ef4444">*</span></label>
+        <input type="text" name="title"
+               value="{{ item.title if item else '' }}"
+               required
+               placeholder="مثال: تنظيف الأسنان"/>
+      </div>
+      <div class="form-row">
+        <label>النوع</label>
+        <select name="type">
+          <option value="service" {{ 'selected' if not item or item.type == 'service' }}>خدمة</option>
+          <option value="product" {{ 'selected' if item and item.type == 'product' }}>منتج</option>
+        </select>
+      </div>
     </div>
-    <div class="form-row">
-      <label>Type</label>
-      <select name="type">
-        <option value="service" {{ 'selected' if item and item.type=='service' else '' }}>Service</option>
-        <option value="product" {{ 'selected' if item and item.type=='product' else '' }}>Product</option>
-      </select>
+
+    <!-- Row 2: Price + Sale Price + Currency -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
+      <div class="form-row">
+        <label>السعر <span style="color:#ef4444">*</span></label>
+        <input type="number" name="price" step="0.01" min="0"
+               value="{{ item.price if item else '0' }}" required/>
+      </div>
+      <div class="form-row">
+        <label>سعر العرض (اختياري)</label>
+        <input type="number" name="sale_price" step="0.01" min="0"
+               value="{{ item.sale_price if item and item.sale_price else '' }}"
+               placeholder="اتركه فارغاً إذا لا يوجد"/>
+      </div>
+      <div class="form-row">
+        <label>العملة</label>
+        <input type="text" name="currency"
+               value="{{ item.currency if item and item.currency else currency }}"
+               placeholder="MAD / SAR / USD …"/>
+      </div>
     </div>
+
+    <!-- Row 3: Category + Duration -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
       <div class="form-row">
-        <label>Price ({{ currency }})</label>
-        <input type="number" name="price" step="0.01" value="{{ item.price if item else '0' }}" required/>
+        <label>الفئة (اختياري)</label>
+        <input type="text" name="category"
+               value="{{ item.category if item and item.category else '' }}"
+               placeholder="مثال: عناية بالبشرة، مشروبات، صيانة…"/>
       </div>
       <div class="form-row">
-        <label>Sale Price (optional)</label>
-        <input type="number" name="sale_price" step="0.01" value="{{ item.sale_price if item and item.sale_price else '' }}" placeholder="Leave empty for none"/>
+        <label>المدة بالدقائق (للخدمات فقط)</label>
+        <input type="number" name="duration_min" min="0"
+               value="{{ item.duration_min if item and item.duration_min else '' }}"
+               placeholder="مثال: 30"/>
       </div>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-      <div class="form-row">
-        <label>Duration (minutes, services only)</label>
-        <input type="number" name="duration_min" value="{{ item.duration_min if item and item.duration_min else '' }}" placeholder="e.g. 30"/>
-      </div>
-      <div class="form-row">
-        <label>Stock Qty (products only)</label>
-        <input type="number" name="stock_qty" value="{{ item.stock_qty if item and item.stock_qty else '' }}" placeholder="Leave empty for unlimited"/>
-      </div>
-    </div>
+
+    <!-- Description -->
     <div class="form-row">
-      <label>Description</label>
-      <textarea name="description" placeholder="Short description shown to customers">{{ item.description if item else '' }}</textarea>
+      <label>الوصف</label>
+      <textarea name="description"
+                placeholder="وصف مختصر يظهر للعملاء عبر البوت"
+                rows="3">{{ item.description if item and item.description else '' }}</textarea>
     </div>
+
+    <!-- Aliases -->
     <div class="form-row">
-      <label>Aliases (comma-separated, for message matching)</label>
-      <input type="text" name="aliases" value="{{ aliases_str }}" placeholder="e.g. تنظيف, cleaning, nettoyage"/>
-      <div class="form-hint">The bot uses these words to detect this item in customer messages</div>
+      <label>الكلمات المفتاحية (للتعرف عليها في الرسائل)</label>
+      <input type="text" name="aliases"
+             value="{{ aliases_str }}"
+             placeholder="مثال: تنظيف, cleaning, nettoyage"/>
+      <div class="form-hint">يستخدمها البوت للتعرف على هذه الخدمة من رسائل العملاء</div>
     </div>
+
+    <!-- Active status -->
     <div class="form-row">
-      <label>Active</label>
+      <label>الحالة</label>
       <select name="is_active">
-        <option value="1" {{ 'selected' if not item or item.is_active }}>Yes</option>
-        <option value="0" {{ 'selected' if item and not item.is_active }}>No</option>
+        <option value="1" {{ 'selected' if not item or item.is_active }}>نشط — يظهر للعملاء</option>
+        <option value="0" {{ 'selected' if item and not item.is_active }}>موقوف — مخفي</option>
       </select>
     </div>
+
     <div class="form-actions">
-      <button type="submit" class="btn btn-primary">{{ 'Save Changes' if item else 'Create Item' }}</button>
-      <a href="/admin/catalog" class="btn btn-ghost">Cancel</a>
+      <button type="submit" class="btn btn-primary">
+        {{ '💾 حفظ التعديلات' if item else '✅ إضافة إلى الكتالوج' }}
+      </button>
+      <a href="/admin/catalog" class="btn btn-ghost">إلغاء</a>
     </div>
+
   </form>
 </div>
+
 {% endblock %}

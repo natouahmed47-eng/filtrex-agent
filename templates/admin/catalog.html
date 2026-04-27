@@ -1,25 +1,33 @@
 {% extends "admin/layout.html" %}
-{% block title %}Catalog{% endblock %}
+{% block title %}الكتالوج{% endblock %}
 {% block content %}
+
 <div class="page-head">
   <div>
-    <h1 class="page-title">Catalog</h1>
-    <p class="page-sub">Products and services offered to customers</p>
+    <h1 class="page-title">🗂️ الكتالوج</h1>
+    <p class="page-sub">الخدمات والمنتجات التي يعرضها البوت للعملاء</p>
   </div>
-  <a href="/admin/catalog/new" class="btn btn-primary">+ New Item</a>
+  <a href="/admin/catalog/new" class="btn btn-primary">+ إضافة عنصر</a>
 </div>
 
 <div class="card">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for cat, msg in messages %}
+      <div class="alert alert-{{ 'success' if cat == 'success' else 'error' }}" style="margin-bottom:16px">{{ msg|safe }}</div>
+    {% endfor %}
+  {% endwith %}
+
   {% if items %}
   <table>
     <thead>
       <tr>
-        <th>Title</th>
-        <th>Type</th>
-        <th>Price</th>
-        <th>Sale Price</th>
-        <th>Duration</th>
-        <th>Status</th>
+        <th>الاسم</th>
+        <th>النوع</th>
+        <th>الفئة</th>
+        <th>السعر</th>
+        <th>سعر العرض</th>
+        <th>المدة</th>
+        <th>الحالة</th>
         <th></th>
       </tr>
     </thead>
@@ -27,21 +35,32 @@
     {% for item in items %}
     <tr>
       <td style="font-weight:600">{{ item.title }}</td>
-      <td><span class="badge badge-purple">{{ item.type }}</span></td>
-      <td>{{ item.price }} {{ currency }}</td>
-      <td>{% if item.sale_price %}<span style="color:#16a34a;font-weight:600">{{ item.sale_price }} {{ currency }}</span>{% else %}—{% endif %}</td>
-      <td>{% if item.duration_min %}{{ item.duration_min }} min{% else %}—{% endif %}</td>
+      <td>
+        <span class="badge badge-purple">
+          {{ 'خدمة' if item.type == 'service' else 'منتج' }}
+        </span>
+      </td>
+      <td>{{ item.category or '—' }}</td>
+      <td>{{ item.price }} {{ item.currency or currency }}</td>
+      <td>
+        {% if item.sale_price %}
+          <span style="color:#16a34a;font-weight:600">{{ item.sale_price }} {{ item.currency or currency }}</span>
+        {% else %}—{% endif %}
+      </td>
+      <td>{% if item.duration_min %}{{ item.duration_min }} د{% else %}—{% endif %}</td>
       <td>
         {% if item.is_active %}
-          <span class="badge badge-green">Active</span>
+          <span class="badge badge-green">نشط</span>
         {% else %}
-          <span class="badge badge-gray">Inactive</span>
+          <span class="badge badge-gray">موقوف</span>
         {% endif %}
       </td>
-      <td style="text-align:right">
-        <a href="/admin/catalog/{{ item.id }}/edit" class="btn btn-ghost btn-sm">Edit</a>
-        <form method="post" action="/admin/catalog/{{ item.id }}/delete" style="display:inline" onsubmit="return confirm('Delete this item?')">
-          <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+      <td style="text-align:left;white-space:nowrap">
+        <a href="/admin/catalog/{{ item.id }}/edit" class="btn btn-ghost btn-sm">تعديل</a>
+        <form method="post" action="/admin/catalog/{{ item.id }}/delete"
+              style="display:inline"
+              onsubmit="return confirm('إيقاف تفعيل هذا العنصر؟')">
+          <button type="submit" class="btn btn-danger btn-sm">إيقاف</button>
         </form>
       </td>
     </tr>
@@ -51,9 +70,12 @@
   {% else %}
   <div class="empty">
     <div class="empty-icon">🗂️</div>
-    <div class="empty-text">No catalog items yet</div>
-    <div class="empty-sub"><a href="/admin/catalog/new" style="color:#4f46e5">Add your first item</a></div>
+    <div class="empty-text">لا توجد عناصر في الكتالوج بعد</div>
+    <div class="empty-sub">
+      <a href="/admin/catalog/new" style="color:#4f46e5">أضف أول خدمة أو منتج</a>
+    </div>
   </div>
   {% endif %}
 </div>
+
 {% endblock %}

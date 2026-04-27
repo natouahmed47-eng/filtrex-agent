@@ -798,6 +798,21 @@ def _migrate_saas():
             con.commit()
             print("[SAAS] migrated upsells → source_catalog_id/target_catalog_id/priority")
 
+        # catalogs: add missing columns (category, currency, updated_at)
+        _cat_cols = [r[1] for r in con.execute("PRAGMA table_info(catalogs)").fetchall()]
+        if "category" not in _cat_cols:
+            con.execute("ALTER TABLE catalogs ADD COLUMN category TEXT DEFAULT ''")
+            con.commit()
+            print("[SAAS] migrated catalogs → added category")
+        if "currency" not in _cat_cols:
+            con.execute("ALTER TABLE catalogs ADD COLUMN currency TEXT DEFAULT ''")
+            con.commit()
+            print("[SAAS] migrated catalogs → added currency")
+        if "updated_at" not in _cat_cols:
+            con.execute("ALTER TABLE catalogs ADD COLUMN updated_at TEXT DEFAULT ''")
+            con.commit()
+            print("[SAAS] migrated catalogs → added updated_at")
+
         # catalog_options: old schema had option_key/option_val
         _opt_cols = [r[1] for r in con.execute("PRAGMA table_info(catalog_options)").fetchall()]
         if "option_type" not in _opt_cols:
@@ -2219,8 +2234,30 @@ def wa_clear(phone):
         print(f"[DB] wa_clear connection closed")
     print(f"[WHATSAPP] state_cleared phone={phone}")
 
+def load_catalog_for_ai(client_id):
+    """Load all active catalog items for a client to inject into the AI system prompt.
+    Returns a list of dicts. Logs [CATALOG_LOAD_FOR_AI]."""
+    try:
+        con = get_db_connection()
+        try:
+            rows = con.execute("""
+                SELECT title, description, price, sale_price, currency, category
+                FROM   catalogs
+                WHERE  client_id = ? AND is_active = 1
+                ORDER  BY id ASC
+            """, (client_id,)).fetchall()
+            items = [dict(r) for r in rows]
+        finally:
+            con.close()
+        print(f"[CATALOG_LOAD_FOR_AI] client={client_id} items={len(items)}")
+        return items
+    except Exception as _e:
+        print(f"[CATALOG_LOAD_FOR_AI] ERROR client={client_id} err={_e!r}")
+        return []
+
+
 def build_ai_prompt(client, lang="ar", catalog_items=None):
-    """Build a dynamic system prompt from client AI Brain settings.
+    """Build a dynamic system prompt from client AI Brain + live catalog.
     Logs [AI_BRAIN_LOADED] and [AI_PROMPT_BUILT].
     """
     biz_name    = (client or {}).get("name")             or "Business"
@@ -2254,13 +2291,33 @@ def build_ai_prompt(client, lang="ar", catalog_items=None):
     goal_instruction = _goal_map.get(goal, _goal_map["book_appointments"])
 
     # ── Catalog section ───────────────────────────────────────────────────────
-    catalog_section = ""
-    if catalog_items:
+    catalog_section  = ""
+    has_catalog      = bool(catalog_items)
+    if has_catalog:
         lines = []
         for it in catalog_items:
-            price = it.get("sale_price") or it.get("price") or 0
-            lines.append(f"- {it['title']}: {price}")
-        catalog_section = "\n\nPRODUCTS / SERVICES:\n" + "\n".join(lines)
+            effective_price = it.get("sale_price") or it.get("price") or 0
+            cur  = (it.get("currency") or "").strip()
+            cat  = (it.get("category") or "").strip()
+            desc = (it.get("description") or "").strip()
+            line = f"• {it['title']}: {effective_price} {cur}".strip()
+            if cat:
+                line += f" [{cat}]"
+            if desc:
+                line += f" — {desc}"
+            lines.append(line)
+        catalog_section = "\n\nCATALOG (active products/services):\n" + "\n".join(lines)
+
+    # Catalog-enforcement rule: only answer prices from catalog
+    if has_catalog:
+        catalog_rule = (
+            "\n- IMPORTANT: Answer prices and availability ONLY from the CATALOG above."
+            "\n- If a customer asks about a service or product NOT listed in the catalog,"
+            " reply EXACTLY: \"هذه الخدمة غير موجودة حاليًا في الكتالوج.\""
+            "\n- Never invent prices or services not in the catalog."
+        )
+    else:
+        catalog_rule = ""
 
     # ── Policies section ──────────────────────────────────────────────────────
     policies_section = f"\n\nPOLICIES:\n{policies.strip()}" if policies.strip() else ""
@@ -2288,8 +2345,9 @@ def build_ai_prompt(client, lang="ar", catalog_items=None):
         f"- Always continue from the customer's last message.\n"
         f"- Keep replies short (2-3 lines max) unless detail is needed.\n"
         f"- Do not repeat greetings or ask unnecessary questions."
+        f"{catalog_rule}"
     )
-    print(f"[AI_PROMPT_BUILT] length={len(prompt)} chars")
+    print(f"[AI_PROMPT_BUILT] length={len(prompt)} chars catalog_items={len(catalog_items) if catalog_items else 0}")
     return prompt
 
 def detect_lang(msg):
@@ -4253,6 +4311,8 @@ def whatsapp():
         # Per-request client ID: set by whatsapp_by_instance() or defaults to global CLIENT_ID
         _WH_CID    = getattr(g, 'wa_client_id', CLIENT_ID)
         _wh_client = get_client(_WH_CID)   # loaded early — used across all intent branches
+        # Load active catalog once per request — passed to every openai_chat call
+        _ai_catalog = load_catalog_for_ai(_WH_CID)
         data = request.get_json(force=True, silent=True) or {}
         print(f"[TRACE_PAYLOAD] {data}")          # full dump — reveals UltraMsg echo payloads
         msg_data     = data.get("data", {})
@@ -4405,12 +4465,12 @@ def whatsapp():
                     }
                     _price_msg = _price_hdr.get(_early_lang, _price_hdr["ar"]) + "\n" + "\n".join(_lines)
                 else:
-                    _price_msg = openai_chat(incoming_msg, lang=_early_lang, client_obj=_wh_client)
+                    _price_msg = openai_chat(incoming_msg, lang=_early_lang, client_obj=_wh_client, catalog_items=_ai_catalog)
                 return wa_reply(sender, _price_msg)
 
             elif _msg_intent == "ask_info":
                 print(f"[INTENT_FLOW] ask_info → AI reply")
-                _info_reply = openai_chat(incoming_msg, lang=_early_lang, client_obj=_wh_client)
+                _info_reply = openai_chat(incoming_msg, lang=_early_lang, client_obj=_wh_client, catalog_items=_ai_catalog)
                 return wa_reply(sender, _info_reply)
 
             elif _msg_intent in ("book_appointment", "place_order"):
@@ -4650,7 +4710,7 @@ def whatsapp():
                 }
                 _ask = _ask_map.get(step, "Ask the user what service they need.")
                 print(f"[FLOW] asking_for={step!r} (after mid-booking greeting)")
-                return wa_reply(sender, openai_chat(_ask, lang=lang, client_obj=_wh_client))
+                return wa_reply(sender, openai_chat(_ask, lang=lang, client_obj=_wh_client, catalog_items=_ai_catalog))
 
         # ── UPSELL REJECTION DETECTION ────────────────────────────────────
         if state.get("upsell_offered") and not state.get("upsell_rejected") and (is_rejection(incoming_msg) or _parsed_rejection):
@@ -4664,7 +4724,7 @@ def whatsapp():
                 "confirm": "Ask the user to confirm their booking (yes or no).",
             }
             _ask = _ask_map.get(step, "Ask the user what service they need.")
-            return wa_reply(sender, openai_chat(_ask, lang=lang, client_obj=_wh_client))
+            return wa_reply(sender, openai_chat(_ask, lang=lang, client_obj=_wh_client, catalog_items=_ai_catalog))
 
         # ── ONE-SHOT SHORTCUT — all fields present → go directly to confirmation
         _sc_svcs = ensure_svc_list(state.get("known_service"))
@@ -4825,10 +4885,10 @@ def whatsapp():
                         price=f"{int(_rp)} {_cur}",
                     )
                 else:
-                    reply = openai_chat(incoming_msg, lang=lang, client_obj=_wh_client)
+                    reply = openai_chat(incoming_msg, lang=lang, client_obj=_wh_client, catalog_items=_ai_catalog)
 
             else:
-                reply = openai_chat(incoming_msg, lang=lang, client_obj=_wh_client)
+                reply = openai_chat(incoming_msg, lang=lang, client_obj=_wh_client, catalog_items=_ai_catalog)
 
         # ── STEP: day ─────────────────────────────────────────────────────
         elif step == "day":
@@ -4940,7 +5000,7 @@ def whatsapp():
                 "confirm": "Ask the user to confirm their booking (yes or no).",
             }
             _prompt = _reprompts.get(step, "Ask the user what service they need.")
-            reply = openai_chat(_prompt, lang=lang, client_obj=_wh_client)
+            reply = openai_chat(_prompt, lang=lang, client_obj=_wh_client, catalog_items=_ai_catalog)
 
         print(f"[WHATSAPP] reply={reply!r}")
         return wa_reply(sender, reply)
@@ -5194,6 +5254,8 @@ def admin_catalog_new():
         price       = float(request.form.get("price") or 0)
         sale_price  = request.form.get("sale_price") or None
         description = request.form.get("description", "").strip()
+        category    = request.form.get("category", "").strip()
+        item_cur    = request.form.get("currency", "").strip() or client.get("currency", "MAD")
         duration    = request.form.get("duration_min") or None
         stock       = request.form.get("stock_qty") or None
         is_active   = int(request.form.get("is_active", 1))
@@ -5201,6 +5263,7 @@ def admin_catalog_new():
         if not title:
             flash("Title is required.", "error")
         else:
+            print(f"[CATALOG_SAVE_START] client={cid} title={title!r}")
             # ── TRIAL CHECK ───────────────────────────────────────────────
             if expire_trial_if_needed(cid):
                 flash("انتهت التجربة المجانية — يرجى الاشتراك للاستمرار.", "error")
@@ -5220,28 +5283,39 @@ def admin_catalog_new():
                     "error"
                 )
                 return redirect(url_for("admin_catalog"))
-            con = get_db_connection()
             try:
-                cur = con.execute("""
-                    INSERT INTO catalogs (client_id,title,type,price,sale_price,
-                        description,duration_min,stock_qty,is_active)
-                    VALUES (?,?,?,?,?,?,?,?,?)
-                """, (cid, title, typ, price,
-                      float(sale_price) if sale_price else None,
-                      description, int(duration) if duration else None,
-                      int(stock) if stock else None, is_active))
-                cat_id = cur.lastrowid
-                for alias in [a.strip() for a in aliases_raw.split(",") if a.strip()]:
-                    con.execute(
-                        "INSERT INTO catalog_aliases (catalog_id, alias, lang) VALUES (?,?,?)",
-                        (cat_id, alias.lower(), "ar")
-                    )
-                con.commit()
-            finally:
-                con.close()
+                _now = datetime.datetime.utcnow().isoformat()
+                con  = get_db_connection()
+                try:
+                    cur = con.execute("""
+                        INSERT INTO catalogs
+                            (client_id, title, type, price, sale_price, description,
+                             category, currency, duration_min, stock_qty, is_active,
+                             created_at, updated_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """, (cid, title, typ, price,
+                          float(sale_price) if sale_price else None,
+                          description, category, item_cur,
+                          int(duration) if duration else None,
+                          int(stock) if stock else None,
+                          is_active, _now, _now))
+                    cat_id = cur.lastrowid
+                    for alias in [a.strip() for a in aliases_raw.split(",") if a.strip()]:
+                        con.execute(
+                            "INSERT INTO catalog_aliases (catalog_id, alias, lang) VALUES (?,?,?)",
+                            (cat_id, alias.lower(), "ar")
+                        )
+                    con.commit()
+                finally:
+                    con.close()
+                print(f"[CATALOG_SAVED] client={cid} id={cat_id} title={title!r}")
+            except Exception as _ce:
+                print(f"[CATALOG_SAVE_ERROR] client={cid} title={title!r} err={_ce!r}")
+                flash("حدث خطأ أثناء الحفظ. يرجى المحاولة مجدداً.", "error")
+                return redirect(url_for("admin_catalog"))
             # Activation check (first catalog item may complete activation)
             _check_activation(cid)
-            flash("Catalog item created.", "success")
+            flash("تم حفظ العنصر في الكتالوج بنجاح.", "success")
             return redirect(url_for("admin_catalog"))
     return render_template("admin/catalog_form.html", item=None, aliases_str="",
                            currency=client.get("currency", "MAD"), active="catalog")
@@ -5275,30 +5349,44 @@ def admin_catalog_edit(cat_id):
         price       = float(request.form.get("price") or 0)
         sale_price  = request.form.get("sale_price") or None
         description = request.form.get("description", "").strip()
+        category    = request.form.get("category", "").strip()
+        item_cur    = request.form.get("currency", "").strip() or client.get("currency", "MAD")
         duration    = request.form.get("duration_min") or None
         stock       = request.form.get("stock_qty") or None
         is_active   = int(request.form.get("is_active", 1))
         aliases_raw = request.form.get("aliases", "")
-        con = get_db_connection()
+        print(f"[CATALOG_SAVE_START] client={cid} id={cat_id} title={title!r}")
         try:
-            con.execute("""
-                UPDATE catalogs SET title=?,type=?,price=?,sale_price=?,
-                    description=?,duration_min=?,stock_qty=?,is_active=?
-                WHERE id=? AND client_id=?
-            """, (title, typ, price,
-                  float(sale_price) if sale_price else None,
-                  description, int(duration) if duration else None,
-                  int(stock) if stock else None, is_active, cat_id, cid))
-            con.execute("DELETE FROM catalog_aliases WHERE catalog_id=?", (cat_id,))
-            for alias in [a.strip() for a in aliases_raw.split(",") if a.strip()]:
-                con.execute(
-                    "INSERT INTO catalog_aliases (catalog_id, alias, lang) VALUES (?,?,?)",
-                    (cat_id, alias.lower(), "ar")
-                )
-            con.commit()
-        finally:
-            con.close()
-        flash("Changes saved.", "success")
+            _now = datetime.datetime.utcnow().isoformat()
+            con  = get_db_connection()
+            try:
+                con.execute("""
+                    UPDATE catalogs
+                    SET title=?, type=?, price=?, sale_price=?, description=?,
+                        category=?, currency=?, duration_min=?, stock_qty=?,
+                        is_active=?, updated_at=?
+                    WHERE id=? AND client_id=?
+                """, (title, typ, price,
+                      float(sale_price) if sale_price else None,
+                      description, category, item_cur,
+                      int(duration) if duration else None,
+                      int(stock) if stock else None,
+                      is_active, _now, cat_id, cid))
+                con.execute("DELETE FROM catalog_aliases WHERE catalog_id=?", (cat_id,))
+                for alias in [a.strip() for a in aliases_raw.split(",") if a.strip()]:
+                    con.execute(
+                        "INSERT INTO catalog_aliases (catalog_id, alias, lang) VALUES (?,?,?)",
+                        (cat_id, alias.lower(), "ar")
+                    )
+                con.commit()
+            finally:
+                con.close()
+            print(f"[CATALOG_SAVED] client={cid} id={cat_id} title={title!r}")
+        except Exception as _ue:
+            print(f"[CATALOG_SAVE_ERROR] client={cid} id={cat_id} err={_ue!r}")
+            flash("حدث خطأ أثناء الحفظ. يرجى المحاولة مجدداً.", "error")
+            return redirect(url_for("admin_catalog"))
+        flash("تم حفظ التعديلات بنجاح.", "success")
         return redirect(url_for("admin_catalog"))
     return render_template("admin/catalog_form.html", item=item, aliases_str=aliases_str,
                            currency=client.get("currency", "MAD"), active="catalog")
@@ -5306,20 +5394,25 @@ def admin_catalog_edit(cat_id):
 # ── /admin/catalog/<id>/delete ────────────────────────────────────────────────
 @app.route("/admin/catalog/<int:cat_id>/delete", methods=["POST"])
 def admin_catalog_delete(cat_id):
+    """Soft-delete: sets is_active=0 so item disappears from AI and UI
+    but remains in the DB for audit purposes."""
     guard = _admin_guard()
     if guard:
         return guard
     cid = _session_client_id()
-    con = get_db_connection()
+    _now = datetime.datetime.utcnow().isoformat()
+    con  = get_db_connection()
     try:
-        con.execute("DELETE FROM catalog_aliases WHERE catalog_id=?", (cat_id,))
-        con.execute("DELETE FROM upsells WHERE trigger_item_id=? OR upsell_item_id=?",
-                    (cat_id, cat_id))
-        con.execute("DELETE FROM catalogs WHERE id=? AND client_id=?", (cat_id, cid))
+        con.execute(
+            "UPDATE catalogs SET is_active=0, updated_at=? WHERE id=? AND client_id=?",
+            (_now, cat_id, cid)
+        )
         con.commit()
     finally:
         con.close()
-    flash("Item deleted.", "success")
+    print(f"[CATALOG_SAVE_START] client={cid} id={cat_id} (soft-delete)")
+    print(f"[CATALOG_SAVED] client={cid} id={cat_id} is_active=0 (soft-deleted)")
+    flash("تم إيقاف تفعيل العنصر (soft delete).", "success")
     return redirect(url_for("admin_catalog"))
 
 # ── /admin/orders ─────────────────────────────────────────────────────────────
