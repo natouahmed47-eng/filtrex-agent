@@ -368,7 +368,7 @@ TRANSLATIONS = {
         "ob_goal_sell":          "Sell Products",
         "ob_goal_support":       "Customer Support",
         "ob_goal_leads":         "Generate Leads",
-        "ob_biz_desc_hint":      "e.g. Dental clinic offering cleaning, whitening, and check-ups.",
+        "ob_biz_desc_hint":      "e.g. A retail store offering products and services for your customers.",
         "ob_get_started":        "Start Setup →",
         "ob_finish":             "Go to Dashboard →",
     },
@@ -515,7 +515,7 @@ TRANSLATIONS = {
         "ob_goal_sell":          "بيع المنتجات",
         "ob_goal_support":       "دعم العملاء",
         "ob_goal_leads":         "توليد العملاء المحتملين",
-        "ob_biz_desc_hint":      "مثال: عيادة أسنان للتنظيف والتبييض.",
+        "ob_biz_desc_hint":      "مثال: متجر يقدم منتجات وخدمات متنوعة لعملائه.",
         "ob_get_started":        "ابدأ الإعداد ←",
         "ob_finish":             "الذهاب للوحة التحكم ←",
     },
@@ -619,9 +619,6 @@ def init_db():
             )
         """)
         con.execute("INSERT OR IGNORE INTO users (id, username, password) VALUES (1, 'admin', '123456')")
-        con.execute("INSERT OR IGNORE INTO users (id, username, password) VALUES (2, 'clinic2', '123456')")
-        con.execute("INSERT OR IGNORE INTO business_settings (user_id, business_name, services, default_language) VALUES (1, 'Veltrix Dental Clinic', 'تنظيف أسنان,تبييض أسنان', 'ar')")
-        con.execute("INSERT OR IGNORE INTO business_settings (user_id, business_name, services, default_language) VALUES (2, 'Bright Smile Studio', 'فحص أسنان,تبييض أسنان', 'ar')")
         rows = con.execute("SELECT id, password FROM users").fetchall()
         for row in rows:
             pwd = row["password"]
@@ -677,7 +674,7 @@ def _migrate_saas():
             CREATE TABLE IF NOT EXISTS clients (
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
                 name              TEXT NOT NULL,
-                business_type     TEXT NOT NULL DEFAULT 'clinic',
+                business_type     TEXT NOT NULL DEFAULT '',
                 default_language  TEXT DEFAULT 'ar',
                 currency          TEXT DEFAULT 'SAR',
                 timezone          TEXT DEFAULT 'Africa/Nouakchott',
@@ -1158,22 +1155,18 @@ def _migrate_saas():
                 con.commit()
                 print(f"[BILLING_PLAN] assigned Free plan to {len(unsubscribed)} existing client(s)")
 
-        # ── STEP 8: Seed demo client ──────────────────────────────────────
+        # ── STEP 8: Seed default client ──────────────────────────────────────
         exists = con.execute("SELECT id FROM clients WHERE id = 1").fetchone()
         if not exists:
             con.execute("""
                 INSERT INTO clients (id, name, business_type, default_language,
                     currency, timezone, admin_whatsapp, is_active)
-                VALUES (1, 'Veltrix Dental Clinic', 'clinic', 'ar',
+                VALUES (1, 'My Business', '', 'ar',
                     'SAR', 'Africa/Nouakchott', ?, 1)
             """, (ADMIN_WHATSAPP_NUMBER,))
             con.commit()
             print("[SAAS] seeded client id=1")
-
-        # ── STEP 8–9: Seed catalog items + multilingual aliases ───────────
-        # DISABLED: default dental seed removed — no fallback catalog should be injected
-        # cat_count = con.execute("SELECT COUNT(*) FROM catalogs WHERE client_id=1").fetchone()[0]
-        # if cat_count == 0:  ... dental seed ...
+            print("[NO_HARDCODED_ITEMS] default client created with no catalog items")
 
     finally:
         con.close()
@@ -2182,7 +2175,9 @@ def wa_clear(phone):
 def load_catalog_for_ai(client_id):
     """Load all active catalog items for the client.
     Returns list of dicts with all fields needed for AI context.
-    Logs [CATALOG_LOADED]."""
+    Logs [CATALOG_SOURCE] [CATALOG_ITEMS_LOADED] [CATALOG_EMPTY] [NO_HARDCODED_ITEMS]."""
+    print(f"[CATALOG_SOURCE] loading from database for client_id={client_id}")
+    print("[NO_HARDCODED_ITEMS] catalog loaded exclusively from database — no hardcoded fallbacks")
     try:
         con = get_db_connection()
         try:
@@ -2195,10 +2190,13 @@ def load_catalog_for_ai(client_id):
             items = [dict(r) for r in rows]
         finally:
             con.close()
-        print(f"[CATALOG_LOADED] client={client_id} count={len(items)} titles={[i['title'] for i in items]}")
+        if items:
+            print(f"[CATALOG_ITEMS_LOADED] client={client_id} count={len(items)} titles={[i['title'] for i in items]}")
+        else:
+            print(f"[CATALOG_EMPTY] client={client_id} — no active catalog items found in database")
         return items
     except Exception as _e:
-        print(f"[CATALOG_LOADED] ERROR client={client_id} err={_e!r}")
+        print(f"[CATALOG_ITEMS_LOADED] ERROR client={client_id} err={_e!r}")
         return []
 
 
@@ -2250,7 +2248,7 @@ def _catalog_match_by_keywords(catalog_items, msg):
 
     Algorithm:
     1. Check for an exact title match (case-insensitive). If found, return
-       only that item immediately — e.g. user types "Dior" → Dior only.
+       only that item immediately.
     2. Tokenise the message into words ≥ 3 chars (Arabic or Latin).
     3. For each token, check if it appears as a sub-string of any item's
        title, category, or description (case-insensitive).
@@ -2681,11 +2679,7 @@ def _fire_first_reply_nudge(sender, client_id):
 
 # wa_send_admin() REMOVED — use send_booking_messages() as the single send point
 
-_WA_PRICES = {
-    "تنظيف أسنان":   "100 ريال",
-    "تبييض الأسنان": "250 ريال",
-    "فحص الأسنان":   "50 ريال",
-}
+_WA_PRICES = {}
 
 _STRINGS = {
     "ask_service": {
@@ -2799,41 +2793,9 @@ def build_price_list(client_id, lang):
     }
     return _headers[l]
 
-_SVC_DISPLAY = {
-    "تنظيف أسنان": {
-        "ar": "تنظيف أسنان",
-        "en": "Teeth Cleaning",
-        "fr": "Nettoyage des dents",
-    },
-    "تبييض الأسنان": {
-        "ar": "تبييض الأسنان",
-        "en": "Teeth Whitening",
-        "fr": "Blanchiment des dents",
-    },
-    "فحص الأسنان": {
-        "ar": "فحص الأسنان",
-        "en": "Dental Checkup",
-        "fr": "Contrôle dentaire",
-    },
-}
+_SVC_DISPLAY = {}
 
-_PRICE_DISPLAY = {
-    "تنظيف أسنان": {
-        "ar": "100 ريال",
-        "en": "100 SAR",
-        "fr": "100 SAR",
-    },
-    "تبييض الأسنان": {
-        "ar": "250 ريال",
-        "en": "250 SAR",
-        "fr": "250 SAR",
-    },
-    "فحص الأسنان": {
-        "ar": "50 ريال",
-        "en": "50 SAR",
-        "fr": "50 SAR",
-    },
-}
+_PRICE_DISPLAY = {}
 
 def svc_name(canonical, lang):
     lang = lang if lang in ("ar", "en", "fr") else "ar"
@@ -2853,25 +2815,9 @@ def svc_price(canonical, lang):
         p = row["sale_price"] or row["price"]
         _cur = get_client(CLIENT_ID).get("currency", "MAD")
         return f"{int(p)} {_cur}"
-    return _PRICE_DISPLAY.get(canonical, {}).get(lang, _WA_PRICES.get(canonical, ""))
+    return ""
 
-_SVC_BENEFITS = {
-    "تنظيف أسنان": {
-        "ar": "يساعد على صحة اللثة ويمنحك إحساسًا بالنظافة والانتعاش",
-        "en": "helps improve gum health and leaves your teeth feeling fresh",
-        "fr": "aide à garder des gencives saines et une sensation de fraîcheur",
-    },
-    "تبييض الأسنان": {
-        "ar": "يحسّن بياض الابتسامة ويمنحك مظهرًا أكثر إشراقًا",
-        "en": "brightens your smile and boosts your appearance and confidence",
-        "fr": "illumine votre sourire et améliore votre apparence et confiance",
-    },
-    "فحص الأسنان": {
-        "ar": "يكشف المشاكل مبكرًا ويريحك من القلق على صحة أسنانك",
-        "en": "detects issues early and gives you peace of mind about your dental health",
-        "fr": "détecte les problèmes tôt et vous rassure sur votre santé dentaire",
-    },
-}
+_SVC_BENEFITS = {}
 
 _RECOMMENDATION = {
     "ar": (
@@ -2957,11 +2903,7 @@ _NOISE_MESSAGES = {
 def is_noise_message(msg):
     return (msg or "").strip().lower() in _NOISE_MESSAGES
 
-_CANONICAL_SERVICE_MAP = {
-    "teeth_cleaning":  "تنظيف أسنان",
-    "teeth_whitening": "تبييض الأسنان",
-    "dental_checkup":  "فحص الأسنان",
-}
+_CANONICAL_SERVICE_MAP = {}
 
 def extract_entities(msg):
     import re
@@ -2969,15 +2911,6 @@ def extract_entities(msg):
     service = None
     day     = None
     time    = None
-    _svc_keywords = {
-        "teeth_cleaning":  ["تنظيف", "cleaning", "nettoyage"],
-        "teeth_whitening": ["تبييض", "whitening", "blanchiment"],
-        "dental_checkup":  ["فحص", "checkup", "consultation", "contrôle", "controle"],
-    }
-    for _canon, _kws in _svc_keywords.items():
-        if any(kw in text for kw in _kws):
-            service = _canon
-            break
     if "اليوم" in text or "today" in text or "aujourd'hui" in text:
         day = "today"
     elif any(w in text for w in ["غد", "غدا", "غدًا", "tomorrow", "demain"]):
@@ -3529,8 +3462,8 @@ def is_valid_name(text):
     text = (text or "").strip().lower()
     bad_words = [
         "je veux", "i want", "bonjour", "hello", "salam",
-        "تنظيف", "تبييض", "فحص", "اريد", "أريد",
-        "service", "nettoyage", "cleaning", "whitening", "checkup",
+        "اريد", "أريد",
+        "service", "nettoyage",
         "today", "tomorrow", "demain", "اليوم", "غدا", "غدًا",
     ]
     if any(w in text for w in bad_words):
@@ -3661,13 +3594,9 @@ def confirmation_message(state, name, lang, phone=None):
         flow  = "booking"
     return build_confirmation(state, items, flow, client_cfg, l, name)
 
-_RECOMMENDED_SERVICE = "تنظيف أسنان"
+_RECOMMENDED_SERVICE = None
 
-_UPSELL_MAP = {
-    "تنظيف أسنان":   "تبييض الأسنان",
-    "فحص الأسنان":   "تنظيف أسنان",
-    "تبييض الأسنان": "فحص الأسنان",
-}
+_UPSELL_MAP = {}
 
 def build_times_hint(svc, lang, day_offset=0, day=None):
     _day = (day or "اليوم").strip()
@@ -3762,11 +3691,7 @@ def build_upsell(svc, lang):
     }
     return _upsell[_lang]
 
-_UPSELL_CANONICAL_MAP = {
-    "تنظيف أسنان":   "تبييض الأسنان",
-    "فحص الأسنان":   "تنظيف أسنان",
-    "تبييض الأسنان": "فحص الأسنان",
-}
+_UPSELL_CANONICAL_MAP = {}
 
 def can_show_upsell(state):
     # ── PLAN ENFORCE: upsell is a pro / business feature ───────────────────
@@ -3808,23 +3733,7 @@ _REJECTION_WORDS = {"لا", "no", "non", "لأ", "la", "nope", "ما أبي", "�
 def is_rejection(msg):
     return (msg or "").strip().lower() in _REJECTION_WORDS
 
-_WA_SERVICE_ALIASES = {
-    "تنظيف أسنان": [
-        "تنظيف", "تنظيف أسنان",
-        "teeth cleaning", "cleaning",
-        "nettoyage", "nettoyage des dents",
-    ],
-    "تبييض الأسنان": [
-        "تبييض", "تبييض الأسنان",
-        "whitening", "teeth whitening",
-        "blanchiment", "blanchiment des dents",
-    ],
-    "فحص الأسنان": [
-        "فحص", "فحص الأسنان",
-        "checkup", "dental checkup",
-        "consultation", "contrôle", "controle", "contrôle dentaire",
-    ],
-}
+_WA_SERVICE_ALIASES = {}
 
 _WA_PRICE_KEYWORDS = ["كم", "سعر", "ثمن", "تكلفة", "بكم", "السعر", "الثمن", "price", "how much", "combien", "tarif", "coût", "cout"]
 
@@ -4156,15 +4065,7 @@ def wa_save_booking(phone, state, name):
     # ── Activation check (order saved → may trigger is_active=1) ──────────
     _check_activation(CLIENT_ID)
 
-_SERVICE_MAP = {
-    "تنظيف": "تنظيف أسنان",
-    "تبييض": "تبييض أسنان",
-    "فحص":   "فحص أسنان",
-    "cleaning":  "teeth cleaning",
-    "whitening": "teeth whitening",
-    "checkup":   "dental checkup",
-    "check-up":  "dental checkup",
-}
+_SERVICE_MAP = {}
 _DAY_MAP = {
     "غد": "غدًا", "غدا": "غدًا", "غدًا": "غدًا", "بكرة": "غدًا",
     "today": "اليوم", "اليوم": "اليوم", "tomorrow": "غدًا",
@@ -4277,15 +4178,16 @@ def debug_catalog():
         _items = [dict(r) for r in _rows]
     finally:
         _con.close()
-    _dental_titles = {"تنظيف أسنان", "تبييض الأسنان", "فحص الأسنان"}
-    _wrong_source = bool(_items) and all(i.get("title") in _dental_titles for i in _items)
-    if _wrong_source:
-        print(f"[WRONG_CATALOG_SOURCE] /debug/catalog: only default dental items found for client_id={_cid}")
+    print(f"[CATALOG_SOURCE] /debug/catalog loaded from database client_id={_cid}")
+    if not _items:
+        print(f"[CATALOG_EMPTY] /debug/catalog: no items for client_id={_cid}")
+    else:
+        print(f"[CATALOG_ITEMS_LOADED] /debug/catalog: count={len(_items)} for client_id={_cid}")
+    print("[NO_HARDCODED_ITEMS] catalog served from database only — no hardcoded fallbacks")
     return jsonify({
         "database_path": _db_path[:4] + "***" + _db_path[-8:] if len(_db_path) > 12 else "***",
         "client_id": _cid,
         "catalog_count": len(_items),
-        "wrong_catalog_source": _wrong_source,
         "catalog_items": _items,
     })
 
@@ -4459,14 +4361,11 @@ def whatsapp():
         _ai_catalog = load_catalog_for_ai(_WH_CID)
         print(f"[WA_CLIENT_ID] {_WH_CID}")
         print(f"[WA_DB_SOURCE] {os.path.abspath(DB_FILE)}")
-        print(f"[WA_CATALOG_ITEMS] count={len(_ai_catalog)} titles={[i['title'] for i in _ai_catalog]}")
+        print(f"[CATALOG_SOURCE] whatsapp handler loaded catalog from database client_id={_WH_CID}")
         print(f"[ACTIVE_DB_MODE] sqlite")
         print(f"[ACTIVE_DB_PATH_OR_URL] {os.path.abspath(DB_FILE)}")
         print(f"[ACTIVE_CLIENT_ID] {_WH_CID}")
         print(f"[CATALOG_ROWS_RAW] {_ai_catalog}")
-        _dental_titles = {"تنظيف أسنان", "تبييض الأسنان", "فحص الأسنان"}
-        if _ai_catalog and all(i.get("title") in _dental_titles for i in _ai_catalog):
-            print("[WRONG_CATALOG_SOURCE] ⚠️  catalog contains only default dental items — check DEFAULT_CLIENT_ID and database")
         data = request.get_json(force=True, silent=True) or {}
         print(f"[TRACE_PAYLOAD] {data}")          # full dump — reveals UltraMsg echo payloads
         msg_data     = data.get("data", {})
@@ -4606,11 +4505,11 @@ def whatsapp():
         # ── 2. Empty catalog guard ────────────────────────────────────────────
         if not _ai_catalog:
             _empty_msg = {
-                "ar": "لا توجد منتجات مضافة حالياً في الكتالوج.",
-                "en": "No products or services are currently available.",
-                "fr": "Aucun produit ou service n'est disponible actuellement.",
+                "ar": "لا توجد منتجات أو خدمات مضافة حاليًا في الكتالوج.",
+                "en": "No products or services are currently available in the catalog.",
+                "fr": "Aucun produit ou service n'est disponible actuellement dans le catalogue.",
             }
-            print(f"[EMPTY_CATALOG] client={_WH_CID} — returning empty catalog message")
+            print(f"[CATALOG_EMPTY] client={_WH_CID} — no catalog items, returning empty catalog message")
             return wa_reply(sender, _empty_msg.get(lang, _empty_msg["ar"]))
 
         # ── 3. Match message against catalog items (generic — no hardcoded terms) ──
@@ -6290,7 +6189,7 @@ def admin_settings():
 
     if request.method == "POST":
         name             = request.form.get("name", "").strip()
-        business_type    = request.form.get("business_type", "clinic")
+        business_type    = request.form.get("business_type", "")
         default_language = request.form.get("default_language", "ar")
         currency         = request.form.get("currency", "MAD").strip()
         timezone         = request.form.get("timezone", "Africa/Casablanca").strip()
@@ -6322,7 +6221,7 @@ def admin_ai_brain():
 
     if request.method == "POST":
         business_name       = request.form.get("name", "").strip()
-        business_type       = request.form.get("business_type", "clinic").strip()
+        business_type       = request.form.get("business_type", "").strip()
         default_language    = request.form.get("default_language", "ar").strip()
         assistant_tone      = request.form.get("assistant_tone", "friendly").strip()
         assistant_goal      = request.form.get("assistant_goal", "book_appointments").strip()
@@ -7845,15 +7744,7 @@ def chat():
         return jsonify({"reply": "حدث خطأ، حاول مرة أخرى."})
 
     # Step 4: Detect service (if not already known)
-    SERVICE_MAP = {
-        "تنظيف": "تنظيف أسنان",
-        "تبييض": "تبييض أسنان",
-        "فحص": "فحص أسنان",
-        "cleaning": "teeth cleaning",
-        "whitening": "teeth whitening",
-        "checkup": "dental checkup",
-        "check-up": "dental checkup",
-    }
+    SERVICE_MAP = {}
     if not known_service:
         for key, val in SERVICE_MAP.items():
             if key in msg_lower:
