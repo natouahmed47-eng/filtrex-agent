@@ -6,6 +6,7 @@ import json
 import sqlite3
 import datetime
 import random
+import re as _re_db
 
 ULTRAMSG_INSTANCE         = os.getenv("ULTRAMSG_INSTANCE", "")
 ULTRAMSG_TOKEN            = os.getenv("ULTRAMSG_TOKEN", "")
@@ -13,10 +14,28 @@ ADMIN_WHATSAPP_NUMBER     = os.getenv("ADMIN_WHATSAPP_NUMBER", "")
 PLATFORM_ADMIN_WHATSAPP   = os.getenv("PLATFORM_ADMIN_WHATSAPP", "")
 WA_BOT_NUMBER             = os.getenv("WA_BOT_NUMBER", "22230489495")   # UltraMsg bot phone number for deep links
 DEFAULT_CLIENT_ID         = int(os.getenv("DEFAULT_CLIENT_ID", "1"))
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+DB_MODE      = "postgres" if DATABASE_URL and DATABASE_URL.startswith(("postgresql://", "postgres://")) else "sqlite"
+print(f"[DATABASE_URL_PRESENT] {bool(DATABASE_URL)}")
+print(f"[DATABASE_URL_PREFIX] {DATABASE_URL[:12] if DATABASE_URL else 'N/A'}")
+print(f"[DB_MODE] {DB_MODE}")
 print(f"[STARTUP] ADMIN_WHATSAPP_NUMBER={ADMIN_WHATSAPP_NUMBER!r}")
 print(f"[STARTUP] PLATFORM_ADMIN_WHATSAPP={'set' if PLATFORM_ADMIN_WHATSAPP else 'not set'}")
 print(f"[STARTUP] WA_BOT_NUMBER={'set' if WA_BOT_NUMBER else 'not set'}")
 print(f"[STARTUP] DEFAULT_CLIENT_ID={DEFAULT_CLIENT_ID}")
+
+# Import psycopg2 once at startup (only when PostgreSQL mode is active)
+if DB_MODE == "postgres":
+    try:
+        import psycopg2 as _psycopg2
+        import psycopg2.extras as _psycopg2_extras
+    except ImportError:
+        _psycopg2 = None          # type: ignore[assignment]
+        _psycopg2_extras = None   # type: ignore[assignment]
+        print("[DB_WARN] psycopg2 not installed — PostgreSQL mode unavailable")
+else:
+    _psycopg2 = None          # type: ignore[assignment]
+    _psycopg2_extras = None   # type: ignore[assignment]
 
 def ultramsg_send(to, text):
     import traceback as _tb
@@ -59,10 +78,9 @@ def _ultramsg_send_with_creds(instance_id, token, to, text):
 
 
 def get_whatsapp_instance(client_id):
-    """Return the client's whatsapp_instances row (sqlite3.Row) or None."""
+    """Return the client's whatsapp_instances row or None."""
     try:
-        _con = sqlite3.connect(DB_FILE, timeout=10)
-        _con.row_factory = sqlite3.Row
+        _con = get_db_connection()
         row = _con.execute(
             "SELECT * FROM whatsapp_instances WHERE client_id=?", (client_id,)
         ).fetchone()
@@ -172,8 +190,7 @@ def _resolve_branding():
         and not any(host.endswith(s) for s in _replit_suffixes)
     )
     if is_custom_host:
-        _con = sqlite3.connect("bookings.db", timeout=10)
-        _con.row_factory = sqlite3.Row
+        _con = get_db_connection()
         try:
             _row = _con.execute(
                 "SELECT * FROM clients WHERE custom_domain=? AND white_label_enabled=1",
@@ -196,8 +213,7 @@ def _resolve_branding():
     # 2. Authenticated session — load branding for that client
     cid = session.get("client_id")
     if cid:
-        _con = sqlite3.connect("bookings.db", timeout=10)
-        _con.row_factory = sqlite3.Row
+        _con = get_db_connection()
         try:
             _row = _con.execute("SELECT * FROM clients WHERE id=?", (cid,)).fetchone()
         finally:
@@ -534,8 +550,7 @@ def _inject_lang():
     cid = session.get("client_id")
     lang = "en"
     if cid:
-        _con = sqlite3.connect("bookings.db", timeout=10)
-        _con.row_factory = sqlite3.Row
+        _con = get_db_connection()
         try:
             _row = _con.execute(
                 "SELECT default_language FROM clients WHERE id=?", (cid,)
@@ -562,7 +577,176 @@ def _inject_trial_info():
 
 DB_FILE = "bookings.db"
 
+# ── PostgreSQL compatibility wrapper ──────────────────────────────────────────
+
+class _CompatRow:
+    """Row adapter: supports row["key"] and row[int_index] like sqlite3.Row."""
+    __slots__ = ("_data", "_keys")
+
+    def __init__(self, mapping):
+        self._data = dict(mapping)
+        self._keys = list(self._data.keys())
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return self._data[self._keys[key]]
+        return self._data[key]
+
+    def __iter__(self):
+        return iter(self._data.values())
+
+    def keys(self):
+        return self._keys
+
+    def get(self, key, default=None):
+        return self._data.get(key, default)
+
+    def __contains__(self, key):
+        return key in self._data
+
+    def __repr__(self):
+        return repr(dict(self._data))
+
+
+class _FakeCursor:
+    """Null cursor returned for no-op statements (e.g. skipped PRAGMA)."""
+    def __init__(self, rows=()):
+        self._rows = list(rows)
+        self.lastrowid = None
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return list(self._rows)
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
+class _PGCursor:
+    """Wraps a psycopg2 RealDictCursor to expose a sqlite3-compatible interface."""
+    def __init__(self, pg_cursor, lastrowid=None):
+        self._cur = pg_cursor
+        self._lastrowid = lastrowid
+
+    @property
+    def lastrowid(self):
+        return self._lastrowid
+
+    def fetchone(self):
+        row = self._cur.fetchone()
+        return _CompatRow(row) if row is not None else None
+
+    def fetchall(self):
+        return [_CompatRow(r) for r in self._cur.fetchall()]
+
+    def __iter__(self):
+        for r in self._cur:
+            yield _CompatRow(r)
+
+
+_RE_INT_PK   = _re_db.compile(r'\bINTEGER\s+PRIMARY\s+KEY(?:\s+AUTOINCREMENT)?\b', _re_db.IGNORECASE)
+_RE_OR_IGNORE = _re_db.compile(r'\bINSERT\s+OR\s+IGNORE\s+INTO\b', _re_db.IGNORECASE)
+_RE_CUR_TS   = _re_db.compile(r'\bCURRENT_TIMESTAMP\b', _re_db.IGNORECASE)
+
+
+def _sqlite_to_pg(sql):
+    """Translate basic SQLite DDL/DML to PostgreSQL syntax."""
+    is_or_ignore = bool(_RE_OR_IGNORE.search(sql))
+    sql = _RE_INT_PK.sub('SERIAL PRIMARY KEY', sql)
+    sql = _RE_OR_IGNORE.sub('INSERT INTO', sql)
+    if is_or_ignore and 'ON CONFLICT' not in sql.upper():
+        sql = sql.rstrip(';').rstrip() + ' ON CONFLICT DO NOTHING'
+    sql = _RE_CUR_TS.sub('(CURRENT_TIMESTAMP::TEXT)', sql)
+    sql = sql.replace('?', '%s')
+    return sql
+
+
+class _PsycopgConn:
+    """Thin sqlite3-API-compatible wrapper around a psycopg2 connection."""
+
+    def __init__(self, dsn):
+        self._psycopg2 = _psycopg2
+        self._extras   = _psycopg2_extras
+        self._pg       = _psycopg2.connect(dsn)
+        self._pg.autocommit = False
+        self.row_factory = None  # accepted but ignored
+
+    def _dict_cursor(self):
+        return self._pg.cursor(cursor_factory=self._extras.RealDictCursor)
+
+    def execute(self, sql, params=()):
+        stripped = sql.strip()
+
+        # PRAGMA table_info(tbl) → PG information_schema query (tuples, row[1]=col name)
+        _ti = _re_db.match(r'PRAGMA\s+table_info\(\s*(\w+)\s*\)', stripped, _re_db.IGNORECASE)
+        if _ti:
+            tbl = _ti.group(1)
+            cur = self._pg.cursor()
+            try:
+                cur.execute(
+                    "SELECT ordinal_position - 1, column_name, data_type, "
+                    "       CASE WHEN is_nullable='NO' THEN 1 ELSE 0 END, "
+                    "       column_default, 0 "
+                    "FROM information_schema.columns "
+                    "WHERE table_name = %s AND table_schema = 'public' "
+                    "ORDER BY ordinal_position",
+                    (tbl,)
+                )
+            except self._psycopg2.Error:
+                self._pg.rollback()
+                return _FakeCursor([])
+            return cur  # plain tuples; row[1] = column_name ✓
+
+        # Skip all other PRAGMA statements
+        if stripped.upper().startswith('PRAGMA'):
+            return _FakeCursor([])
+
+        pg_sql = _sqlite_to_pg(stripped)
+        is_insert = bool(_re_db.match(r'INSERT\b', pg_sql.lstrip(), _re_db.IGNORECASE))
+
+        cur = self._dict_cursor()
+        cur.execute(pg_sql, params or None)
+
+        _lastrowid = None
+        if is_insert:
+            try:
+                lv = self._pg.cursor()
+                lv.execute("SELECT lastval()")
+                r = lv.fetchone()
+                _lastrowid = r[0] if r else None
+            except self._psycopg2.Error:
+                _lastrowid = None
+
+        return _PGCursor(cur, _lastrowid)
+
+    def executemany(self, sql, seq_of_params):
+        pg_sql = _sqlite_to_pg(sql.strip())
+        cur = self._dict_cursor()
+        self._extras.execute_batch(cur, pg_sql, seq_of_params)
+        return _PGCursor(cur, None)
+
+    def commit(self):
+        self._pg.commit()
+
+    def close(self):
+        try:
+            self._pg.close()
+        except self._psycopg2.Error as _e:
+            print(f"[DB_CLOSE_ERROR] {_e!r}")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+# ─────────────────────────────────────────────────────────────────────────────
+
 def get_db_connection():
+    if DB_MODE == "postgres":
+        return _PsycopgConn(DATABASE_URL)
     con = sqlite3.connect(DB_FILE, timeout=10)
     con.row_factory = sqlite3.Row
     return con
@@ -4196,15 +4380,17 @@ def debug_catalog():
 def debug_whatsapp_catalog():
     """Debug endpoint — returns exactly the same catalog rows used by the /whatsapp handler."""
     _cid = DEFAULT_CLIENT_ID
-    _db_path = os.path.abspath(DB_FILE)
+    _db_path_or_url = DATABASE_URL[:12] + "..." if DB_MODE == "postgres" else os.path.abspath(DB_FILE)
     _rows = load_catalog_for_ai(_cid)
-    print(f"[ACTIVE_DB_MODE] sqlite")
-    print(f"[ACTIVE_DB_PATH_OR_URL] {_db_path}")
+    print(f"[ACTIVE_DB_MODE] {DB_MODE}")
+    print(f"[ACTIVE_DB_PATH_OR_URL] {_db_path_or_url}")
     print(f"[ACTIVE_CLIENT_ID] {_cid}")
     print(f"[CATALOG_ROWS_RAW] {_rows}")
     return jsonify({
-        "active_db_mode": "sqlite",
-        "active_db_path_or_url": _db_path,
+        "database_url_present": bool(DATABASE_URL),
+        "database_url_prefix": DATABASE_URL[:12] if DATABASE_URL else "",
+        "active_db_mode": DB_MODE,
+        "active_db_path_or_url": _db_path_or_url,
         "active_client_id": _cid,
         "catalog_count": len(_rows),
         "catalog_rows_raw": _rows,
@@ -4360,10 +4546,10 @@ def whatsapp():
         # Load active catalog once per request — passed to every openai_chat call
         _ai_catalog = load_catalog_for_ai(_WH_CID)
         print(f"[WA_CLIENT_ID] {_WH_CID}")
-        print(f"[WA_DB_SOURCE] {os.path.abspath(DB_FILE)}")
+        print(f"[WA_DB_SOURCE] {DATABASE_URL[:12] + '...' if DB_MODE == 'postgres' else os.path.abspath(DB_FILE)}")
         print(f"[CATALOG_SOURCE] whatsapp handler loaded catalog from database client_id={_WH_CID}")
-        print(f"[ACTIVE_DB_MODE] sqlite")
-        print(f"[ACTIVE_DB_PATH_OR_URL] {os.path.abspath(DB_FILE)}")
+        print(f"[ACTIVE_DB_MODE] {DB_MODE}")
+        print(f"[ACTIVE_DB_PATH_OR_URL] {DATABASE_URL[:12] + '...' if DB_MODE == 'postgres' else os.path.abspath(DB_FILE)}")
         print(f"[ACTIVE_CLIENT_ID] {_WH_CID}")
         print(f"[CATALOG_ROWS_RAW] {_ai_catalog}")
         data = request.get_json(force=True, silent=True) or {}
