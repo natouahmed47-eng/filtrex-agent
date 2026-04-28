@@ -2306,9 +2306,11 @@ def _catalog_match_by_keywords(catalog_items, msg):
     Algorithm:
     1. Tokenise the message into words ≥ 3 chars (Arabic or Latin).
     2. For each token, check if it appears as a sub-string of any item's
-       title, description, or category (case-insensitive).
+       title or category (case-insensitive). Description is intentionally
+       excluded so that type=product items are not missed.
     3. Return all items that had at least one token match, sorted by
        number of matches descending.
+    4. Includes ALL item types (service + product) — no type filter applied.
     """
     import re as _re
     msg_clean = msg.lower().strip()
@@ -2319,13 +2321,17 @@ def _catalog_match_by_keywords(catalog_items, msg):
 
     scored = []
     for item in catalog_items:
+        it_type = (item.get("type") or "service").lower()
+        print(f"[ITEM_TYPE] title={item.get('title')!r} type={it_type!r}")
+        # Match against name (title) and category only
         haystack = " ".join([
-            (item.get("title")       or ""),
-            (item.get("description") or ""),
-            (item.get("category")    or ""),
+            (item.get("title")    or ""),
+            (item.get("category") or ""),
         ]).lower()
         hits = sum(1 for tok in tokens if tok in haystack)
-        if hits > 0:
+        matched = hits > 0
+        print(f"[MATCH_RESULT] title={item.get('title')!r} type={it_type!r} hits={hits} matched={matched}")
+        if matched:
             scored.append((hits, item))
 
     scored.sort(key=lambda x: x[0], reverse=True)
