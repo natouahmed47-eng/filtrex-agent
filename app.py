@@ -1171,66 +1171,9 @@ def _migrate_saas():
             print("[SAAS] seeded client id=1")
 
         # ── STEP 8–9: Seed catalog items + multilingual aliases ───────────
-        cat_count = con.execute("SELECT COUNT(*) FROM catalogs WHERE client_id=1").fetchone()[0]
-        if cat_count == 0:
-            _seed = [
-                ("تنظيف أسنان", "service", 100, None,
-                 "تنظيف احترافي للأسنان يزيل الجير واللويحات الجرثومية", 30, None),
-                ("تبييض الأسنان", "service", 250, None,
-                 "تبييض متقدم بتقنية LED لابتسامة أكثر إشراقاً", 60, None),
-                ("فحص الأسنان", "service", 50, None,
-                 "فحص شامل مع تقرير صحة الأسنان", 20, None),
-            ]
-            cat_ids = []
-            for title, typ, price, sale, desc, dur, stock in _seed:
-                cur = con.execute("""
-                    INSERT INTO catalogs (client_id, title, type, price, sale_price,
-                        description, duration_min, stock_qty)
-                    VALUES (1, ?, ?, ?, ?, ?, ?, ?)
-                """, (title, typ, price, sale, desc, dur, stock))
-                cat_ids.append(cur.lastrowid)
-            con.commit()
-
-            # STEP 9 — multilingual aliases per spec (catalog_id, lang, alias)
-            _aliases = [
-                (cat_ids[0], "ar", "تنظيف"),
-                (cat_ids[0], "ar", "تنظيف أسنان"),
-                (cat_ids[0], "en", "cleaning"),
-                (cat_ids[0], "en", "teeth cleaning"),
-                (cat_ids[0], "fr", "nettoyage"),
-                (cat_ids[0], "fr", "nettoyage des dents"),
-
-                (cat_ids[1], "ar", "تبييض"),
-                (cat_ids[1], "ar", "تبييض أسنان"),
-                (cat_ids[1], "ar", "تبييض الأسنان"),
-                (cat_ids[1], "en", "whitening"),
-                (cat_ids[1], "en", "teeth whitening"),
-                (cat_ids[1], "fr", "blanchiment"),
-                (cat_ids[1], "fr", "blanchiment des dents"),
-
-                (cat_ids[2], "ar", "فحص"),
-                (cat_ids[2], "ar", "فحص أسنان"),
-                (cat_ids[2], "ar", "فحص الأسنان"),
-                (cat_ids[2], "en", "checkup"),
-                (cat_ids[2], "en", "dental checkup"),
-                (cat_ids[2], "fr", "controle"),
-                (cat_ids[2], "fr", "consultation"),
-            ]
-            con.executemany(
-                "INSERT INTO catalog_aliases (catalog_id, lang, alias) VALUES (?, ?, ?)",
-                _aliases,
-            )
-
-            # upsell: cleaning → whitening, checkup → cleaning
-            con.executemany(
-                "INSERT INTO upsells (client_id, source_catalog_id, target_catalog_id, priority) VALUES (?,?,?,?)",
-                [
-                    (1, cat_ids[0], cat_ids[1], 1),
-                    (1, cat_ids[2], cat_ids[0], 1),
-                ]
-            )
-            con.commit()
-            print(f"[SAAS] seeded catalog ids={cat_ids} + aliases + upsells")
+        # DISABLED: default dental seed removed — no fallback catalog should be injected
+        # cat_count = con.execute("SELECT COUNT(*) FROM catalogs WHERE client_id=1").fetchone()[0]
+        # if cat_count == 0:  ... dental seed ...
 
     finally:
         con.close()
@@ -4347,6 +4290,25 @@ def debug_catalog():
     })
 
 
+@app.route("/debug/whatsapp-catalog")
+def debug_whatsapp_catalog():
+    """Debug endpoint — returns exactly the same catalog rows used by the /whatsapp handler."""
+    _cid = DEFAULT_CLIENT_ID
+    _db_path = os.path.abspath(DB_FILE)
+    _rows = load_catalog_for_ai(_cid)
+    print(f"[ACTIVE_DB_MODE] sqlite")
+    print(f"[ACTIVE_DB_PATH_OR_URL] {_db_path}")
+    print(f"[ACTIVE_CLIENT_ID] {_cid}")
+    print(f"[CATALOG_ROWS_RAW] {_rows}")
+    return jsonify({
+        "active_db_mode": "sqlite",
+        "active_db_path_or_url": _db_path,
+        "active_client_id": _cid,
+        "catalog_count": len(_rows),
+        "catalog_rows_raw": _rows,
+    })
+
+
 @app.route("/webhook/whatsapp", methods=["POST"])
 def whatsapp_webhook():
     """Dedicated UltraMsg webhook endpoint.
@@ -4498,6 +4460,10 @@ def whatsapp():
         print(f"[WA_CLIENT_ID] {_WH_CID}")
         print(f"[WA_DB_SOURCE] {os.path.abspath(DB_FILE)}")
         print(f"[WA_CATALOG_ITEMS] count={len(_ai_catalog)} titles={[i['title'] for i in _ai_catalog]}")
+        print(f"[ACTIVE_DB_MODE] sqlite")
+        print(f"[ACTIVE_DB_PATH_OR_URL] {os.path.abspath(DB_FILE)}")
+        print(f"[ACTIVE_CLIENT_ID] {_WH_CID}")
+        print(f"[CATALOG_ROWS_RAW] {_ai_catalog}")
         _dental_titles = {"تنظيف أسنان", "تبييض الأسنان", "فحص الأسنان"}
         if _ai_catalog and all(i.get("title") in _dental_titles for i in _ai_catalog):
             print("[WRONG_CATALOG_SOURCE] ⚠️  catalog contains only default dental items — check DEFAULT_CLIENT_ID and database")
@@ -4640,7 +4606,7 @@ def whatsapp():
         # ── 2. Empty catalog guard ────────────────────────────────────────────
         if not _ai_catalog:
             _empty_msg = {
-                "ar": "لا توجد منتجات أو خدمات مضافة حاليًا في الكتالوج.",
+                "ar": "لا توجد منتجات مضافة حالياً في الكتالوج.",
                 "en": "No products or services are currently available.",
                 "fr": "Aucun produit ou service n'est disponible actuellement.",
             }
