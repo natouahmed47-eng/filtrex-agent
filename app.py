@@ -2304,28 +2304,48 @@ def _catalog_match_by_keywords(catalog_items, msg):
     """Fuzzy-match catalog items against a customer message.
 
     Algorithm:
-    1. Tokenise the message into words ≥ 3 chars (Arabic or Latin).
-    2. For each token, check if it appears as a sub-string of any item's
-       title, description, or category (case-insensitive).
-    3. Return all items that had at least one token match, sorted by
+    1. Check for an exact title match (case-insensitive). If found, return
+       only that item immediately — e.g. user types "Dior" → Dior only.
+    2. Tokenise the message into words ≥ 3 chars (Arabic or Latin).
+    3. For each token, check if it appears as a sub-string of any item's
+       title, category, or description (case-insensitive).
+    4. Return all items that had at least one token match, sorted by
        number of matches descending.
+    5. Includes ALL item types (service + product) — no type filter applied.
+
+    Logs: [ITEM_TYPE], [MATCH_RESULT], [CATALOG_MATCH]
     """
     import re as _re
     msg_clean = msg.lower().strip()
-    # Tokenise — words of 3+ chars
+
+    # ── Pass 1: exact title match ─────────────────────────────────────────
+    for item in catalog_items:
+        it_type = (item.get("type") or "service").lower()
+        print(f"[ITEM_TYPE] title={item.get('title')!r} type={it_type!r}")
+        title_lower = (item.get("title") or "").lower()
+        if title_lower == msg_clean:
+            print(f"[CATALOG_MATCH] exact title match → title={item.get('title')!r} type={it_type!r}")
+            print(f"[MATCH_RESULT] title={item.get('title')!r} type={it_type!r} hits=exact matched=True")
+            return [item]
+
+    # ── Pass 2: keyword match against title + category + description ──────
     tokens = [w for w in _re.split(r'[\s،,؟?!.]+', msg_clean) if len(w) >= 3]
     if not tokens:
         return []
 
     scored = []
     for item in catalog_items:
+        it_type = (item.get("type") or "service").lower()
         haystack = " ".join([
             (item.get("title")       or ""),
-            (item.get("description") or ""),
             (item.get("category")    or ""),
+            (item.get("description") or ""),
         ]).lower()
         hits = sum(1 for tok in tokens if tok in haystack)
-        if hits > 0:
+        matched = hits > 0
+        print(f"[MATCH_RESULT] title={item.get('title')!r} type={it_type!r} hits={hits} matched={matched}")
+        if matched:
+            print(f"[CATALOG_MATCH] keyword match → title={item.get('title')!r} type={it_type!r} hits={hits}")
             scored.append((hits, item))
 
     scored.sort(key=lambda x: x[0], reverse=True)
