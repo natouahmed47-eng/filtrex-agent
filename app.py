@@ -12,9 +12,11 @@ ULTRAMSG_TOKEN            = os.getenv("ULTRAMSG_TOKEN", "")
 ADMIN_WHATSAPP_NUMBER     = os.getenv("ADMIN_WHATSAPP_NUMBER", "")
 PLATFORM_ADMIN_WHATSAPP   = os.getenv("PLATFORM_ADMIN_WHATSAPP", "")
 WA_BOT_NUMBER             = os.getenv("WA_BOT_NUMBER", "22230489495")   # UltraMsg bot phone number for deep links
+DEFAULT_CLIENT_ID         = int(os.getenv("DEFAULT_CLIENT_ID", "1"))
 print(f"[STARTUP] ADMIN_WHATSAPP_NUMBER={ADMIN_WHATSAPP_NUMBER!r}")
 print(f"[STARTUP] PLATFORM_ADMIN_WHATSAPP={'set' if PLATFORM_ADMIN_WHATSAPP else 'not set'}")
 print(f"[STARTUP] WA_BOT_NUMBER={'set' if WA_BOT_NUMBER else 'not set'}")
+print(f"[STARTUP] DEFAULT_CLIENT_ID={DEFAULT_CLIENT_ID}")
 
 def ultramsg_send(to, text):
     import traceback as _tb
@@ -1237,7 +1239,7 @@ _migrate_saas()
 
 # ── SAAS HELPERS ──────────────────────────────────────────────────────────────
 
-CLIENT_ID = 1   # WhatsApp webhook default; admin routes use _session_client_id()
+CLIENT_ID = DEFAULT_CLIENT_ID   # WhatsApp webhook default; admin routes use _session_client_id()
 
 def _session_client_id():
     """Return the authenticated client's ID from session. Falls back to CLIENT_ID."""
@@ -2744,9 +2746,9 @@ _WA_PRICES = {
 
 _STRINGS = {
     "ask_service": {
-        "ar": "أهلاً! 😊 كيف يمكنني مساعدتك؟ هل تريد حجز:\n• تنظيف أسنان\n• تبييض الأسنان\n• فحص الأسنان",
-        "en": "Hello! 😊 How can I help you? Would you like to book:\n• Teeth cleaning\n• Teeth whitening\n• Dental checkup",
-        "fr": "Bonjour! 😊 Comment puis-je vous aider? Souhaitez-vous réserver:\n• Nettoyage des dents\n• Blanchiment des dents\n• Contrôle dentaire",
+        "ar": "أهلاً! 😊 كيف يمكنني مساعدتك؟ أرسل اسم المنتج أو الخدمة التي تريدها.",
+        "en": "Hello! 😊 How can I help you? Send the name of the product or service you want.",
+        "fr": "Bonjour! 😊 Comment puis-je vous aider? Envoyez le nom du produit ou service souhaité.",
     },
     "service_confirmed": {
         "ar": "خيار ممتاز ✨ {svc} {benefit}.\nالسعر {price} فقط.",
@@ -2754,27 +2756,9 @@ _STRINGS = {
         "fr": "Excellent choix ✨ {svc} {benefit}.\nSeulement {price}.",
     },
     "price_list": {
-        "ar": (
-            "يسعدنا خدمتك! 😊 أسعارنا:\n"
-            "• تنظيف أسنان — 100 ريال\n"
-            "• تبييض الأسنان — 250 ريال\n"
-            "• فحص الأسنان — 50 ريال\n"
-            "أي خدمة تناسبك؟"
-        ),
-        "en": (
-            "Happy to help! 😊 Our prices:\n"
-            "• Teeth cleaning — 100 SAR\n"
-            "• Teeth whitening — 250 SAR\n"
-            "• Dental checkup — 50 SAR\n"
-            "Which service suits you?"
-        ),
-        "fr": (
-            "Avec plaisir! 😊 Nos tarifs:\n"
-            "• Nettoyage des dents — 100 SAR\n"
-            "• Blanchiment des dents — 250 SAR\n"
-            "• Contrôle dentaire — 50 SAR\n"
-            "Quel service vous convient?"
-        ),
+        "ar": "يسعدنا خدمتك! 😊 أرسل اسم المنتج أو الخدمة لمعرفة السعر.",
+        "en": "Happy to help! 😊 Send the name of the product or service to see the price.",
+        "fr": "Avec plaisir! 😊 Envoyez le nom du produit ou service pour voir le tarif.",
     },
     "ask_day": {
         "ar": "ممتاز! في أي يوم تفضل؟ (اليوم أو غدًا) 🗓️",
@@ -4334,6 +4318,35 @@ def debug_auto_connect_status():
     })
 
 
+@app.route("/debug/catalog")
+def debug_catalog():
+    """Diagnostic endpoint — shows the catalog source used by the WhatsApp handler."""
+    _cid = DEFAULT_CLIENT_ID
+    _db_path = os.path.abspath(DB_FILE)
+    _con = get_db_connection()
+    try:
+        _rows = _con.execute("""
+            SELECT id, title, type, category, price, currency, is_active
+            FROM catalogs
+            WHERE client_id = ?
+            ORDER BY id ASC
+        """, (_cid,)).fetchall()
+        _items = [dict(r) for r in _rows]
+    finally:
+        _con.close()
+    _dental_titles = {"تنظيف أسنان", "تبييض الأسنان", "فحص الأسنان"}
+    _wrong_source = bool(_items) and all(i.get("title") in _dental_titles for i in _items)
+    if _wrong_source:
+        print(f"[WRONG_CATALOG_SOURCE] /debug/catalog: only default dental items found for client_id={_cid}")
+    return jsonify({
+        "database_path": _db_path[:4] + "***" + _db_path[-8:] if len(_db_path) > 12 else "***",
+        "client_id": _cid,
+        "catalog_count": len(_items),
+        "wrong_catalog_source": _wrong_source,
+        "catalog_items": _items,
+    })
+
+
 @app.route("/webhook/whatsapp", methods=["POST"])
 def whatsapp_webhook():
     """Dedicated UltraMsg webhook endpoint.
@@ -4482,6 +4495,12 @@ def whatsapp():
         _wh_client = get_client(_WH_CID)   # loaded early — used across all intent branches
         # Load active catalog once per request — passed to every openai_chat call
         _ai_catalog = load_catalog_for_ai(_WH_CID)
+        print(f"[WA_CLIENT_ID] {_WH_CID}")
+        print(f"[WA_DB_SOURCE] {os.path.abspath(DB_FILE)}")
+        print(f"[WA_CATALOG_ITEMS] count={len(_ai_catalog)} titles={[i['title'] for i in _ai_catalog]}")
+        _dental_titles = {"تنظيف أسنان", "تبييض الأسنان", "فحص الأسنان"}
+        if _ai_catalog and all(i.get("title") in _dental_titles for i in _ai_catalog):
+            print("[WRONG_CATALOG_SOURCE] ⚠️  catalog contains only default dental items — check DEFAULT_CLIENT_ID and database")
         data = request.get_json(force=True, silent=True) or {}
         print(f"[TRACE_PAYLOAD] {data}")          # full dump — reveals UltraMsg echo payloads
         msg_data     = data.get("data", {})
