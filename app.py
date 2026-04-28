@@ -15,7 +15,7 @@ PLATFORM_ADMIN_WHATSAPP   = os.getenv("PLATFORM_ADMIN_WHATSAPP", "")
 WA_BOT_NUMBER             = os.getenv("WA_BOT_NUMBER", "22230489495")   # UltraMsg bot phone number for deep links
 DEFAULT_CLIENT_ID         = int(os.getenv("DEFAULT_CLIENT_ID", "1"))
 DATABASE_URL = os.getenv("DATABASE_URL", "")
-DB_MODE      = "postgres" if DATABASE_URL and DATABASE_URL.startswith("postgresql://") else "sqlite"
+DB_MODE      = "postgres" if DATABASE_URL and DATABASE_URL.startswith(("postgresql://", "postgres://")) else "sqlite"
 print(f"[DATABASE_URL_PRESENT] {bool(DATABASE_URL)}")
 print(f"[DATABASE_URL_PREFIX] {DATABASE_URL[:12] if DATABASE_URL else 'N/A'}")
 print(f"[DB_MODE] {DB_MODE}")
@@ -23,6 +23,19 @@ print(f"[STARTUP] ADMIN_WHATSAPP_NUMBER={ADMIN_WHATSAPP_NUMBER!r}")
 print(f"[STARTUP] PLATFORM_ADMIN_WHATSAPP={'set' if PLATFORM_ADMIN_WHATSAPP else 'not set'}")
 print(f"[STARTUP] WA_BOT_NUMBER={'set' if WA_BOT_NUMBER else 'not set'}")
 print(f"[STARTUP] DEFAULT_CLIENT_ID={DEFAULT_CLIENT_ID}")
+
+# Import psycopg2 once at startup (only when PostgreSQL mode is active)
+if DB_MODE == "postgres":
+    try:
+        import psycopg2 as _psycopg2
+        import psycopg2.extras as _psycopg2_extras
+    except ImportError:
+        _psycopg2 = None          # type: ignore[assignment]
+        _psycopg2_extras = None   # type: ignore[assignment]
+        print("[DB_WARN] psycopg2 not installed — PostgreSQL mode unavailable")
+else:
+    _psycopg2 = None          # type: ignore[assignment]
+    _psycopg2_extras = None   # type: ignore[assignment]
 
 def ultramsg_send(to, text):
     import traceback as _tb
@@ -654,11 +667,9 @@ class _PsycopgConn:
     """Thin sqlite3-API-compatible wrapper around a psycopg2 connection."""
 
     def __init__(self, dsn):
-        import psycopg2
-        import psycopg2.extras
-        self._psycopg2 = psycopg2
-        self._extras   = psycopg2.extras
-        self._pg       = psycopg2.connect(dsn)
+        self._psycopg2 = _psycopg2
+        self._extras   = _psycopg2_extras
+        self._pg       = _psycopg2.connect(dsn)
         self._pg.autocommit = False
         self.row_factory = None  # accepted but ignored
 
@@ -705,7 +716,7 @@ class _PsycopgConn:
                 lv.execute("SELECT lastval()")
                 r = lv.fetchone()
                 _lastrowid = r[0] if r else None
-            except Exception:
+            except self._psycopg2.Error:
                 _lastrowid = None
 
         return _PGCursor(cur, _lastrowid)
@@ -722,8 +733,8 @@ class _PsycopgConn:
     def close(self):
         try:
             self._pg.close()
-        except Exception:
-            pass
+        except self._psycopg2.Error as _e:
+            print(f"[DB_CLOSE_ERROR] {_e!r}")
 
     def __enter__(self):
         return self
