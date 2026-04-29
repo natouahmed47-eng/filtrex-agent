@@ -4350,8 +4350,24 @@ def whatsapp_by_instance(instance_id):
     return whatsapp()
 
 
-@app.route("/whatsapp", methods=["POST"])
+VERIFY_TOKEN = "filtrex_verify_123"
+
+@app.route("/whatsapp", methods=["GET", "POST"])
 def whatsapp():
+    if request.method == "GET":
+        mode      = request.args.get("hub.mode")
+        token     = request.args.get("hub.verify_token")
+        challenge = request.args.get("hub.challenge")
+        if mode == "subscribe" and token == VERIFY_TOKEN:
+            return challenge, 200
+        return "Verification failed", 403
+
+    # ── POST ──────────────────────────────────────────────────────────────────
+    _post_data = request.get_json(force=True, silent=True)
+    if _post_data is not None and "data" not in _post_data:
+        # Meta webhook POST (no UltraMsg "data" envelope) — just acknowledge
+        return jsonify({"status": "received"}), 200
+
     print("🔥 WHATSAPP ROUTE HIT")
     try:
         # Per-request client ID: set by whatsapp_by_instance() or defaults to global CLIENT_ID
