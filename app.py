@@ -33,7 +33,7 @@ def meta_send_message(to_phone, message_text):
         print("[META_SEND_ERROR] Missing META_ACCESS_TOKEN or META_PHONE_NUMBER_ID")
         return None
     
-    url = f"https://graph.facebook.com/v25.0/{META_PHONE_NUMBER_ID}/messages"
+    url = f"https://graph.facebook.com/v18.0/{META_PHONE_NUMBER_ID}/messages"
     headers = {
         "Authorization": f"Bearer {META_ACCESS_TOKEN}",
         "Content-Type": "application/json",
@@ -93,7 +93,7 @@ app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 # ── White-label: resolve branding once per request ────────────────────────────
-_SKIP_BRANDING_PREFIXES = ("/static/", "/webhook")
+_SKIP_BRANDING_PREFIXES = ("/static/", "/webhook", "/whatsapp")
 
 @app.before_request
 def _resolve_branding():
@@ -1132,11 +1132,12 @@ def whatsapp():
         return "Verification failed", 403
     
     # ── POST: Process incoming message ────────────────────────────────────
-    print("[META_WEBHOOK_RECEIVED]")
+    print("[META_WEBHOOK_RECEIVED] POST request received")
     
     try:
         payload = request.get_json(force=True, silent=True) or {}
-        print(f"[META_WEBHOOK_PAYLOAD] {json.dumps(payload, ensure_ascii=False)[:500]}")
+        print(f"[META_WEBHOOK_PAYLOAD] {json.dumps(payload, ensure_ascii=False)}")
+        print("Incoming:", payload)
         
         # Extract message data from Meta webhook structure
         # Structure: { "entry": [{ "changes": [{ "value": { "messages": [...] } }] }] }
@@ -1144,6 +1145,8 @@ def whatsapp():
         change = (entry.get("changes") or [{}])[0]
         value = change.get("value") or {}
         messages = value.get("messages") or []
+        
+        print(f"[META_PARSE] entry={bool(entry)}, change={bool(change)}, value={bool(value)}, messages_count={len(messages)}")
         
         if not messages:
             print("[META_WEBHOOK_RECEIVED] no messages in payload")
@@ -1161,7 +1164,7 @@ def whatsapp():
             return jsonify({"status": "ok"}), 200
         
         # ── Send automatic reply using Meta Cloud API ──────────────────────
-        reply_text = "أهلاً بك 👋 كيف أقدر أساعدك اليوم؟"
+        reply_text = "تم استلام رسالتك ✅"
         response = meta_send_message(sender_phone, reply_text)
         
         if response and response.status_code == 200:
