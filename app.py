@@ -1465,7 +1465,136 @@ def signup():
             finally:
                 con.close()
     return render_template("signup.html", error=error)
+@app.route("/admin/catalog", methods=["GET", "POST"])
+def admin_catalog():
+    if not session.get("logged_in"):
+        return redirect(url_for("login"))
 
+    cid = _session_client_id()
+
+    if request.method == "POST":
+        allowed, sub = check_limit(cid, "catalog_items")
+        if not allowed:
+            flash("لقد وصلت إلى حد المنتجات في باقتك. قم بترقية الباقة.", "error")
+            return redirect(url_for("admin_catalog"))
+
+        title = request.form.get("title", "").strip()
+        item_type = request.form.get("type", "service").strip()
+        price = request.form.get("price", "0").strip()
+        sale_price = request.form.get("sale_price", "").strip()
+        description = request.form.get("description", "").strip()
+        duration_min = request.form.get("duration_min", "").strip()
+        stock_qty = request.form.get("stock_qty", "").strip()
+
+        if not title:
+            flash("اسم المنتج أو الخدمة مطلوب.", "error")
+            return redirect(url_for("admin_catalog"))
+
+        try:
+            price = float(price or 0)
+        except ValueError:
+            price = 0
+
+        try:
+            sale_price = float(sale_price) if sale_price else None
+        except ValueError:
+            sale_price = None
+
+        try:
+            duration_min = int(duration_min) if duration_min else None
+        except ValueError:
+            duration_min = None
+
+        try:
+            stock_qty = int(stock_qty) if stock_qty else None
+        except ValueError:
+            stock_qty = None
+
+        con = get_db_connection()
+        try:
+            con.execute("""
+                INSERT INTO catalogs
+                    (client_id, title, type, price, sale_price, description,
+                     duration_min, stock_qty, is_active)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+            """, (
+                cid, title, item_type, price, sale_price,
+                description, duration_min, stock_qty
+            ))
+            con.commit()
+        finally:
+            con.close()
+
+        flash("تمت إضافة المنتج/الخدمة بنجاح.", "success")
+        return redirect(url_for("admin_catalog"))
+
+    con = get_db_connection()
+    try:
+        items = [dict(r) for r in con.execute("""
+            SELECT *
+            FROM catalogs
+            WHERE client_id=?
+            ORDER BY id DESC
+        """, (cid,)).fetchall()]
+    finally:
+        con.close()
+
+    return render_template(
+        "admin/catalog.html",
+        items=items,
+        active="catalog"
+    )
+
+
+@app.route("/admin/catalog/<int:item_id>/delete", methods=["POST"])
+def admin_catalog_delete(item_id):
+    if not session.get("logged_in"):
+        return redirect(url_for("login"))
+
+    cid = _session_client_id()
+
+    con = get_db_connection()
+    try:
+        con.execute("""
+            UPDATE catalogs
+            SET is_active=0
+            WHERE id=? AND client_id=?
+        """, (item_id, cid))
+        con.commit()
+    finally:
+        con.close()
+
+    flash("تم تعطيل العنصر.", "success")
+    return redirect(url_for("admin_catalog"))
+
+
+@app.route("/admin/catalog/<int:item_id>/toggle", methods=["POST"])
+def admin_catalog_toggle(item_id):
+    if not session.get("logged_in"):
+        return redirect(url_for("login"))
+
+    cid = _session_client_id()
+
+    con = get_db_connection()
+    try:
+        row = con.execute("""
+            SELECT is_active
+            FROM catalogs
+            WHERE id=? AND client_id=?
+        """, (item_id, cid)).fetchone()
+
+        if row:
+            new_status = 0 if row["is_active"] else 1
+            con.execute("""
+                UPDATE catalogs
+                SET is_active=?
+                WHERE id=? AND client_id=?
+            """, (new_status, item_id, cid))
+            con.commit()
+    finally:
+        con.close()
+
+    return redirect(url_for("admin_catalog"))
 
 @app.route("/logout")
 def logout():
