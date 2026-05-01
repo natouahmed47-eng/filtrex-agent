@@ -1107,7 +1107,166 @@ def home():
 @app.route("/assistant")
 def assistant():
     return render_template("index.html")
+def generate_bot_reply(client_id, sender_phone, message_text):
+    text = (message_text or "").strip().lower()
 
+    con = get_db_connection()
+    try:
+        client = con.execute(
+            "SELECT * FROM clients WHERE id=?",
+            (client_id,)
+        ).fetchone()
+
+        items = con.execute("""
+            SELECT *
+            FROM catalogs
+            WHERE client_id=? AND is_active=1
+            ORDER BY id DESC
+        """, (client_id,)).fetchall()
+    finally:
+        con.close()
+
+    business_name = client["name"] if client else "متجرنا"
+    currency = client["currency"] if client else ""
+
+    if not items:
+        return f"مرحباً بك في {business_name} 👋\nحالياً لا توجد منتجات أو خدمات مضافة."
+
+    greetings = ["السلام", "مرحبا", "أهلا", "اهلا", "hello", "hi", "salut"]
+    catalog_words = ["الخدمات", "المنتجات", "الأسعار", "السعر", "قائمة", "catalog", "services", "products", "price"]
+
+    if any(word in text for word in greetings):
+        return (
+            f"مرحباً بك في {business_name} 👋\n\n"
+            "يمكنك كتابة:\n"
+            "1. الخدمات\n"
+            "2. الأسعار\n"
+            "3. اسم المنتج أو الخدمة التي تريدها"
+        )
+
+    if any(word in text for word in catalog_words):
+        lines = [f"هذه قائمة المنتجات والخدمات في {business_name}:\n"]
+        for i, item in enumerate(items, start=1):
+            price = item["sale_price"] if item["sale_price"] else item["price"]
+            lines.append(f"{i}. {item['title']} - {price} {currency}")
+        lines.append("\nاكتب اسم المنتج أو الخدمة لمعرفة التفاصيل.")
+        return "\n".join(lines)
+
+    matched_item = None
+    for item in items:
+        title = (item["title"] or "").lower()
+        description = (item["description"] or "").lower()
+
+        if title and title in text:
+            matched_item = item
+            break
+
+        if text and text in title:
+            matched_item = item
+            break
+
+        if description and text in description:
+            matched_item = item
+            break
+
+    if matched_item:
+        price = matched_item["sale_price"] if matched_item["sale_price"] else matched_item["price"]
+        desc = matched_item["description"] or "لا يوجد وصف حالياً."
+
+        reply = (
+            f"{matched_item['title']}\n\n"
+            f"الوصف: {desc}\n"
+            f"السعر: {price} {currency}\n\n"
+            "هل تريد الطلب أو الحجز؟ اكتب: نعم"
+        )
+
+        con = get_db_connection()
+        try:
+            con.execute("""
+                INSERT OR REPLACE INTO conversations
+                    (client_id, phone, current_step, known_catalog_ids_json, updated_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """, (
+                client_id,
+                sender_phone,
+                "confirm_order",
+                json.dumps([matched_item["id"]])
+            ))
+            con.commit()
+        finally:
+            con.close()
+
+        return reply
+
+    if text in ["نعم", "yes", "ok", "تمام", "اريد", "أريد", "اطلب", "احجز"]:
+        con = get_db_connection()
+        try:
+            convo = con.execute("""
+                SELECT *
+                FROM conversations
+                WHERE client_id=? AND phone=?
+            """, (client_id, sender_phone)).fetchone()
+
+            if convo:
+                item_ids = json.loads(convo["known_catalog_ids_json"] or "[]")
+            else:
+                item_ids = []
+
+            if item_ids:
+                placeholders = ",".join("?" for _ in item_ids)
+                selected_items = con.execute(f"""
+                    SELECT *
+                    FROM catalogs
+                    WHERE id IN ({placeholders}) AND client_id=?
+                """, (*item_ids, client_id)).fetchall()
+
+                total = 0
+                order_items = []
+
+                for item in selected_items:
+                    price = item["sale_price"] if item["sale_price"] else item["price"]
+                    total += float(price or 0)
+                    order_items.append({
+                        "id": item["id"],
+                        "title": item["title"],
+                        "price": price
+                    })
+
+                con.execute("""
+                    INSERT INTO orders
+                        (client_id, phone, name, items, status, amount, intent, customer_phone)
+                    VALUES (?, ?, ?, ?, 'pending', ?, 'order', ?)
+                """, (
+                    client_id,
+                    sender_phone,
+                    "",
+                    json.dumps(order_items, ensure_ascii=False),
+                    total,
+                    sender_phone
+                ))
+
+                con.execute("""
+                    UPDATE conversations
+                    SET current_step='order_created', updated_at=CURRENT_TIMESTAMP
+                    WHERE client_id=? AND phone=?
+                """, (client_id, sender_phone))
+
+                con.commit()
+
+                return (
+                    "تم تسجيل طلبك بنجاح ✅\n\n"
+                    f"الإجمالي: {total} {currency}\n"
+                    "سيتواصل معك صاحب النشاط قريباً."
+                )
+        finally:
+            con.close()
+
+    lines = [
+        f"لم أفهم طلبك بدقة، لكن يمكنني مساعدتك في منتجات وخدمات {business_name}.\n",
+        "اكتب: الخدمات",
+        "أو اكتب اسم المنتج/الخدمة مباشرة."
+    ]
+    return "\n".join(lines)
 
 @app.route("/whatsapp", methods=["GET", "POST"])
 def whatsapp():
@@ -1164,7 +1323,7 @@ def whatsapp():
             return jsonify({"status": "ok"}), 200
         
         # ── Send automatic reply using Meta Cloud API ──────────────────────
-        reply_text = "تم استلام رسالتك ✅"
+        reply_text = generate_bot_reply(DEFAULT_CLIENT_ID, sender_phone, message_text)
         response = meta_send_message(sender_phone, reply_text)
         
         if response and response.status_code == 200:
