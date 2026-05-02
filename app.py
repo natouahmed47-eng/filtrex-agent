@@ -1408,7 +1408,10 @@ def admin_dashboard():
                            trial_info=trial_info, affiliate_info=affiliate_info)
 
 
-@app.route("/admin/onboarding", methods=["GET", "POST"])
+= {}
+            if biz_name:
+                updates["name"] = biz_name
+            if biz_ty@app.route("/admin/onboarding", methods=["GET", "POST"])
 def admin_onboarding():
     if not session.get("logged_in"):
         return redirect(url_for("login"))
@@ -1445,10 +1448,7 @@ def admin_onboarding():
             lang_val  = request.form.get("default_language", "en").strip()
             currency  = request.form.get("currency", "").strip()
             timezone  = request.form.get("timezone", "").strip()
-            updates = {}
-            if biz_name:
-                updates["name"] = biz_name
-            if biz_type:
+            updates pe:
                 updates["business_type"] = biz_type
             if lang_val:
                 updates["default_language"] = lang_val
@@ -1704,7 +1704,43 @@ def admin_catalog():
         active="catalog"
     )
 
+@app.route("/admin/catalog/new", methods=["GET", "POST"])
+def admin_catalog_new():
+    if not session.get("logged_in"):
+        return redirect(url_for("login"))
 
+    cid = _session_client_id()
+
+    if request.method == "POST":
+        title = request.form.get("title", "").strip()
+        item_type = request.form.get("type", "service").strip()
+        price = request.form.get("price", "0").strip()
+        description = request.form.get("description", "").strip()
+
+        if not title:
+            flash("اسم العنصر مطلوب", "error")
+            return redirect(url_for("admin_catalog_new"))
+
+        try:
+            price = float(price or 0)
+        except:
+            price = 0
+
+        con = get_db_connection()
+        try:
+            con.execute("""
+                INSERT INTO catalogs
+                (client_id, title, type, price, description, is_active)
+                VALUES (?, ?, ?, ?, ?, 1)
+            """, (cid, title, item_type, price, description))
+            con.commit()
+        finally:
+            con.close()
+
+        flash("تمت الإضافة بنجاح", "success")
+        return redirect(url_for("admin_catalog"))
+
+    return render_template("admin/catalog_form.html", item=None)
 @app.route("/admin/catalog/<int:item_id>/delete", methods=["POST"])
 def admin_catalog_delete(item_id):
     if not session.get("logged_in"):
